@@ -99,9 +99,10 @@ max_depth = 3
 
 ---
 
-## 📚 Glossary
+## 📚 Documentation & References
 
 - [GLOSSARY.md](GLOSSARY.md) — Canonical Ubiquitous Language definitions.
+- [REFERENCES.md](REFERENCES.md) — Neural model architecture details, citations, and metadata roadmap.
 
 ---
 

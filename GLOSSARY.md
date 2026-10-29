@@ -55,3 +55,7 @@ _Avoid_: Table detector, heuristic table parser
 **Recursive XY-Cut++**:
 A spatial projection profile partitioning algorithm that recursively isolates vertical column gutters and horizontal section dividers to determine reading order.
 _Avoid_: Naive Y-sort, reading line sorter
+
+**GLiNER Metadata Extractor**:
+A lightweight bidirectional transformer model that performs zero-shot open-type entity extraction on document text to populate Obsidian YAML frontmatter properties with structured metadata.
+_Avoid_: LLM tagger, heuristic metadata extractor, regex parser
