@@ -29,7 +29,10 @@ fn main() {
 
 fn detect_hardware_features() {
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    if target_arch == "x86_64" {
+    let host = std::env::var("HOST").unwrap_or_default();
+    let target = std::env::var("TARGET").unwrap_or_default();
+
+    if target_arch == "x86_64" && host == target {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") {
@@ -43,10 +46,7 @@ fn detect_hardware_features() {
             }
         }
     } else if target_arch == "aarch64" {
-        #[cfg(target_arch = "aarch64")]
-        {
-            println!("cargo:rustc-cfg=has_neon");
-        }
+        println!("cargo:rustc-cfg=has_neon");
     }
 }
 
