@@ -4,6 +4,7 @@
 //! LaTeX math normalization, and page indexing with ascending concurrency.
 
 use anyhow::{Context, Result};
+use image::GenericImageView;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -382,8 +383,8 @@ fn process_single_page(
         ocr_text
     };
 
-    // Phase 5: Formula Box Wrapping (DocLayNet Class 2)
-    // Any OCR line falling inside a detected formula bounding box is wrapped in display math $$..$$
+    // Phase 5: Formula Box Recognition & Wrapping (DocLayNet Class 2)
+    // Uses RapidLaTeXOCR neural equation recognition with seamless fallback to OCR text
     for formula_rect in &layout.formulas {
         let inside_lines: Vec<&TextLine> = text_lines
             .iter()
@@ -397,7 +398,27 @@ fn process_single_page(
             })
             .collect();
 
-        if !inside_lines.is_empty() {
+        let mut recognized_latex: Option<String> = None;
+
+        #[cfg(feature = "latex-ort")]
+        if let Some(latex_engine) = figure::latex::get_latex_engine() {
+            let (pw, ph) = page_img.dimensions();
+            let crop_w = formula_rect.width.min(pw.saturating_sub(formula_rect.x));
+            let crop_h = formula_rect.height.min(ph.saturating_sub(formula_rect.y));
+            if crop_w > 0 && crop_h > 0 {
+                let crop = page_img.crop_imm(formula_rect.x, formula_rect.y, crop_w, crop_h);
+                if let Ok(pred) = latex_engine.predict_latex(&crop) {
+                    if !pred.trim().is_empty() {
+                        recognized_latex = Some(pred);
+                    }
+                }
+            }
+        }
+
+        // Fall back to concatenating inside OCR lines if RapidLaTeXOCR is not available or yielded empty
+        let formula_trimmed = if let Some(latex) = recognized_latex {
+            latex
+        } else if !inside_lines.is_empty() {
             let mut formula_text = String::new();
             for l in &inside_lines {
                 let trimmed = l.text.trim();
@@ -406,16 +427,23 @@ fn process_single_page(
                     formula_text.push(' ');
                 }
             }
-            let formula_trimmed = formula_text.trim();
-            if !formula_trimmed.is_empty() && !formula_trimmed.starts_with("$$") {
-                let display_math = format!("\n\n$$\n{formula_trimmed}\n$$\n\n");
-                // Replace first occurrence of the raw text with display math block
-                if let Some(first_line) = inside_lines.first() {
-                    let needle = first_line.text.trim();
-                    if !needle.is_empty() && formatted_text.contains(needle) {
-                        formatted_text = formatted_text.replacen(needle, &display_math, 1);
-                    }
+            formula_text.trim().to_string()
+        } else {
+            String::new()
+        };
+
+        if !formula_trimmed.is_empty() && !formula_trimmed.starts_with("$$") {
+            let display_math = format!("\n\n$$\n{formula_trimmed}\n$$\n\n");
+            // Replace first occurrence of the raw text with display math block
+            if let Some(first_line) = inside_lines.first() {
+                let needle = first_line.text.trim();
+                if !needle.is_empty() && formatted_text.contains(needle) {
+                    formatted_text = formatted_text.replacen(needle, &display_math, 1);
+                } else {
+                    formatted_text.push_str(&display_math);
                 }
+            } else {
+                formatted_text.push_str(&display_math);
             }
         }
     }

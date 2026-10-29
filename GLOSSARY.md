@@ -43,3 +43,15 @@ _Avoid_: Full-path folder, raw document title folder
 **Hardware-Aware Concurrency Governor**:
 A runtime resource evaluation routine that dynamically sizes worker threads based on available logical processor cores and free physical RAM.
 _Avoid_: Fixed thread pool, static worker count, env-var concurrency
+
+**RapidLaTeXOCR Engine**:
+An encoder-decoder vision transformer model executing autoregressive sequence decoding over cropped formula regions to generate exact LaTeX equation markup.
+_Avoid_: Formula OCR, equation transcriber, pix2tex wrapper
+
+**SLANet Table Engine**:
+A structure-location architecture network that predicts structural HTML tokens and 2D cell bounding boxes from cropped table regions to reconstruct tabular grids.
+_Avoid_: Table detector, heuristic table parser
+
+**Recursive XY-Cut++**:
+A spatial projection profile partitioning algorithm that recursively isolates vertical column gutters and horizontal section dividers to determine reading order.
+_Avoid_: Naive Y-sort, reading line sorter

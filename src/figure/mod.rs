@@ -1,4 +1,5 @@
 pub mod caption;
+pub mod latex;
 pub mod models;
 pub mod pdf_stream;
 pub mod slanet;
