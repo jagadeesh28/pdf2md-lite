@@ -13,7 +13,7 @@ An autonomous, pure-Rust offline document conversion engine that transforms PDF 
   - **`Formula` (Class 2)**: Unmasked on canvas. Text lines bounded by formula boxes are isolated and rendered cleanly inside Obsidian **Display Math Blocks** (`$$...$$`).
 - **Obsidian Math Normalization**: Automatically normalizes standard LaTeX delimiters (`\(...\)` to `$...$`, `\[...\]` to `$$...$$`) and detects inline symbols and variables.
 - **Hardware-Aware Concurrency Governor**: Dynamically sizes parallel worker threads at runtime by evaluating logical processor cores and free physical RAM:
-  $$\text{workers} = \max\left(1, \min\left(\text{logical\_cores} - 1, \frac{\text{free\_ram\_gb}}{1.5\text{ GB}}\right)\right)$$
+  $$\text{workers} = \max\left(1, \min\left(\text{logical cores} - 1, \frac{\text{free RAM (GB)}}{1.5\text{ GB}}\right)\right)$$
 - **Page Indexing & Strict Ordering**:
   - Emits Obsidian page demarcation comments (`<!-- Page N -->`) at every page boundary.
   - Supports 1-based page slicing (`[begin-page] [end-page]` or `--pages <start>-<end>`).
