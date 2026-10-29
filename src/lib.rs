@@ -7,6 +7,7 @@ pub mod figure;
 pub mod markdown;
 pub mod pdf;
 pub mod pipeline;
+pub mod xycut;
 
 pub use backends::indra::{IndraEngine, TextLine};
 pub use batch::{process_pdf_directory, BatchConversionResult, sanitize_short_slug};

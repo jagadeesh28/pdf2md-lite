@@ -17,10 +17,12 @@ pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
         .map(|n| n.get())
         .unwrap_or(2);
 
-    let mut sys = System::new_all();
-    sys.refresh_memory();
-
-    let available_ram_bytes = sys.available_memory();
+    let available_ram_bytes = if let Ok(mut sys) = System::new_all() {
+        sys.refresh_memory();
+        sys.available_memory()
+    } else {
+        4 * 1024 * 1024 * 1024
+    };
     let available_ram_gb = available_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
     // Each active worker page holds high-res raster pixmaps and ONNX tensors (~1.5 GB budget)

@@ -15,19 +15,8 @@ pub fn sort_and_format_markdown(lines: &mut [TextLine]) -> String {
         return String::new();
     }
 
-    // 1. Sort primarily by Y (top-to-bottom), then by X (left-to-right)
-    lines.sort_by(|a, b| {
-        // If Y centers are within half a line height, consider them on the same line
-        let a_y_mid = a.bbox.y + a.bbox.height / 2;
-        let b_y_mid = b.bbox.y + b.bbox.height / 2;
-        let tolerance = ((a.bbox.height.min(b.bbox.height)) as i32 / 2).max(6);
-
-        if (a_y_mid as i32 - b_y_mid as i32).abs() <= tolerance {
-            a.bbox.x.cmp(&b.bbox.x)
-        } else {
-            a.bbox.y.cmp(&b.bbox.y)
-        }
-    });
+    // 1. Sort using Recursive XY-Cut++ for robust multi-column reading order
+    crate::xycut::recursive_xy_cut(lines);
 
     // 2. Assemble lines into Markdown paragraphs
     let mut out = String::new();

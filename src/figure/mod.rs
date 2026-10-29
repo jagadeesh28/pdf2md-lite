@@ -1,6 +1,7 @@
 pub mod caption;
 pub mod models;
 pub mod pdf_stream;
+pub mod slanet;
 pub mod table;
 pub mod yolo;
 

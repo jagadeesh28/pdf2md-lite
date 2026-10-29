@@ -420,11 +420,45 @@ fn process_single_page(
         }
     }
 
-    // Phase 6: Geometric Table Grid Extraction (DocLayNet Class 8)
+    // Phase 6: Table Extraction (DocLayNet Class 8)
+    // Uses neural SLANet table structure recognition with seamless geometric fallback
     for (table_rect, fig) in &layout.tables {
-        if let Some((table_md, raw_lines)) =
-            figure::table::extract_table_with_lines(table_rect, &text_lines)
-        {
+        let mut table_md_opt = None;
+        let mut raw_lines: Vec<String> = Vec::new();
+
+        #[cfg(feature = "slanet-ort")]
+        if let Some(slanet) = figure::slanet::get_slanet_engine() {
+            let crop = page_img.crop_imm(table_rect.x, table_rect.y, table_rect.width, table_rect.height);
+            if let Ok(md) = slanet.predict_table_markdown(&crop, &text_lines, table_rect.x, table_rect.y) {
+                if !md.trim().is_empty() {
+                    table_md_opt = Some(md);
+                    raw_lines = text_lines
+                        .iter()
+                        .filter(|l| {
+                            let mid_x = l.bbox.x + l.bbox.width / 2;
+                            let mid_y = l.bbox.y + l.bbox.height / 2;
+                            mid_x >= table_rect.x
+                                && mid_x <= table_rect.x + table_rect.width
+                                && mid_y >= table_rect.y
+                                && mid_y <= table_rect.y + table_rect.height
+                        })
+                        .map(|l| l.text.clone())
+                        .collect();
+                }
+            }
+        }
+
+        // Fall back to pure geometric table grid extraction if SLANet not used or yields empty output
+        if table_md_opt.is_none() {
+            if let Some((geom_md, geom_lines)) =
+                figure::table::extract_table_with_lines(table_rect, &text_lines)
+            {
+                table_md_opt = Some(geom_md);
+                raw_lines = geom_lines;
+            }
+        }
+
+        if let Some(table_md) = table_md_opt {
             let dir_name = fig.images_dir_name();
             let callout = format!(
                 "> [!table]- Original Crop: {}\n> ![{}]({dir_name}/{})\n> *{}*",
