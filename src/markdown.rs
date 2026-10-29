@@ -7,11 +7,14 @@ pub struct DocumentMetadata {
     pub title: Option<String>,
     pub source: Option<String>,
     pub author: Option<String>,
+    pub organization: Option<String>,
     pub subject: Option<String>,
     pub keywords: Option<String>,
     pub creation_date: Option<String>,
+    pub doi: Option<String>,
     pub total_pages: Option<usize>,
     pub pages_processed: Option<String>,
+    pub custom_properties: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl DocumentMetadata {
@@ -29,6 +32,9 @@ impl DocumentMetadata {
         if let Some(ref author) = self.author {
             yaml.push_str(&format!("author: \"{}\"\n", escape_yaml(author)));
         }
+        if let Some(ref org) = self.organization {
+            yaml.push_str(&format!("organization: \"{}\"\n", escape_yaml(org)));
+        }
         if let Some(ref subject) = self.subject {
             yaml.push_str(&format!("subject: \"{}\"\n", escape_yaml(subject)));
         }
@@ -38,11 +44,25 @@ impl DocumentMetadata {
         if let Some(ref date) = self.creation_date {
             yaml.push_str(&format!("created: \"{}\"\n", escape_yaml(date)));
         }
+        if let Some(ref doi) = self.doi {
+            yaml.push_str(&format!("doi: \"{}\"\n", escape_yaml(doi)));
+        }
         if let Some(total) = self.total_pages {
             yaml.push_str(&format!("total_pages: {}\n", total));
         }
         if let Some(ref pages) = self.pages_processed {
             yaml.push_str(&format!("pages_processed: \"{}\"\n", pages));
+        }
+
+        for (key, values) in &self.custom_properties {
+            if values.len() == 1 {
+                yaml.push_str(&format!("{}: \"{}\"\n", escape_yaml(key), escape_yaml(&values[0])));
+            } else if !values.is_empty() {
+                yaml.push_str(&format!("{}:\n", escape_yaml(key)));
+                for val in values {
+                    yaml.push_str(&format!("  - \"{}\"\n", escape_yaml(val)));
+                }
+            }
         }
 
         yaml.push_str("tags:\n  - pdf\n  - notes\n");
@@ -732,6 +752,9 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
             creation_date: Some("2026-10-29".to_string()),
             total_pages: Some(42),
             pages_processed: Some("1-10".to_string()),
+            organization: Some("Aerospace Labs".to_string()),
+            doi: Some("10.1000/182".to_string()),
+            ..Default::default()
         };
 
         let yaml = meta.to_yaml_frontmatter();

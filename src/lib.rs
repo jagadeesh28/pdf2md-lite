@@ -5,6 +5,7 @@ pub mod concurrency;
 pub mod config;
 pub mod figure;
 pub mod markdown;
+pub mod metadata;
 pub mod pdf;
 pub mod pipeline;
 pub mod xycut;

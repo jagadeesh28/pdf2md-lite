@@ -74,10 +74,52 @@ pub fn process_pdf_with_source(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
 
-    // Extract PDF document properties for Obsidian frontmatter
+    // Extract PDF document properties for Obsidian frontmatter via DOM-first gating
     let mut metadata = crate::pdf::extract_pdf_metadata(input_path);
     if metadata.title.is_none() {
         metadata.title = Some(pdf_stem.to_string());
+    }
+
+    // DOM-First Fallback Gating: If author, DOI, or keywords are missing, extract from document header slice
+    if metadata.author.is_none() || metadata.doi.is_none() || metadata.keywords.is_none() {
+        let header_slice = if let Ok(bytes) = fs::read(input_path) {
+            crate::pdf::safe_extract_text_by_pages(&bytes)
+                .and_then(|pages| pages.into_iter().next())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        if !header_slice.trim().is_empty() {
+            #[cfg(feature = "gliner-ort")]
+            if let Some(gliner) = crate::metadata::get_gliner_engine() {
+                if let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "keywords", "doi"]) {
+                    if metadata.author.is_none() && !res.authors.is_empty() {
+                        metadata.author = Some(res.authors.join(", "));
+                    }
+                    if metadata.organization.is_none() && res.organization.is_some() {
+                        metadata.organization = res.organization;
+                    }
+                    if metadata.doi.is_none() && res.doi.is_some() {
+                        metadata.doi = res.doi;
+                    }
+                    if metadata.keywords.is_none() && !res.keywords.is_empty() {
+                        metadata.keywords = Some(res.keywords.join(", "));
+                    }
+                }
+            }
+
+            // Fallback pattern extractor if neural weights are not present
+            if metadata.doi.is_none() || metadata.keywords.is_none() {
+                let res = crate::metadata::extract_header_metadata_fallback(&header_slice);
+                if metadata.doi.is_none() && res.doi.is_some() {
+                    metadata.doi = res.doi;
+                }
+                if metadata.keywords.is_none() && !res.keywords.is_empty() {
+                    metadata.keywords = Some(res.keywords.join(", "));
+                }
+            }
+        }
     }
     if let Some(src) = source_label {
         metadata.source = Some(src.to_string());

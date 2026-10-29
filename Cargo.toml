@@ -20,9 +20,10 @@ tract-onnx = "0.23"
 ort = { version = "2.0.0-rc.15", optional = true }
 
 [features]
-default = ["slanet-ort", "latex-ort"]
+default = ["slanet-ort", "latex-ort", "gliner-ort"]
 slanet-ort = ["dep:ort"]
 latex-ort = ["dep:ort"]
+gliner-ort = ["dep:ort"]
 embed-models = []
 
 [profile.dev]
