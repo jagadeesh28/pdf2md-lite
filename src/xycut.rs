@@ -102,18 +102,13 @@ fn xy_cut_recursive(lines: &[TextLine], indices: &mut [usize]) -> Vec<usize> {
     }
 
     // 4. Base case: Atomic cohesive block. Sort top-to-bottom, left-to-right.
-    indices.sort_by(|&a, &b| {
-        let la = &lines[a].bbox;
-        let lb = &lines[b].bbox;
-        let a_y_mid = la.y + la.height / 2;
-        let b_y_mid = lb.y + lb.height / 2;
-        let tolerance = (la.height.min(lb.height) / 2).max(6);
-
-        if (a_y_mid as i32 - b_y_mid as i32).abs() <= tolerance as i32 {
-            la.x.cmp(&lb.x)
-        } else {
-            la.y.cmp(&lb.y)
-        }
+    // Quantize vertical midpoints into row bands based on line height to ensure
+    // a strict total order and prevent non-transitive sorting panics.
+    let band_h = (avg_height * 3 / 4).max(8);
+    indices.sort_by_key(|&idx| {
+        let b = &lines[idx].bbox;
+        let mid_y = b.y + b.height / 2;
+        (mid_y / band_h, b.x)
     });
 
     indices.to_vec()

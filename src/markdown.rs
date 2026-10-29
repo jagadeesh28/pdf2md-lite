@@ -8,6 +8,10 @@ pub struct DocumentMetadata {
     pub source: Option<String>,
     pub author: Option<String>,
     pub organization: Option<String>,
+    pub publication_date: Option<String>,
+    pub journal: Option<String>,
+    pub volume: Option<String>,
+    pub issue: Option<String>,
     pub subject: Option<String>,
     pub keywords: Option<String>,
     pub creation_date: Option<String>,
@@ -34,6 +38,18 @@ impl DocumentMetadata {
         }
         if let Some(ref org) = self.organization {
             yaml.push_str(&format!("organization: \"{}\"\n", escape_yaml(org)));
+        }
+        if let Some(ref pub_date) = self.publication_date {
+            yaml.push_str(&format!("date: \"{}\"\n", escape_yaml(pub_date)));
+        }
+        if let Some(ref journal) = self.journal {
+            yaml.push_str(&format!("journal: \"{}\"\n", escape_yaml(journal)));
+        }
+        if let Some(ref volume) = self.volume {
+            yaml.push_str(&format!("volume: \"{}\"\n", escape_yaml(volume)));
+        }
+        if let Some(ref issue) = self.issue {
+            yaml.push_str(&format!("issue: \"{}\"\n", escape_yaml(issue)));
         }
         if let Some(ref subject) = self.subject {
             yaml.push_str(&format!("subject: \"{}\"\n", escape_yaml(subject)));

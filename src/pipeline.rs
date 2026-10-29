@@ -80,8 +80,15 @@ pub fn process_pdf_with_source(
         metadata.title = Some(pdf_stem.to_string());
     }
 
-    // DOM-First Fallback Gating: If author, DOI, or keywords are missing, extract from document header slice
-    if metadata.author.is_none() || metadata.doi.is_none() || metadata.keywords.is_none() {
+    // DOM-First Fallback Gating: If author, publication date, organization, journal, volume, DOI, or keywords are missing, extract from document header slice
+    if metadata.author.is_none()
+        || metadata.publication_date.is_none()
+        || metadata.organization.is_none()
+        || metadata.journal.is_none()
+        || metadata.volume.is_none()
+        || metadata.doi.is_none()
+        || metadata.keywords.is_none()
+    {
         let header_slice = if let Ok(bytes) = fs::read(input_path) {
             crate::pdf::safe_extract_text_by_pages(&bytes)
                 .and_then(|pages| pages.into_iter().next())
@@ -93,12 +100,24 @@ pub fn process_pdf_with_source(
         if !header_slice.trim().is_empty() {
             #[cfg(feature = "gliner-ort")]
             if let Some(gliner) = crate::metadata::get_gliner_engine() {
-                if let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "keywords", "doi"]) {
+                if let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
                     if metadata.author.is_none() && !res.authors.is_empty() {
                         metadata.author = Some(res.authors.join(", "));
                     }
+                    if metadata.publication_date.is_none() && res.date.is_some() {
+                        metadata.publication_date = res.date;
+                    }
                     if metadata.organization.is_none() && res.organization.is_some() {
                         metadata.organization = res.organization;
+                    }
+                    if metadata.journal.is_none() && res.journal.is_some() {
+                        metadata.journal = res.journal;
+                    }
+                    if metadata.volume.is_none() && res.volume.is_some() {
+                        metadata.volume = res.volume;
+                    }
+                    if metadata.issue.is_none() && res.issue.is_some() {
+                        metadata.issue = res.issue;
                     }
                     if metadata.doi.is_none() && res.doi.is_some() {
                         metadata.doi = res.doi;
@@ -110,8 +129,33 @@ pub fn process_pdf_with_source(
             }
 
             // Fallback pattern extractor if neural weights are not present
-            if metadata.doi.is_none() || metadata.keywords.is_none() {
+            if metadata.author.is_none()
+                || metadata.publication_date.is_none()
+                || metadata.organization.is_none()
+                || metadata.journal.is_none()
+                || metadata.volume.is_none()
+                || metadata.doi.is_none()
+                || metadata.keywords.is_none()
+            {
                 let res = crate::metadata::extract_header_metadata_fallback(&header_slice);
+                if metadata.author.is_none() && !res.authors.is_empty() {
+                    metadata.author = Some(res.authors.join(", "));
+                }
+                if metadata.publication_date.is_none() && res.date.is_some() {
+                    metadata.publication_date = res.date;
+                }
+                if metadata.organization.is_none() && res.organization.is_some() {
+                    metadata.organization = res.organization;
+                }
+                if metadata.journal.is_none() && res.journal.is_some() {
+                    metadata.journal = res.journal;
+                }
+                if metadata.volume.is_none() && res.volume.is_some() {
+                    metadata.volume = res.volume;
+                }
+                if metadata.issue.is_none() && res.issue.is_some() {
+                    metadata.issue = res.issue;
+                }
                 if metadata.doi.is_none() && res.doi.is_some() {
                     metadata.doi = res.doi;
                 }
@@ -138,7 +182,57 @@ pub fn process_pdf_with_source(
         begin_page,
         end_page,
         explicit_concurrency,
-        |_page_num, page_md| {
+        |page_num, page_md| {
+            // For the first processed page, if metadata fields are still missing (e.g. scanned PDF where
+            // initial header_slice had no digital text), attempt extraction from the OCR text of page 1.
+            if page_num == begin_page
+                && (metadata.author.is_none()
+                    || metadata.publication_date.is_none()
+                    || metadata.organization.is_none()
+                    || metadata.journal.is_none()
+                    || metadata.volume.is_none()
+                    || metadata.doi.is_none()
+                    || metadata.keywords.is_none())
+            {
+                let res = crate::metadata::extract_header_metadata_fallback(&page_md);
+                let mut updated = false;
+                if metadata.author.is_none() && !res.authors.is_empty() {
+                    metadata.author = Some(res.authors.join(", "));
+                    updated = true;
+                }
+                if metadata.publication_date.is_none() && res.date.is_some() {
+                    metadata.publication_date = res.date;
+                    updated = true;
+                }
+                if metadata.organization.is_none() && res.organization.is_some() {
+                    metadata.organization = res.organization;
+                    updated = true;
+                }
+                if metadata.journal.is_none() && res.journal.is_some() {
+                    metadata.journal = res.journal;
+                    updated = true;
+                }
+                if metadata.volume.is_none() && res.volume.is_some() {
+                    metadata.volume = res.volume;
+                    updated = true;
+                }
+                if metadata.issue.is_none() && res.issue.is_some() {
+                    metadata.issue = res.issue;
+                    updated = true;
+                }
+                if metadata.doi.is_none() && res.doi.is_some() {
+                    metadata.doi = res.doi;
+                    updated = true;
+                }
+                if metadata.keywords.is_none() && !res.keywords.is_empty() {
+                    metadata.keywords = Some(res.keywords.join(", "));
+                    updated = true;
+                }
+                if updated {
+                    full_markdown = metadata.to_yaml_frontmatter();
+                }
+            }
+
             if !page_md.trim().is_empty() {
                 full_markdown.push_str(&page_md);
                 if !full_markdown.ends_with("\n\n") {
