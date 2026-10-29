@@ -3,3 +3,4 @@ output/
 temp/
 *.log
 .cargo/
+docs/

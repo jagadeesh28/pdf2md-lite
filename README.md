@@ -99,13 +99,9 @@ max_depth = 3
 
 ---
 
-## 📚 Architectural Decisions & Glossary
+## 📚 Glossary
 
 - [GLOSSARY.md](GLOSSARY.md) — Canonical Ubiquitous Language definitions.
-- [docs/adr/0001-pure-offline-zero-llm-architecture.md](docs/adr/0001-pure-offline-zero-llm-architecture.md) — ADR 0001: Pure-Offline Zero-LLM Architecture.
-- [docs/adr/0002-three-way-yolo-layout-routing.md](docs/adr/0002-three-way-yolo-layout-routing.md) — ADR 0002: Three-Way YOLO Layout Routing for Pictures, Tables, and Formulas.
-- [docs/adr/0003-resource-aware-dynamic-concurrency.md](docs/adr/0003-resource-aware-dynamic-concurrency.md) — ADR 0003: Resource-Aware Dynamic Concurrency.
-- [docs/adr/0004-short-slug-batch-directory-layout.md](docs/adr/0004-short-slug-batch-directory-layout.md) — ADR 0004: Short-Slug Batch Directory Layout and Page Indexing.
 
 ---
 
