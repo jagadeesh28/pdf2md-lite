@@ -37,6 +37,25 @@ pub fn process_pdf(
     end_page: usize,
     explicit_concurrency: Option<usize>,
 ) -> Result<()> {
+    process_pdf_with_source(
+        input_path,
+        output_path,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        None,
+    )
+}
+
+/// Converts a single PDF file with an optional relative source path for frontmatter metadata.
+pub fn process_pdf_with_source(
+    input_path: &Path,
+    output_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    source_label: Option<&str>,
+) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
 
     let pdf_stem = input_path
@@ -54,7 +73,21 @@ pub fn process_pdf(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
 
-    let mut full_markdown = String::new();
+    // Extract PDF document properties for Obsidian frontmatter
+    let mut metadata = crate::pdf::extract_pdf_metadata(input_path);
+    if metadata.title.is_none() {
+        metadata.title = Some(pdf_stem.to_string());
+    }
+    if let Some(src) = source_label {
+        metadata.source = Some(src.to_string());
+    } else if metadata.source.is_none() {
+        metadata.source = input_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+    }
+    metadata.pages_processed = Some(format!("{begin_page}-{end_page}"));
+    let mut full_markdown = metadata.to_yaml_frontmatter();
 
     process_pages_stream(
         input_path,
@@ -136,13 +169,13 @@ where
 
     if concurrency <= 1 || total_pages <= 1 {
         for (page_num, image_path, raw_page_text) in page_items {
-            let page_md = process_single_page(
+            let page_md = safe_process_single_page(
                 Some(input_path),
                 &image_path,
                 image_output_dir,
                 page_num,
                 raw_page_text.as_deref(),
-            )?;
+            );
             on_page(page_num, page_md)?;
         }
     } else {
@@ -178,7 +211,7 @@ where
                         break;
                     };
 
-                    let page_res = process_single_page(
+                    let page_md = safe_process_single_page(
                         Some(&input_path_clone),
                         &image_path,
                         &img_out_dir,
@@ -186,7 +219,7 @@ where
                         raw_page_text.as_deref(),
                     );
 
-                    if result_tx_clone.send((page_num, page_res)).is_err() {
+                    if result_tx_clone.send((page_num, page_md)).is_err() {
                         break;
                     }
                 }
@@ -198,8 +231,7 @@ where
         let mut pending_results: BTreeMap<usize, String> = BTreeMap::new();
         let mut next_expected_page = begin_page;
 
-        while let Ok((page_num, page_res)) = result_rx.recv() {
-            let page_md = page_res?;
+        while let Ok((page_num, page_md)) = result_rx.recv() {
             pending_results.insert(page_num, page_md);
 
             while let Some((&page, _)) = pending_results.iter().next() {
@@ -226,6 +258,62 @@ where
     }
 
     Ok(())
+}
+
+/// Executes single-page processing protected by panic and error boundaries, emitting an
+/// Obsidian `> [!WARNING]` callout whenever an unrecoverable error or panic occurs.
+pub fn safe_process_single_page(
+    pdf_path: Option<&Path>,
+    image_path: &Path,
+    image_output_dir: &Path,
+    page_num: usize,
+    raw_page_text: Option<&str>,
+) -> String {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        process_single_page(
+            pdf_path,
+            image_path,
+            image_output_dir,
+            page_num,
+            raw_page_text,
+        )
+    }));
+
+    match result {
+        Ok(Ok(page_md)) => page_md,
+        Ok(Err(err)) => {
+            eprintln!("Warning: Page {page_num} processing failed ({err:#}). Emitting warning callout.");
+            let page_demarcation = format_page_demarcation(page_num);
+            let mut warning_block = format!(
+                "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
+                 > An error occurred during page transcription: {err:#}\n\n"
+            );
+            if let Some(txt) = raw_page_text {
+                if !txt.trim().is_empty() {
+                    warning_block.push_str("### Recovered Stream Text\n\n");
+                    warning_block.push_str(txt.trim());
+                    warning_block.push_str("\n\n");
+                }
+            }
+            warning_block
+        }
+        Err(_) => {
+            eprintln!("Warning: Page {page_num} processing panicked. Emitting warning callout.");
+            let page_demarcation = format_page_demarcation(page_num);
+            let mut warning_block = format!(
+                "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
+                 > An unexpected panic occurred while decoding or processing page {page_num}.\n\n"
+            );
+            if let Some(txt) = raw_page_text {
+                if !txt.trim().is_empty() {
+                    warning_block.push_str("### Recovered Stream Text\n\n");
+                    warning_block.push_str(txt.trim());
+                    warning_block.push_str("\n\n");
+                }
+            }
+            warning_block
+        }
+    }
 }
 
 fn process_single_page(
@@ -364,4 +452,23 @@ fn process_single_page(
     let final_page_text = format!("{page_demarcation}{with_figures}");
 
     Ok(final_page_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_safe_process_single_page_emits_warning_on_failure() {
+        let fake_image = Path::new("non_existent_page_9999.png");
+        let fake_out = Path::new("fake_out");
+        let raw_text = Some("Fallback extracted stream text on page 7.");
+
+        let md = safe_process_single_page(None, fake_image, fake_out, 7, raw_text);
+
+        assert!(md.contains("<!-- Page 7 -->"));
+        assert!(md.contains("> [!WARNING] Page 7 Processing Incomplete"));
+        assert!(md.contains("### Recovered Stream Text"));
+        assert!(md.contains("Fallback extracted stream text on page 7."));
+    }
 }

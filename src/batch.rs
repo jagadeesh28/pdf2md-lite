@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::pdf::get_pdf_page_count;
-use crate::pipeline::process_pdf;
+use crate::pipeline::process_pdf_with_source;
 
 /// Default directory search depth for PDF batch conversion.
 pub const DEFAULT_MAX_SEARCH_DEPTH: usize = 3;
@@ -140,6 +140,19 @@ pub fn process_pdf_directory(
     let mut used_slugs = HashSet::new();
 
     for (index, pdf_path) in pdf_files.iter().enumerate() {
+        // Retain the input folder hierarchy inside the output base directory
+        let relative_parent = pdf_path
+            .strip_prefix(input_dir)
+            .ok()
+            .and_then(|rel| rel.parent())
+            .unwrap_or_else(|| Path::new(""));
+
+        let base_output_target_dir = if relative_parent.as_os_str().is_empty() {
+            output_base_dir.to_path_buf()
+        } else {
+            output_base_dir.join(relative_parent)
+        };
+
         let pdf_stem = pdf_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -148,13 +161,13 @@ pub fn process_pdf_directory(
 
         let mut folder_slug = base_slug.clone();
         let mut counter = 1;
-        while used_slugs.contains(&folder_slug) {
+        while used_slugs.contains(&base_output_target_dir.join(&folder_slug)) {
             folder_slug = format!("{base_slug}_{counter}");
             counter += 1;
         }
-        used_slugs.insert(folder_slug.clone());
+        used_slugs.insert(base_output_target_dir.join(&folder_slug));
 
-        let pdf_output_dir = output_base_dir.join(&folder_slug);
+        let pdf_output_dir = base_output_target_dir.join(&folder_slug);
         if let Err(err) = fs::create_dir_all(&pdf_output_dir) {
             eprintln!(
                 "Failed to create output directory {}: {err:#}",
@@ -196,9 +209,16 @@ pub fn process_pdf_directory(
             None => (1, total_pages),
         };
 
+        let rel_source = pdf_path
+            .strip_prefix(input_dir)
+            .ok()
+            .and_then(|p| p.to_str())
+            .map(|s| s.replace('\\', "/"));
+
         println!(
             "\n=======================================================\n\
              [{}/{}] Converting '{}'\n\
+             Relative path: {}\n\
              Pages: {}..{} (total: {})\n\
              Output directory: {}\n\
              Markdown: {}\n\
@@ -210,6 +230,7 @@ pub fn process_pdf_directory(
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown"),
+            rel_source.as_deref().unwrap_or(""),
             begin_page,
             end_page,
             total_pages,
@@ -218,12 +239,13 @@ pub fn process_pdf_directory(
             folder_slug
         );
 
-        match process_pdf(
+        match process_pdf_with_source(
             pdf_path,
             &target_md_path,
             begin_page,
             end_page,
             explicit_concurrency,
+            rel_source.as_deref(),
         ) {
             Ok(_) => {
                 println!("Successfully converted '{}'", pdf_path.display());
@@ -251,5 +273,22 @@ mod tests {
         );
         assert_eq!(sanitize_short_slug("test:document?1"), "test_document_1");
         assert_eq!(sanitize_short_slug(""), "doc");
+    }
+
+    #[test]
+    fn test_relative_folder_structure_preservation() {
+        let input_dir = Path::new("input");
+        let nested_pdf = Path::new("input/aerodynamics/turbines/stage1.pdf");
+        let rel_parent = nested_pdf
+            .strip_prefix(input_dir)
+            .ok()
+            .and_then(|r| r.parent())
+            .unwrap();
+
+        assert_eq!(rel_parent, Path::new("aerodynamics/turbines"));
+
+        let output_base = Path::new("output");
+        let target_dir = output_base.join(rel_parent).join("stage1");
+        assert_eq!(target_dir, Path::new("output/aerodynamics/turbines/stage1"));
     }
 }

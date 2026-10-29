@@ -4,7 +4,7 @@ use hayro::hayro_syntax::Pdf;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::markdown::PdfExtractionResult;
+use crate::markdown::{DocumentMetadata, PdfExtractionResult};
 
 /// Validates that `begin_page` and `end_page` are 1-based and valid.
 pub fn validate_page_range(begin_page: usize, end_page: usize) -> Result<()> {
@@ -164,4 +164,86 @@ pub fn extract_pdf_text(
         images: Vec::new(),
         figures: Vec::new(),
     })
+}
+
+/// Extracts embedded metadata properties (title, author, subject, dates) from a PDF.
+pub fn extract_pdf_metadata(pdf_path: &Path) -> DocumentMetadata {
+    let mut meta = DocumentMetadata::default();
+
+    if let Ok(doc) = lopdf::Document::load(pdf_path) {
+        let info_obj = doc.trailer.get(b"Info").ok();
+        let info_dict = match info_obj {
+            Some(lopdf::Object::Reference(id)) => doc.get_object(*id).ok().and_then(|o| o.as_dict().ok().cloned()),
+            Some(lopdf::Object::Dictionary(dict)) => Some(dict.clone()),
+            _ => None,
+        };
+
+        if let Some(dict) = info_dict {
+            if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string) {
+                if !val.trim().is_empty() {
+                    meta.title = Some(val);
+                }
+            }
+            if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string) {
+                if !val.trim().is_empty() {
+                    meta.author = Some(val);
+                }
+            }
+            if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string) {
+                if !val.trim().is_empty() {
+                    meta.subject = Some(val);
+                }
+            }
+            if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string) {
+                if !val.trim().is_empty() {
+                    meta.keywords = Some(val);
+                }
+            }
+            if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string) {
+                if !val.trim().is_empty() {
+                    meta.creation_date = Some(clean_pdf_date(&val));
+                }
+            }
+        }
+    }
+
+    if let Ok(count) = get_pdf_page_count(pdf_path) {
+        meta.total_pages = Some(count);
+    }
+
+    meta
+}
+
+fn decode_pdf_string(obj: &lopdf::Object) -> Option<String> {
+    match obj {
+        lopdf::Object::String(bytes, _) => {
+            if bytes.starts_with(&[0xfe, 0xff]) {
+                let u16_chars: Vec<u16> = bytes[2..]
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                Some(String::from_utf16_lossy(&u16_chars).trim().to_string())
+            } else {
+                Some(String::from_utf8_lossy(bytes).trim().to_string())
+            }
+        }
+        lopdf::Object::Name(bytes) => Some(String::from_utf8_lossy(bytes).trim().to_string()),
+        _ => None,
+    }
+}
+
+fn clean_pdf_date(raw: &str) -> String {
+    let s = raw.strip_prefix("D:").unwrap_or(raw);
+    if s.len() >= 8 {
+        let year = &s[0..4];
+        let month = &s[4..6];
+        let day = &s[6..8];
+        if year.chars().all(|c| c.is_ascii_digit())
+            && month.chars().all(|c| c.is_ascii_digit())
+            && day.chars().all(|c| c.is_ascii_digit())
+        {
+            return format!("{year}-{month}-{day}");
+        }
+    }
+    s.to_string()
 }

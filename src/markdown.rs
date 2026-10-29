@@ -1,6 +1,64 @@
 use crate::figure::CroppedFigure;
 use std::path::PathBuf;
 
+/// Document properties and frontmatter metadata for Obsidian note reading.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentMetadata {
+    pub title: Option<String>,
+    pub source: Option<String>,
+    pub author: Option<String>,
+    pub subject: Option<String>,
+    pub keywords: Option<String>,
+    pub creation_date: Option<String>,
+    pub total_pages: Option<usize>,
+    pub pages_processed: Option<String>,
+}
+
+impl DocumentMetadata {
+    /// Formats metadata into an Obsidian-compatible YAML frontmatter block.
+    pub fn to_yaml_frontmatter(&self) -> String {
+        let mut yaml = String::new();
+        yaml.push_str("---\n");
+
+        if let Some(ref title) = self.title {
+            yaml.push_str(&format!("title: \"{}\"\n", escape_yaml(title)));
+        }
+        if let Some(ref source) = self.source {
+            yaml.push_str(&format!("source: \"{}\"\n", escape_yaml(source)));
+        }
+        if let Some(ref author) = self.author {
+            yaml.push_str(&format!("author: \"{}\"\n", escape_yaml(author)));
+        }
+        if let Some(ref subject) = self.subject {
+            yaml.push_str(&format!("subject: \"{}\"\n", escape_yaml(subject)));
+        }
+        if let Some(ref keywords) = self.keywords {
+            yaml.push_str(&format!("keywords: \"{}\"\n", escape_yaml(keywords)));
+        }
+        if let Some(ref date) = self.creation_date {
+            yaml.push_str(&format!("created: \"{}\"\n", escape_yaml(date)));
+        }
+        if let Some(total) = self.total_pages {
+            yaml.push_str(&format!("total_pages: {}\n", total));
+        }
+        if let Some(ref pages) = self.pages_processed {
+            yaml.push_str(&format!("pages_processed: \"{}\"\n", pages));
+        }
+
+        yaml.push_str("tags:\n  - pdf\n  - notes\n");
+        yaml.push_str("---\n\n");
+        yaml
+    }
+}
+
+/// Escapes double quotes and backslashes in YAML string values.
+fn escape_yaml(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "")
+        .replace('\n', " ")
+}
+
 /// Results of a document conversion or text extraction run.
 #[derive(Debug, Default, Clone)]
 pub struct PdfExtractionResult {
@@ -661,5 +719,30 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         // "OR" and prose headers must not be wrapped inside a math block
         assert!(!formatted.contains("$$\nOR\n$$"));
         assert!(!formatted.contains("$$\nThe maximum"));
+    }
+
+    #[test]
+    fn test_document_metadata_yaml_frontmatter() {
+        let meta = DocumentMetadata {
+            title: Some("Thermodynamic Analysis of Rocket Engines".to_string()),
+            source: Some("propulsion/reports/engine_1.pdf".to_string()),
+            author: Some("Dr. John Doe".to_string()),
+            subject: Some("Liquid Rocket Propulsion".to_string()),
+            keywords: Some("propulsion, thermodynamics".to_string()),
+            creation_date: Some("2026-10-29".to_string()),
+            total_pages: Some(42),
+            pages_processed: Some("1-10".to_string()),
+        };
+
+        let yaml = meta.to_yaml_frontmatter();
+        assert!(yaml.starts_with("---\n"));
+        assert!(yaml.ends_with("---\n\n"));
+        assert!(yaml.contains("title: \"Thermodynamic Analysis of Rocket Engines\"\n"));
+        assert!(yaml.contains("source: \"propulsion/reports/engine_1.pdf\"\n"));
+        assert!(yaml.contains("author: \"Dr. John Doe\"\n"));
+        assert!(yaml.contains("created: \"2026-10-29\"\n"));
+        assert!(yaml.contains("total_pages: 42\n"));
+        assert!(yaml.contains("pages_processed: \"1-10\"\n"));
+        assert!(yaml.contains("tags:\n  - pdf\n  - notes\n"));
     }
 }
