@@ -7,6 +7,28 @@ use std::sync::RwLock;
 
 static CUSTOM_LAYOUT_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 
+#[cfg(any(feature = "slanet-ort", feature = "latex-ort", feature = "gliner-ort"))]
+static ORT_ENVIRONMENT: std::sync::OnceLock<std::sync::Arc<ort::environment::Environment>> =
+    std::sync::OnceLock::new();
+
+/// Returns a shared, process-wide ONNX Runtime Environment singleton.
+/// Only one Environment is permitted per process by ONNX Runtime.
+#[cfg(any(feature = "slanet-ort", feature = "latex-ort", feature = "gliner-ort"))]
+pub fn get_shared_ort_environment() -> anyhow::Result<std::sync::Arc<ort::environment::Environment>> {
+    if let Some(env) = ORT_ENVIRONMENT.get() {
+        return Ok(env.clone());
+    }
+
+    let env = ort::environment::init()
+        .with_name("pdfmd_lite")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to initialize shared ORT environment: {e}"))?;
+
+    let arc = std::sync::Arc::new(env);
+    let _ = ORT_ENVIRONMENT.set(arc.clone());
+    Ok(ORT_ENVIRONMENT.get().unwrap().clone())
+}
+
 /// Sets a global custom weights path for the YOLO Document Layout Engine.
 pub fn set_custom_layout_path(path: PathBuf) {
     if let Ok(mut lock) = CUSTOM_LAYOUT_PATH.write() {

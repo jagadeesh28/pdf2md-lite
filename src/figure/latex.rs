@@ -48,10 +48,7 @@ pub fn get_latex_engine() -> Option<()> {
 impl RapidLatexEngine {
     /// Initializes RapidLaTeXOCR from encoder, decoder, and tokenizer paths.
     pub fn new<P: AsRef<Path>>(encoder_path: P, decoder_path: P, tokenizer_path: P) -> anyhow::Result<Self> {
-        let env = ort::environment::init()
-            .with_name("rapid_latex")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to initialize ORT environment: {e}"))?;
+        let env = crate::figure::models::get_shared_ort_environment()?;
 
         let encoder = ort::session::Session::builder(&env)
             .map_err(|e| anyhow::anyhow!("Failed to create encoder session builder: {e}"))?

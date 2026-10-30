@@ -20,29 +20,16 @@ jobs:
             target: x86_64-unknown-linux-gnu
             test: true
 
-          - name: Linux x86-32
-            os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-            test: false
-            apt_packages: gcc-multilib
-
           - name: Linux aarch64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            test: false
-            apt_packages: gcc-aarch64-linux-gnu
-            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            test: true
 
           # --- Windows Builds ---
           - name: Windows x86-64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             test: true
-
-          - name: Windows x86-32
-            os: windows-latest
-            target: i686-pc-windows-msvc
-            test: false
 
           - name: Windows aarch64
             os: windows-latest

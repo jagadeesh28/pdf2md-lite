@@ -52,10 +52,7 @@ pub fn get_slanet_engine() -> Option<()> {
 impl SlaNetEngine {
     /// Initializes SLANet from onnx model path and dictionary file.
     pub fn new<P: AsRef<Path>>(model_path: P, dict_path: P) -> anyhow::Result<Self> {
-        let env = ort::environment::init()
-            .with_name("slanet")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to initialize ORT environment: {e}"))?;
+        let env = crate::figure::models::get_shared_ort_environment()?;
 
         let session = ort::session::Session::builder(&env)
             .map_err(|e| anyhow::anyhow!("Failed to create session builder: {e}"))?

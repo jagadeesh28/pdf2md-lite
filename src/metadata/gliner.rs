@@ -61,10 +61,7 @@ pub fn get_gliner_engine() -> Option<()> {
 impl GlinerEngine {
     /// Initializes GLiNER engine from ONNX model weights path.
     pub fn new<P: AsRef<Path>>(model_path: P) -> anyhow::Result<Self> {
-        let env = ort::environment::init()
-            .with_name("gliner")
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to initialize ORT environment: {e}"))?;
+        let env = crate::figure::models::get_shared_ort_environment()?;
 
         let session = ort::session::Session::builder(&env)
             .map_err(|e| anyhow::anyhow!("Failed to create GLiNER session builder: {e}"))?
