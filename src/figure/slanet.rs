@@ -274,7 +274,7 @@ mod tests {
     #[test]
     #[cfg(feature = "slanet-ort")]
     fn test_slanet_load_and_dummy_predict() -> anyhow::Result<()> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let model_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("slanet.onnx");
         let dict_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("table_structure_dict.txt");
 

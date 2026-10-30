@@ -265,7 +265,7 @@ impl YoloLayoutDetector {
         let mut candidates = Vec::new();
 
         for i in 0..anchors {
-            let cx = raw_slice[0 * anchors + i];
+            let cx = raw_slice[i];
             let cy = raw_slice[1 * anchors + i];
             let w = raw_slice[2 * anchors + i];
             let h = raw_slice[3 * anchors + i];

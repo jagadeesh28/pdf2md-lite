@@ -8,6 +8,7 @@ use std::path::PathBuf;
 const INDRA_FILES: &[&str] = &[
     "det.onnx",
     "rec.onnx",
+    "rec_world.onnx",
     "order.onnx",
     "meta.json",
     "config.json",

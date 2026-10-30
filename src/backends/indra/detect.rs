@@ -185,6 +185,14 @@ impl IndraDetector {
                     if orig_x1 > orig_x0 && orig_y1 > orig_y0 {
                         let bw = orig_x1 - orig_x0;
                         let bh = orig_y1 - orig_y0;
+
+                        // Discard hairline rules, decorative border lines, and non-text dividers
+                        let aspect = bw as f32 / bh as f32;
+                        let inv_aspect = bh as f32 / bw as f32;
+                        if bh < 4 || (bh < 8 && aspect > 25.0) || (bw < 8 && inv_aspect > 25.0) {
+                            continue;
+                        }
+
                         if bw >= 2 && bh >= 2 {
                             raw_boxes.push(TextBoundingBox {
                                 x: orig_x0,

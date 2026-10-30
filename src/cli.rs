@@ -4,10 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::batch::process_pdf_directory;
+use crate::batch::process_pdf_directory_with_options;
 use crate::config::AppConfig;
 use crate::markdown::normalize_latex_delimiters;
-use crate::pipeline::process_pdf;
+use crate::pipeline::process_pdf_with_options;
 
 pub fn print_usage() {
     eprintln!(
@@ -31,6 +31,10 @@ OPTIONS:
     -j, --concurrency <N>       Number of concurrent worker threads (default: hardware-auto)
     -d, --max-depth <DEPTH>     Max directory search depth for batch mode (default: 3)
     -c, --config <PATH>         Path to custom configuration file (default: pdfmd-lite.toml)
+    -q, --quiet, --silent       Silent operation (suppress verbose per-page/document logs)
+    --english, -en              Pure English/Latin OCR (rec.onnx, default, zero foreign character hallucinations)
+    --telugu, -te               Telugu OCR (rec_world.onnx)
+    -l, --lang, --language <L>  Explicit language/script: english, telugu, auto
     -h, --help                  Print this help message
 
 FEATURES:
@@ -104,6 +108,8 @@ pub fn run() {
     let mut concurrency: Option<usize> = None;
     let mut max_depth: Option<usize> = None;
     let mut config_path: Option<PathBuf> = None;
+    let mut language: Option<crate::backends::indra::IndraScript> = None;
+    let mut quiet = false;
 
     let mut positional = Vec::new();
     let mut i = 0;
@@ -145,6 +151,26 @@ pub fn run() {
                 if let Some((s, e)) = range.split_once('-') {
                     begin_page = s.trim().parse().ok();
                     end_page = e.trim().parse().ok();
+                }
+                i += 2;
+                continue;
+            }
+        } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
+            quiet = true;
+        } else if arg == "--english" || arg == "-en" {
+            language = Some(crate::backends::indra::IndraScript::English);
+        } else if arg == "--telugu" || arg == "-te" {
+            language = Some(crate::backends::indra::IndraScript::Telugu);
+        } else if arg == "--auto" {
+            language = Some(crate::backends::indra::IndraScript::Auto);
+        } else if arg == "-l" || arg == "--lang" || arg == "--language" {
+            if i + 1 < args.len() {
+                match args[i + 1].parse::<crate::backends::indra::IndraScript>() {
+                    Ok(lang) => language = Some(lang),
+                    Err(err) => {
+                        eprintln!("Error: {err}");
+                        process::exit(1);
+                    }
                 }
                 i += 2;
                 continue;
@@ -191,6 +217,14 @@ pub fn run() {
     let config = AppConfig::load(config_path.as_deref()).unwrap_or_default();
     let final_concurrency = concurrency.or(config.concurrency);
     let final_max_depth = max_depth.or(config.max_depth).unwrap_or(3);
+    let final_script = language
+        .or_else(|| {
+            config
+                .language
+                .as_deref()
+                .and_then(|s| s.parse::<crate::backends::indra::IndraScript>().ok())
+        })
+        .unwrap_or(crate::backends::indra::IndraScript::English);
 
     if input.is_dir() {
         let page_range = match (begin_page, end_page) {
@@ -198,7 +232,15 @@ pub fn run() {
             _ => None,
         };
 
-        match process_pdf_directory(&input, &output, page_range, final_max_depth, final_concurrency) {
+        match process_pdf_directory_with_options(
+            &input,
+            &output,
+            page_range,
+            final_max_depth,
+            final_concurrency,
+            final_script,
+            quiet,
+        ) {
             Ok(summary) => {
                 println!(
                     "\nBatch complete: {} processed ({} succeeded, {} failed)",
@@ -235,7 +277,16 @@ pub fn run() {
             output
         };
 
-        if let Err(err) = process_pdf(&input, &target_md, begin, end, final_concurrency) {
+        println!("Converting single PDF (Language: {final_script})...");
+        if let Err(err) = process_pdf_with_options(
+            &input,
+            &target_md,
+            begin,
+            end,
+            final_concurrency,
+            None,
+            final_script,
+        ) {
             eprintln!("Error converting PDF: {err:#}");
             process::exit(1);
         }

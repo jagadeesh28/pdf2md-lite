@@ -82,11 +82,10 @@ pub struct PageLayoutResult {
     pub formulas: Vec<FigureRect>,
 }
 
-/// Analyzes page layout using YOLOv8n DocLayNet and PDF streams, routing elements into
-/// pictures, tables, and formulas.
-pub fn analyze_page_layout(
+/// Analyzes page layout using YOLOv8n DocLayNet and PDF streams directly from an in-memory DynamicImage.
+pub fn analyze_page_layout_image(
     pdf_path: Option<&Path>,
-    image_path: &Path,
+    page_img: &DynamicImage,
     image_output_dir: &Path,
     page_num: usize,
 ) -> Result<PageLayoutResult> {
@@ -97,10 +96,7 @@ pub fn analyze_page_layout(
         )
     })?;
 
-    let page_img = image::open(image_path)
-        .with_context(|| format!("Failed to open page image {:?}", image_path))?;
     let (page_w, page_h) = page_img.dimensions();
-
     let mut result = PageLayoutResult::default();
 
     // 1. Check native PDF DOM streams for digital vector/raster images
@@ -136,7 +132,7 @@ pub fn analyze_page_layout(
     // 2. Run YOLO Document Layout Engine (DocLayNet)
     let yolo = get_yolo_detector().context("Failed to load YOLO Document Layout Engine")?;
     let boxes = yolo
-        .detect(&page_img, 0.40)
+        .detect(page_img, 0.40)
         .context("YOLO layout detection failed")?;
 
     let mut figure_idx = result.pictures.len();
@@ -165,7 +161,7 @@ pub fn analyze_page_layout(
                     let file_path = image_output_dir.join(&filename);
 
                     // Crop raw unenhanced image directly from page canvas
-                    if let Ok(cropped) = crop_rectangle(&page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                    if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
                         let _ = cropped.save(&file_path);
                     }
 
@@ -190,7 +186,7 @@ pub fn analyze_page_layout(
                 let file_path = image_output_dir.join(&filename);
 
                 // Save companion raw table crop
-                if let Ok(cropped) = crop_rectangle(&page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
                     let _ = cropped.save(&file_path);
                 }
 
@@ -215,6 +211,18 @@ pub fn analyze_page_layout(
     }
 
     Ok(result)
+}
+
+/// Analyzes page layout using YOLOv8n DocLayNet and PDF streams, loading from disk.
+pub fn analyze_page_layout(
+    pdf_path: Option<&Path>,
+    image_path: &Path,
+    image_output_dir: &Path,
+    page_num: usize,
+) -> Result<PageLayoutResult> {
+    let page_img = image::open(image_path)
+        .with_context(|| format!("Failed to open page image {:?}", image_path))?;
+    analyze_page_layout_image(pdf_path, &page_img, image_output_dir, page_num)
 }
 
 /// Helper to safely crop a rectangle with margin from a DynamicImage.

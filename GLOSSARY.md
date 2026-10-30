@@ -48,6 +48,11 @@ _Avoid_: Fixed thread pool, static worker count, env-var concurrency
 An encoder-decoder vision transformer model executing autoregressive sequence decoding over cropped formula regions to generate exact LaTeX equation markup.
 _Avoid_: Formula OCR, equation transcriber, pix2tex wrapper
 
+**Indra World Recognizer**:
+An in-process SVTR CTC neural recognizer (`rec_world.onnx`) operating on 32px height line crops across a 2,935-token vocabulary for Indic and non-Latin world scripts, including Telugu (`U+0C00..=U+0C7F`).
+_Avoid_: Tesseract Indic, external language pack, secondary OCR pipeline
+
+
 **SLANet Table Engine**:
 A structure-location architecture network that predicts structural HTML tokens and 2D cell bounding boxes from cropped table regions to reconstruct tabular grids.
 _Avoid_: Table detector, heuristic table parser
@@ -63,3 +68,27 @@ _Avoid_: LLM tagger, heuristic metadata extractor, regex parser
 **DOM-First Metadata Gating**:
 A fallback dispatch strategy that prioritizes native PDF catalog info dictionaries (`/Title`, `/Author`, etc.) and conditionally invokes neural entity extraction only when structural properties are missing or uninformative.
 _Avoid_: Unconditional neural extraction, blind metadata tagging
+
+**Constrained CTC Masking**:
+A decoding mechanism that dynamically restricts the candidate token set during CTC decoding to the active language script's valid Unicode block, preventing out-of-script character hallucinations.
+_Avoid_: Blind CTC argmax, post-OCR regex stripping, unconstrained world decoding
+
+**Hybrid Math Gating**:
+A spatial and semantic classification mechanism that preserves inline formulas within running paragraphs as `$...$` while rejecting prose sentences containing English stop words from being fenced inside display math `$$...$$`.
+_Avoid_: Blind formula wrapping, isolated inline math, unanchored math block
+
+**Heading Promotion Ensemble**:
+A document structuring routine combining neural layout boundaries with typographic and keyword heuristics to format document titles and section dividers with `#` and `##` Markdown markers.
+_Avoid_: Flat paragraph dump, unstructured transcript, blind layout tagging
+
+**Two-Stage Progressive Metadata**:
+A two-pass metadata extraction architecture that fast-scans PDF catalog info upfront, followed by full-document transcript analysis post-extraction to synthesize titles, authors, and classification/domain tags for YAML frontmatter.
+_Avoid_: Upfront-only DOM inspection, premature header slicing
+
+**Global Worker Pool**:
+A unified process-wide thread pool dynamically sized by the hardware governor that coordinates concurrent work units across multiple documents and pages without thread oversubscription.
+_Avoid_: Per-document thread pool, nested worker spawning, uncoordinated concurrency
+
+**Pipelined In-Memory Rasterization**:
+A zero-disk streaming architecture where a dedicated rendering thread streams decoded in-memory page canvases through a bounded channel directly to active OCR workers, eliminating intermediate PNG disk writes.
+_Avoid_: Disk spooling, batch PNG caching, sequential pre-rendering

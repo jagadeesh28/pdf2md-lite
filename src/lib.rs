@@ -10,7 +10,7 @@ pub mod pdf;
 pub mod pipeline;
 pub mod xycut;
 
-pub use backends::indra::{IndraEngine, TextLine};
+pub use backends::indra::{IndraEngine, IndraScript, TextLine};
 pub use batch::{process_pdf_directory, BatchConversionResult, sanitize_short_slug};
 pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
@@ -23,4 +23,7 @@ pub use pdf::{
     clean_extracted_text, extract_pdf_metadata, extract_pdf_text, get_pdf_page_count,
     render_pages_to_images, safe_extract_text_by_pages, validate_page_range,
 };
-pub use pipeline::{get_indra_engine, process_pages_stream, process_pdf, process_pdf_with_source, safe_process_single_page};
+pub use pipeline::{
+    get_indra_engine, process_pages_stream, process_pdf, process_pdf_with_options,
+    process_pdf_with_source, safe_process_single_page,
+};

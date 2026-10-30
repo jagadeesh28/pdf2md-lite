@@ -18,6 +18,7 @@ pub struct DocumentMetadata {
     pub doi: Option<String>,
     pub total_pages: Option<usize>,
     pub pages_processed: Option<String>,
+    pub tags: Vec<String>,
     pub custom_properties: std::collections::BTreeMap<String, Vec<String>>,
 }
 
@@ -81,7 +82,14 @@ impl DocumentMetadata {
             }
         }
 
-        yaml.push_str("tags:\n  - pdf\n  - notes\n");
+        if !self.tags.is_empty() {
+            yaml.push_str("tags:\n");
+            for tag in &self.tags {
+                yaml.push_str(&format!("  - \"{}\"\n", escape_yaml(tag)));
+            }
+        } else {
+            yaml.push_str("tags:\n  - pdf\n  - notes\n");
+        }
         yaml.push_str("---\n\n");
         yaml
     }
@@ -363,6 +371,339 @@ fn is_display_equation_line(line: &str) -> bool {
     }
 
     false
+}
+
+/// Returns true if the text looks like an ordinary prose sentence rather than a mathematical formula.
+pub fn is_likely_prose_sentence(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if words.is_empty() {
+        return false;
+    }
+
+    let prose_count = words
+        .iter()
+        .filter(|&&w| PROSE_STOP_WORDS.contains(&w))
+        .count();
+
+    // If text contains 2 or more stop words, or > 25% of words are standard prose words, reject math wrapping
+    if prose_count >= 2 || (words.len() >= 4 && (prose_count as f32 / words.len() as f32) > 0.25) {
+        return true;
+    }
+
+    // Common scientific prose words that often appear in false-positive formula boxes
+    let sentence_markers = [
+        "where", "expressing", "yields", "assuming", "equation", "equations", "gives", "shows",
+        "defined", "denotes", "represents", "substituted", "substituting", "conservation",
+        "balance", "results", "density", "velocity", "temperature", "pressure", "flux",
+    ];
+    let has_sentence_marker = words.iter().any(|&w| sentence_markers.contains(&w));
+    if has_sentence_marker && words.len() >= 3 {
+        return true;
+    }
+
+    false
+}
+
+/// Returns true if a formula candidate represents an inline formula or short token rather than a display equation block.
+pub fn is_inline_formula(text: &str, line_share_count: usize, box_h: u32, avg_h: f32) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // If the formula shares a baseline with other text on the same line, it is inline
+    if line_share_count > 0 {
+        return true;
+    }
+    // If height is close to single-line text and expression is short without matrices or multi-line structures
+    if (box_h as f32) <= 1.35 * avg_h
+        && trimmed.len() <= 35
+        && !trimmed.contains('\n')
+        && !trimmed.contains(r"\begin")
+        && !trimmed.contains(r"\frac")
+        && !trimmed.contains(r"\sum")
+        && !trimmed.contains(r"\int")
+    {
+        return true;
+    }
+    false
+}
+
+/// De-hyphenates words broken across line breaks (e.g. "combus-\ntor" -> "combustor").
+/// Compound prefixes (e.g. "three-", "two-", "one-", "non-", "quasi-", "cross-", "self-") retain their hyphen ("three-dimensional").
+pub fn dehyphenate_text(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '-' {
+            let mut ahead = chars.clone();
+            let mut newline_found = false;
+            if ahead.peek() == Some(&'\r') {
+                ahead.next();
+            }
+            if ahead.peek() == Some(&'\n') {
+                ahead.next();
+                newline_found = true;
+            }
+
+            if newline_found {
+                if let Some(&next_c) = ahead.peek() {
+                    if next_c.is_ascii_lowercase() {
+                        // Check previous word in result
+                        let prev_word: String = result
+                            .chars()
+                            .rev()
+                            .take_while(|ch| ch.is_ascii_alphabetic())
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect();
+                        let lower_prefix = prev_word.to_ascii_lowercase();
+                        let compound_prefixes = [
+                            "three", "two", "one", "non", "quasi", "cross", "self", "multi", "sub",
+                            "half", "all", "well", "high", "low",
+                        ];
+
+                        if compound_prefixes.contains(&lower_prefix.as_str()) {
+                            // Retain hyphen, skip only the newline
+                            result.push('-');
+                            if chars.peek() == Some(&'\r') {
+                                chars.next();
+                            }
+                            if chars.peek() == Some(&'\n') {
+                                chars.next();
+                            }
+                            continue;
+                        } else if !prev_word.is_empty() {
+                            // Merge split word (drop both hyphen and newline)
+                            if chars.peek() == Some(&'\r') {
+                                chars.next();
+                            }
+                            if chars.peek() == Some(&'\n') {
+                                chars.next();
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        result.push(c);
+    }
+    result
+}
+
+/// Strips repetitive running headers and footers (e.g. "VOL. 1, NO. 1", "AIAA JOURNAL", "Page X of Y") from document body.
+pub fn strip_running_headers_and_footers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let upper = trimmed.to_uppercase();
+
+        let is_running_hdr = (upper.starts_with("VOL. ") && upper.contains("NO. "))
+            || (upper.contains("J. PROPULSION") && (upper.contains("VOL.") || upper.contains("198") || upper.contains("199")))
+            || (upper.starts_with("AIAA JOURNAL") && upper.len() < 40)
+            || (upper.starts_with("DOWNLOADED BY ") || upper.starts_with("DOWNLOADED ON "))
+            || (upper.starts_with("PAGE ") && upper.contains(" OF ") && upper.len() < 25);
+
+        if !is_running_hdr {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Promotes academic section headings and document titles to Markdown headings (# Title, ## Section).
+pub fn promote_headings(text: &str) -> String {
+    let standard_sections = [
+        "ABSTRACT",
+        "INTRODUCTION",
+        "BACKGROUND",
+        "THEORY",
+        "THEORETICAL FORMULATION",
+        "GOVERNING EQUATIONS",
+        "NUMERICAL METHOD",
+        "NUMERICAL METHODS",
+        "METHODOLOGY",
+        "METHODS",
+        "EXPERIMENTAL SETUP",
+        "EXPERIMENTAL APPARATUS",
+        "RESULTS AND DISCUSSION",
+        "RESULTS",
+        "DISCUSSION",
+        "CONCLUSIONS",
+        "CONCLUSION",
+        "NOMENCLATURE",
+        "ACKNOWLEDGEMENTS",
+        "ACKNOWLEDGMENT",
+        "REFERENCES",
+    ];
+
+    let mut out = String::with_capacity(text.len() + 256);
+    let mut in_code = false;
+    let mut title_promoted = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if in_code || trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('>') || trimmed.starts_with('|') || trimmed.starts_with("<!--") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        let upper = trimmed.to_uppercase();
+
+        // 1. Check for standard academic section names
+        let is_section = standard_sections.iter().any(|&sec| upper == sec || upper == format!("{}:", sec));
+
+        // 2. Check for numbered section headers: "I. INTRODUCTION", "1.0 INTRODUCTION", "1. Introduction"
+        let is_numbered_section = (trimmed.len() < 60) && (
+            (trimmed.starts_with("I. ") || trimmed.starts_with("II. ") || trimmed.starts_with("III. ")
+                || trimmed.starts_with("IV. ") || trimmed.starts_with("V. ") || trimmed.starts_with("VI. ")
+                || trimmed.starts_with("VII. ") || trimmed.starts_with("VIII. ") || trimmed.starts_with("IX. ")
+                || trimmed.starts_with("X. "))
+            || (trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                && (trimmed.contains(".0 ") || (trimmed.chars().nth(1) == Some('.') && trimmed.chars().nth(2) == Some(' '))))
+        );
+
+        if is_section || is_numbered_section {
+            out.push_str(&format!("## {}\n", trimmed));
+            continue;
+        }
+
+        // 3. Promote primary title on first page if not already promoted
+        if !title_promoted && trimmed.len() > 10 && trimmed.len() < 120 && !trimmed.ends_with('.') && !upper.starts_with("VOL") {
+            if !trimmed.contains("University") && !trimmed.contains("Company") && !trimmed.contains("Institute") && !trimmed.contains("Laboratory") && !trimmed.contains('@') {
+                out.push_str(&format!("# {}\n", trimmed));
+                title_promoted = true;
+                continue;
+            }
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Enriches document metadata post-extraction by analyzing the full transcribed document text.
+/// Extracts missing titles, authors, and dynamically generates taxonomy tags.
+pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: &str) {
+    if full_doc_text.trim().is_empty() {
+        return;
+    }
+
+    // 1. Recover Document Title if missing or generic
+    if metadata.title.as_ref().map(|t| t.len() < 4 || t.chars().all(|c| c.is_ascii_digit()) || t.contains('_')).unwrap_or(true) {
+        for line in full_doc_text.lines().take(40) {
+            let trimmed = line.trim();
+            if trimmed.starts_with("# ") && !trimmed.starts_with("## ") {
+                let candidate = trimmed[2..].trim();
+                if candidate.len() > 4 {
+                    metadata.title = Some(candidate.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    // 2. Recover Authors if missing
+    if metadata.author.is_none() {
+        let lines: Vec<&str> = full_doc_text.lines().take(30).map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("University") || line.contains("Company") || line.contains("Institute") || line.contains("Laboratory") {
+                if i > 0 {
+                    let prev = lines[i - 1];
+                    let clean: String = prev.chars().filter(|c| c.is_alphabetic() || *c == ' ' || *c == ',' || *c == '&' || *c == '.').collect();
+                    let trimmed = clean.trim();
+                    if trimmed.len() > 5 && trimmed.len() < 80 && !trimmed.starts_with('#') {
+                        metadata.author = Some(trimmed.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Generate Classification & Categorization Tags
+    let mut tags = Vec::new();
+    let upper = full_doc_text.to_uppercase();
+
+    // A. Document Classification (Type)
+    if upper.contains("JOURNAL OF") || upper.contains("AIAA") || upper.contains("TRANSACTIONS") || (upper.contains("ABSTRACT") && upper.contains("REFERENCES")) {
+        tags.push("type/journal-article".to_string());
+    } else if upper.contains("REPORT") || upper.contains("NASA CR") || upper.contains("TECHNICAL REPORT") {
+        tags.push("type/technical-report".to_string());
+    } else if upper.contains("CONFERENCE") || upper.contains("SYMPOSIUM") || upper.contains("PROCEEDINGS") || upper.contains("PAPER 8") {
+        tags.push("type/conference-paper".to_string());
+    } else if full_doc_text.contains("పత్రిక") || full_doc_text.contains("వార పత్రిక") || full_doc_text.contains("సంచిక") {
+        tags.push("type/periodical-magazine".to_string());
+    } else {
+        tags.push("type/document".to_string());
+    }
+
+    // B. Domain Categorization
+    let mut domains = Vec::new();
+    if upper.contains("PROPULSION") || upper.contains("COMBUSTOR") || upper.contains("SLURRY") || upper.contains("NOZZLE") || upper.contains("SCRAMJET") || upper.contains("RAMJET") || upper.contains("ROCKET") {
+        domains.push("domain/propulsion");
+        domains.push("domain/aerospace");
+    }
+    if upper.contains("TRANSONIC") || upper.contains("SUPERSONIC") || upper.contains("FLOWFIELD") || upper.contains("AERODYNAMIC") || upper.contains("BOUNDARY-LAYER") || upper.contains("AIRFOIL") || upper.contains("MACH") {
+        domains.push("domain/aerodynamics");
+        domains.push("domain/fluid-dynamics");
+    }
+    if upper.contains("FACTORIZATION") || upper.contains("FINITE-DIFFERENCE") || upper.contains("MULTIGRID") || upper.contains("NAVIER-STOKES") || upper.contains("EULER") {
+        domains.push("domain/computational-methods");
+    }
+    if upper.contains("COMBUSTION") || upper.contains("DROPLET") || upper.contains("FLAME") || upper.contains("IGNITION") {
+        domains.push("domain/combustion");
+    }
+    if crate::backends::indra::vocab::has_telugu(full_doc_text) {
+        domains.push("domain/telugu-literature");
+        domains.push("domain/history");
+        tags.push("lang/telugu".to_string());
+    } else {
+        tags.push("lang/english".to_string());
+    }
+
+    for d in domains {
+        if !tags.contains(&d.to_string()) {
+            tags.push(d.to_string());
+        }
+    }
+
+    // C. Topical entities from title
+    if let Some(ref title) = metadata.title {
+        let lower_t = title.to_lowercase();
+        for kw in &["scramjet", "combustor", "nacelle", "inlet", "slurry", "droplet", "supersonic", "transonic", "factorization", "turbulent", "nozzle"] {
+            if lower_t.contains(kw) {
+                let tag = format!("topic/{}", kw);
+                if !tags.contains(&tag) {
+                    tags.push(tag);
+                }
+            }
+        }
+    }
+
+    metadata.tags = tags;
 }
 
 fn wrap_inline_math(line: &str) -> String {
@@ -783,5 +1124,69 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         assert!(yaml.contains("total_pages: 42\n"));
         assert!(yaml.contains("pages_processed: \"1-10\"\n"));
         assert!(yaml.contains("tags:\n  - pdf\n  - notes\n"));
+    }
+
+    #[test]
+    fn test_dehyphenate_text() {
+        let input = "The combus-\ntor performance in this ex-\nperiment demonstrated three-\ndimensional flow.";
+        let res = dehyphenate_text(input);
+        assert_eq!(
+            res,
+            "The combustor performance in this experiment demonstrated three-dimensional flow."
+        );
+    }
+
+    #[test]
+    fn test_strip_running_headers() {
+        let input = "58 J. PROPULSION VOL. 1, NO. 1\n\nIntroduction\nAccurate flowfield predictions.\n\nDownloaded by Lockheed on Jan 1 1985\n\nNext paragraph.";
+        let res = strip_running_headers_and_footers(input);
+        assert!(!res.contains("58 J. PROPULSION"));
+        assert!(!res.contains("Downloaded by"));
+        assert!(res.contains("Introduction"));
+        assert!(res.contains("Accurate flowfield"));
+    }
+
+    #[test]
+    fn test_promote_headings() {
+        let input = "Transonic Inlet Flowfield Computations\n\nJoseph Vadyak\n\nAbstract\nA computational method.\n\nIntroduction\nPredictions are required.\n\n1.0 Governing Equations\nThe equations are solved.";
+        let res = promote_headings(input);
+        assert!(res.contains("# Transonic Inlet Flowfield Computations\n"));
+        assert!(res.contains("## Abstract\n"));
+        assert!(res.contains("## Introduction\n"));
+        assert!(res.contains("## 1.0 Governing Equations\n"));
+    }
+
+    #[test]
+    fn test_math_gating_and_prose_rejection() {
+        // Stop words in prose should be rejected from math wrapping
+        let prose_candidate = "Expressing the particle mass in Eq. (2) in terms of the particle density and volume";
+        assert!(is_likely_prose_sentence(prose_candidate));
+
+        // Legitimate formula should not be rejected
+        let formula_candidate = r"\rho_p r = \rho_g u_g";
+        assert!(!is_likely_prose_sentence(formula_candidate));
+
+        // Short inline variable sharing a line
+        assert!(is_inline_formula(r"m = \dot{m}", 1, 20, 24.0));
+        // Tall display equation block
+        assert!(!is_inline_formula(r"\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \mathbf{u}) = 0", 0, 60, 24.0));
+    }
+
+    #[test]
+    fn test_enrich_document_metadata_with_tags() {
+        let mut meta = DocumentMetadata {
+            title: Some("1".to_string()),
+            ..Default::default()
+        };
+        let text = "# Supersonic Scramjet Propulsion and Combustion Analysis\n\nBy Dr. Jane Doe\nUniversity of Michigan\n\n## Abstract\nExperimental investigation of scramjet propulsion.\n\n## References\n1. Chen et al.";
+        enrich_document_metadata(&mut meta, text);
+
+        assert_eq!(meta.title.as_deref(), Some("Supersonic Scramjet Propulsion and Combustion Analysis"));
+        assert_eq!(meta.author.as_deref(), Some("By Dr. Jane Doe"));
+        assert!(meta.tags.contains(&"type/journal-article".to_string()));
+        assert!(meta.tags.contains(&"domain/propulsion".to_string()));
+        assert!(meta.tags.contains(&"domain/aerospace".to_string()));
+        assert!(meta.tags.contains(&"domain/combustion".to_string()));
+        assert!(meta.tags.contains(&"topic/scramjet".to_string()));
     }
 }

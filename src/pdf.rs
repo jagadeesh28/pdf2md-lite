@@ -30,6 +30,72 @@ pub fn clean_extracted_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// Converts a rendered `hayro` pixmap directly into an in-memory `image::DynamicImage` (RGBA8),
+/// avoiding any intermediate PNG encoding or temporary disk writes.
+pub fn pixmap_to_dynamic_image(pixmap: &hayro::vello_cpu::Pixmap) -> image::DynamicImage {
+    let width = pixmap.width() as u32;
+    let height = pixmap.height() as u32;
+    let raw_bytes = pixmap.data_as_u8_slice();
+    let rgba = image::RgbaImage::from_raw(width, height, raw_bytes.to_vec())
+        .unwrap_or_else(|| image::RgbaImage::new(width, height));
+    image::DynamicImage::ImageRgba8(rgba)
+}
+
+/// Streams rendered `DynamicImage` pages through a channel as they are decoded by `hayro`,
+/// completely eliminating intermediate PNG encoding and disk writes.
+pub fn stream_rendered_pages(
+    pdf_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    tx: std::sync::mpsc::SyncSender<Result<(usize, image::DynamicImage)>>,
+) -> Result<()> {
+    validate_page_range(begin_page, end_page)?;
+    let pdf_bytes = fs::read(pdf_path)
+        .with_context(|| format!("failed to read PDF for rendering: {}", pdf_path.display()))?;
+    let document = Pdf::new(pdf_bytes).map_err(|error| {
+        anyhow!(
+            "failed to parse PDF for rendering {}: {error:?}",
+            pdf_path.display()
+        )
+    })?;
+    let cache = hayro::RenderCache::new();
+    let interpreter_settings = InterpreterSettings::default();
+    let render_settings = hayro::RenderSettings::default();
+    let pixmap_settings = hayro::PixmapSettings {
+        x_scale: 2.0,
+        y_scale: 2.0,
+        bg_color: hayro::vello_cpu::color::palette::css::WHITE,
+    };
+
+    let total_pages = document.pages().len();
+    if end_page > total_pages {
+        return Err(anyhow!(
+            "page range {}-{} is outside the PDF's {} pages",
+            begin_page,
+            end_page,
+            total_pages
+        ));
+    }
+
+    for (index, page) in document
+        .pages()
+        .iter()
+        .enumerate()
+        .skip(begin_page - 1)
+        .take(end_page - begin_page + 1)
+    {
+        let page_num = index + 1;
+        let pixmap = hayro::render(page, &cache, &interpreter_settings, &render_settings, &pixmap_settings);
+        let dynamic_image = pixmap_to_dynamic_image(&pixmap);
+        if tx.send(Ok((page_num, dynamic_image))).is_err() {
+            // Receiver closed channel early (e.g. error or pipeline abort)
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 /// Renders PDF pages into PNG images within a `pages` directory under `temp_dir`.
 pub fn render_pages_to_images(
     pdf_path: &Path,

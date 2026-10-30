@@ -14,12 +14,18 @@ const BUCKET_WIDTHS: [usize; 7] = [160, 320, 480, 640, 800, 1024, 1536];
 pub struct IndraRecognizer {
     plans: Vec<(usize, Arc<TypedRunnableModel>)>,
     target_height: u32,
+    window: u32,
     vocab: IndraVocab,
 }
 
 impl IndraRecognizer {
-    /// Initializes SVTR recognizer with bucketed width plans.
-    pub fn new(model_bytes: &[u8], vocab: IndraVocab) -> Result<Self> {
+    /// Initializes SVTR recognizer with custom height and context window.
+    pub fn new_with_config(
+        model_bytes: &[u8],
+        vocab: IndraVocab,
+        target_height: u32,
+        window: u32,
+    ) -> Result<Self> {
         let mut plans = Vec::with_capacity(BUCKET_WIDTHS.len());
 
         for &width in &BUCKET_WIDTHS {
@@ -29,7 +35,10 @@ impl IndraRecognizer {
                 .context("Failed to parse SVTR ONNX model")?
                 .with_input_fact(
                     0,
-                    InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 1, 96, width)),
+                    InferenceFact::dt_shape(
+                        f32::datum_type(),
+                        tvec!(1, 1, target_height as usize, width),
+                    ),
                 )?
                 .with_input_fact(
                     1,
@@ -45,9 +54,32 @@ impl IndraRecognizer {
 
         Ok(Self {
             plans,
-            target_height: 96,
+            target_height,
+            window,
             vocab,
         })
+    }
+
+    /// Initializes base SVTR recognizer (rec.onnx: 96px height, window=3).
+    pub fn new(model_bytes: &[u8], vocab: IndraVocab) -> Result<Self> {
+        Self::new_with_config(model_bytes, vocab, 96, 3)
+    }
+
+    /// Initializes world SVTR recognizer (rec_world.onnx: 32px height, window=1).
+    pub fn new_world(model_bytes: &[u8], vocab: IndraVocab) -> Result<Self> {
+        Self::new_with_config(model_bytes, vocab, 32, 1)
+    }
+
+    pub fn vocab(&self) -> &IndraVocab {
+        &self.vocab
+    }
+
+    pub fn target_height(&self) -> u32 {
+        self.target_height
+    }
+
+    pub fn window(&self) -> u32 {
+        self.window
     }
 
     /// Selects the best bucketed width plan for the given width.
@@ -63,14 +95,35 @@ impl IndraRecognizer {
 
     /// Recognizes text from a line on a page given its bounding box and the grayscale page.
     pub fn recognize_line(&self, gray: &GrayImage, bbox: &TextBoundingBox) -> Result<String> {
-        let (ink_map, line_w, line_h) = crop_line_ink_map(gray, bbox, self.target_height, 3);
+        let (text, _) = self.recognize_line_with_conf(gray, bbox)?;
+        Ok(text)
+    }
+
+    /// Recognizes text and returns the mean confidence score of the non-blank tokens.
+    pub fn recognize_line_with_conf(
+        &self,
+        gray: &GrayImage,
+        bbox: &TextBoundingBox,
+    ) -> Result<(String, f32)> {
+        self.recognize_line_with_mask(gray, bbox, None)
+    }
+
+    /// Recognizes text with an optional script token constraint mask (e.g. for Telugu/Indic).
+    pub fn recognize_line_with_mask(
+        &self,
+        gray: &GrayImage,
+        bbox: &TextBoundingBox,
+        mask: Option<&[bool]>,
+    ) -> Result<(String, f32)> {
+        let (ink_map, line_w, line_h) =
+            crop_line_ink_map(gray, bbox, self.target_height, self.window);
         if line_w == 0 || line_h == 0 {
-            return Ok(String::new());
+            return Ok((String::new(), 0.0));
         }
 
         let (bucket_w, plan) = self.select_plan(line_w);
 
-        // NCHW tensor (1, 1, 96, bucket_w) right-padded with 0.0 (paper background)
+        // NCHW tensor (1, 1, target_height, bucket_w) right-padded with 0.0 (paper background)
         let mut tensor_data = vec![0.0f32; self.target_height as usize * bucket_w];
         for y in 0..line_h {
             for x in 0..line_w.min(bucket_w) {
@@ -105,8 +158,76 @@ impl IndraRecognizer {
         };
 
         let active_tokens = &tokens[0..valid_len.min(tokens.len())];
-        let decoded = self.vocab.decode_tokens(active_tokens);
-        Ok(decoded)
+
+        // Apply Constrained CTC Masking if requested
+        let mut final_tokens: Vec<i64> = active_tokens.to_vec();
+        if let Some(mask_slice) = mask {
+            let topi_view = if outputs.len() > 5 {
+                outputs[5].to_plain_array_view::<i64>().ok()
+            } else {
+                None
+            };
+            let topi_slice = topi_view.as_ref().and_then(|v| v.as_slice());
+
+            for (t, tok) in final_tokens.iter_mut().enumerate() {
+                let idx = *tok as usize;
+                if idx < mask_slice.len() && mask_slice[idx] {
+                    continue;
+                }
+
+                // Top-1 token is outside the permitted script whitelist.
+                // Inspect top-8 candidates (topi) for highest-ranking valid in-script token.
+                let mut valid_cand = None;
+                if let Some(topi) = topi_slice {
+                    let k_start = t * 8;
+                    if k_start + 8 <= topi.len() {
+                        for k in 0..8 {
+                            let cand = topi[k_start + k];
+                            let cand_idx = cand as usize;
+                            if cand_idx < mask_slice.len() && mask_slice[cand_idx] {
+                                valid_cand = Some(cand);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                *tok = valid_cand.unwrap_or(self.vocab.blank_idx as i64);
+            }
+        }
+
+        // Output 1 contains token confidences
+        let conf_view = if outputs.len() > 1 {
+            outputs[1].to_plain_array_view::<f32>().ok()
+        } else {
+            None
+        };
+        let confs = conf_view.as_ref().and_then(|v| v.as_slice());
+
+        let mut sum_conf = 0.0f32;
+        let mut count_conf = 0usize;
+        let mut prev = self.vocab.blank_idx as i64;
+
+        for (i, &tok) in final_tokens.iter().enumerate() {
+            if tok != self.vocab.blank_idx as i64 && tok != prev {
+                if let Some(c) = confs {
+                    if let Some(&conf) = c.get(i) {
+                        sum_conf += conf;
+                        count_conf += 1;
+                    }
+                }
+            }
+            prev = tok;
+        }
+
+        let mean_conf = if count_conf > 0 {
+            sum_conf / count_conf as f32
+        } else {
+            0.0
+        };
+
+        let decoded = self.vocab.decode_tokens(&final_tokens);
+        Ok((decoded, mean_conf))
     }
 
     /// Backwards-compatible line recognizer taking an isolated cropped image.
@@ -221,11 +342,7 @@ fn crop_line_ink_map(
     }
 
     let out_w = ((cw as f32 * target_height as f32 / ch as f32).round() as u32).clamp(8, 4096);
-    let filter = if ch > target_height {
-        image::imageops::FilterType::Triangle
-    } else {
-        image::imageops::FilterType::Triangle
-    };
+    let filter = image::imageops::FilterType::Triangle;
     let resized = image::imageops::resize(&crop, out_w, target_height, filter);
 
     let mut ink_map = Vec::with_capacity((out_w * target_height) as usize);
@@ -240,3 +357,64 @@ fn crop_line_ink_map(
 
     (ink_map, out_w as usize, target_height as usize)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_rec_world_tract() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let model_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("rec_world.onnx");
+        if !model_path.exists() {
+            return;
+        }
+        let bytes = std::fs::read(model_path).unwrap();
+        let mut reader = Cursor::new(&bytes);
+        let model = tract_onnx::onnx()
+            .model_for_read(&mut reader)
+            .expect("Failed to parse rec_world ONNX model")
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 1, 32, 160)),
+            )
+            .expect("input 0 fact")
+            .with_input_fact(
+                1,
+                InferenceFact::dt_shape(i64::datum_type(), tvec!(1)),
+            )
+            .expect("input 1 fact")
+            .into_typed()
+            .expect("typed")
+            .into_runnable()
+            .expect("runnable");
+
+        let input_tensor = tract_ndarray::Array4::from_shape_vec(
+            (1, 1, 32, 160),
+            vec![0.0f32; 32 * 160],
+        ).unwrap();
+        let lengths_tensor = tract_ndarray::Array1::from_vec(vec![160i64]);
+        let tract_input: Tensor = input_tensor.into();
+        let tract_lengths: Tensor = lengths_tensor.into();
+        let outputs = model.run(tvec!(tract_input.into(), tract_lengths.into())).expect("run model");
+        assert!(!outputs.is_empty());
+    }
+
+    #[test]
+    fn test_indra_recognizer_world_initialization() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let meta_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("meta.json");
+        let model_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("rec_world.onnx");
+        if !model_path.exists() {
+            return;
+        }
+        let meta_bytes = std::fs::read(meta_path).unwrap();
+        let vocab = IndraVocab::from_world_json_bytes(&meta_bytes).unwrap();
+        let model_bytes = std::fs::read(model_path).unwrap();
+        let rec = IndraRecognizer::new_world(&model_bytes, vocab).expect("new_world");
+        assert_eq!(rec.target_height(), 32);
+        assert_eq!(rec.window(), 1);
+        assert!(rec.vocab().contains_telugu());
+    }
+}
+

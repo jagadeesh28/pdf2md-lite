@@ -23,10 +23,18 @@ pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
     } else {
         4 * 1024 * 1024 * 1024
     };
-    let available_ram_gb = available_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    let ram_mb = available_ram_bytes as f64 / (1024.0 * 1024.0);
+    let available_ram_gb = ram_mb / 1024.0;
 
-    // Each active worker page holds high-res raster pixmaps and ONNX tensors (~1.5 GB budget)
-    let memory_budget_workers = (available_ram_gb / 1.5).floor() as usize;
+    // Base footprint for neural models (tract/onnx) + runtime is ~250 MB.
+    // Each active worker page holds high-res raster pixmaps and intermediate ONNX tensors (~120 MB safe headroom).
+    let base_mb = 250.0;
+    let per_worker_mb = 120.0;
+    let memory_budget_workers = if ram_mb > base_mb {
+        1 + ((ram_mb - base_mb) / per_worker_mb).floor() as usize
+    } else {
+        1
+    };
 
     // Leave 1 core for OS / main thread if multi-core
     let core_budget_workers = if logical_cores > 1 {

@@ -16,13 +16,14 @@
   - Repository: [DocLayNet](https://github.com/DS4SD/DocLayNet)
 
 ### 2. Optical Character Recognition: Indra OCR
-- **Purpose**: Multi-script text line detection and recognition with native inline LaTeX tokens.
+- **Purpose**: Multi-script text line detection and recognition with native inline LaTeX tokens and world script support (including Telugu).
 - **Architecture**:
   - Text Detection: DBNet with 1024×1024 grayscale spatial attention.
-  - Text Recognition: SVTR CTC character recognizer with 96px height and 7 dynamic width buckets (160–1536px).
+  - Text Recognition: SVTR CTC character recognizer with 96px height (Latin / math) and 32px height (World / Telugu) with 7 dynamic width buckets (160–1536px).
 - **Weight Footprint**:
   - `models/indra/det.onnx` (~4.58 MB)
   - `models/indra/rec.onnx` (~12.3 MB)
+  - `models/indra/rec_world.onnx` (~5.63 MB)
 - **Runtime**: Pure-Rust in-process execution via `tract-onnx`.
 
 ### 3. Reading Order Partitioning: Recursive XY-Cut++

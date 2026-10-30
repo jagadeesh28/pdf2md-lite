@@ -15,6 +15,11 @@ const EMBEDDED_REC: &[u8] = include_bytes!(concat!(
     "/models/indra/rec.onnx"
 ));
 #[cfg(feature = "embed-models")]
+const EMBEDDED_REC_WORLD: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/models/indra/rec_world.onnx"
+));
+#[cfg(feature = "embed-models")]
 const EMBEDDED_ORDER: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/models/indra/order.onnx"
@@ -60,6 +65,7 @@ impl IndraModelSource {
             match file_name {
                 "det.onnx" => return Ok(EMBEDDED_DET.to_vec()),
                 "rec.onnx" => return Ok(EMBEDDED_REC.to_vec()),
+                "rec_world.onnx" => return Ok(EMBEDDED_REC_WORLD.to_vec()),
                 "order.onnx" => return Ok(EMBEDDED_ORDER.to_vec()),
                 "meta.json" => return Ok(EMBEDDED_META.to_vec()),
                 _ => {}

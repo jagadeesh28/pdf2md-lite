@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub max_depth: Option<usize>,
     pub models_dir: Option<PathBuf>,
     pub layout_model: Option<PathBuf>,
+    pub language: Option<String>,
 }
 
 impl AppConfig {

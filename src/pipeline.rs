@@ -11,12 +11,12 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
-use crate::backends::indra::{IndraEngine, TextLine};
+use crate::backends::indra::{IndraEngine, IndraScript, TextLine};
 use crate::batch::sanitize_short_slug;
 use crate::concurrency::resolve_concurrency;
 use crate::figure::{self, mask_page_regions};
 use crate::markdown::{attach_figures_to_page_text, format_page_demarcation, normalize_latex_delimiters};
-use crate::pdf::{render_pages_to_images, safe_extract_text_by_pages, validate_page_range};
+use crate::pdf::{safe_extract_text_by_pages, validate_page_range};
 
 static INDRA_ENGINE: std::sync::OnceLock<IndraEngine> = std::sync::OnceLock::new();
 
@@ -30,7 +30,7 @@ pub fn get_indra_engine() -> Result<&'static IndraEngine> {
     Ok(INDRA_ENGINE.get().expect("IndraEngine initialized"))
 }
 
-/// Converts a single PDF file into an Obsidian Markdown document with companion assets.
+/// Converts a single PDF file into an Obsidian Markdown document with companion assets using default script.
 pub fn process_pdf(
     input_path: &Path,
     output_path: &Path,
@@ -38,13 +38,14 @@ pub fn process_pdf(
     end_page: usize,
     explicit_concurrency: Option<usize>,
 ) -> Result<()> {
-    process_pdf_with_source(
+    process_pdf_with_options(
         input_path,
         output_path,
         begin_page,
         end_page,
         explicit_concurrency,
         None,
+        IndraScript::default(),
     )
 }
 
@@ -56,6 +57,27 @@ pub fn process_pdf_with_source(
     end_page: usize,
     explicit_concurrency: Option<usize>,
     source_label: Option<&str>,
+) -> Result<()> {
+    process_pdf_with_options(
+        input_path,
+        output_path,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        source_label,
+        IndraScript::default(),
+    )
+}
+
+/// Converts a single PDF file with configurable script (e.g. English vs Telugu) and options.
+pub fn process_pdf_with_options(
+    input_path: &Path,
+    output_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    source_label: Option<&str>,
+    script: IndraScript,
 ) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
 
@@ -174,7 +196,8 @@ pub fn process_pdf_with_source(
             .map(|s| s.to_string());
     }
     metadata.pages_processed = Some(format!("{begin_page}-{end_page}"));
-    let mut full_markdown = metadata.to_yaml_frontmatter();
+
+    let mut raw_body = String::new();
 
     process_pages_stream(
         input_path,
@@ -182,6 +205,7 @@ pub fn process_pdf_with_source(
         begin_page,
         end_page,
         explicit_concurrency,
+        script,
         |page_num, page_md| {
             // For the first processed page, if metadata fields are still missing (e.g. scanned PDF where
             // initial header_slice had no digital text), attempt extraction from the OCR text of page 1.
@@ -195,61 +219,70 @@ pub fn process_pdf_with_source(
                     || metadata.keywords.is_none())
             {
                 let res = crate::metadata::extract_header_metadata_fallback(&page_md);
-                let mut updated = false;
                 if metadata.author.is_none() && !res.authors.is_empty() {
                     metadata.author = Some(res.authors.join(", "));
-                    updated = true;
                 }
                 if metadata.publication_date.is_none() && res.date.is_some() {
                     metadata.publication_date = res.date;
-                    updated = true;
                 }
                 if metadata.organization.is_none() && res.organization.is_some() {
                     metadata.organization = res.organization;
-                    updated = true;
                 }
                 if metadata.journal.is_none() && res.journal.is_some() {
                     metadata.journal = res.journal;
-                    updated = true;
                 }
                 if metadata.volume.is_none() && res.volume.is_some() {
                     metadata.volume = res.volume;
-                    updated = true;
                 }
                 if metadata.issue.is_none() && res.issue.is_some() {
                     metadata.issue = res.issue;
-                    updated = true;
                 }
                 if metadata.doi.is_none() && res.doi.is_some() {
                     metadata.doi = res.doi;
-                    updated = true;
                 }
                 if metadata.keywords.is_none() && !res.keywords.is_empty() {
                     metadata.keywords = Some(res.keywords.join(", "));
-                    updated = true;
-                }
-                if updated {
-                    full_markdown = metadata.to_yaml_frontmatter();
                 }
             }
 
             if !page_md.trim().is_empty() {
-                full_markdown.push_str(&page_md);
-                if !full_markdown.ends_with("\n\n") {
-                    full_markdown.push_str("\n\n");
+                raw_body.push_str(&page_md);
+                if !raw_body.ends_with("\n\n") {
+                    raw_body.push_str("\n\n");
                 }
             }
 
             // Write progressive updates to output path
-            fs::write(output_path, normalize_latex_delimiters(&full_markdown)).with_context(|| {
-                format!(
-                    "failed to write markdown output to {}",
-                    output_path.display()
-                )
-            })
+            let progressive_md = format!("{}{}", metadata.to_yaml_frontmatter(), raw_body);
+            let _ = fs::write(output_path, normalize_latex_delimiters(&progressive_md));
+            Ok(())
         },
     )
     .with_context(|| format!("pipeline processing failed for {}", input_path.display()))?;
+
+    // Post-Extraction Document Intelligence & Structuring:
+    // 1. Strip repetitive running headers and footers from text body
+    let cleaned_body = crate::markdown::strip_running_headers_and_footers(&raw_body);
+
+    // 2. Normalize line-end hyphenations ("combus-\ntor" -> "combustor")
+    let dehyphened_body = crate::markdown::dehyphenate_text(&cleaned_body);
+
+    // 3. Promote academic titles and section headings (# Title, ## Section)
+    let structured_body = crate::markdown::promote_headings(&dehyphened_body);
+
+    // 4. Enrich metadata with full document text and generate dynamic taxonomy tags
+    crate::markdown::enrich_document_metadata(&mut metadata, &structured_body);
+
+    // 5. Prepend finalized Obsidian YAML frontmatter and normalize math delimiters
+    let final_markdown = format!("{}{}", metadata.to_yaml_frontmatter(), structured_body);
+    let final_output = normalize_latex_delimiters(&final_markdown);
+
+    fs::write(output_path, final_output).with_context(|| {
+        format!(
+            "failed to write finalized markdown output to {}",
+            output_path.display()
+        )
+    })?;
 
     println!(
         "Completed conversion: {} -> {}",
@@ -267,16 +300,13 @@ pub fn process_pages_stream<F>(
     begin_page: usize,
     end_page: usize,
     explicit_concurrency: Option<usize>,
+    script: IndraScript,
     mut on_page: F,
 ) -> Result<()>
 where
     F: FnMut(usize, String) -> Result<()>,
 {
     validate_page_range(begin_page, end_page)?;
-
-    let temp_dir = tempfile::tempdir().context("failed to create temporary rendering directory")?;
-    let page_images = render_pages_to_images(input_path, temp_dir.path(), begin_page, end_page)
-        .with_context(|| format!("failed to rasterize PDF {} for layout/OCR", input_path.display()))?;
 
     fs::create_dir_all(image_output_dir).with_context(|| {
         format!(
@@ -291,69 +321,88 @@ where
         .and_then(|bytes| safe_extract_text_by_pages(bytes));
 
     let concurrency = resolve_concurrency(explicit_concurrency);
-    let total_pages = page_images.len();
+    let total_pages = end_page.saturating_sub(begin_page) + 1;
 
-    let mut page_items = Vec::with_capacity(total_pages);
-    for (page_offset, image_path) in page_images.into_iter().enumerate() {
-        let page_num = begin_page + page_offset;
-        let raw_page_text = pdf_pages
-            .as_ref()
-            .and_then(|pages| pages.get(page_num - 1))
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        page_items.push((page_num, image_path, raw_page_text));
-    }
+    // Zero-disk Pipelined Streaming: Dedicated rendering thread streams DynamicImages into a bounded channel
+    let channel_bound = concurrency.min(4).max(2);
+    let (raster_tx, raster_rx) = mpsc::sync_channel::<Result<(usize, image::DynamicImage)>>(channel_bound);
+    let pdf_path_for_render = input_path.to_path_buf();
+
+    let render_thread = thread::spawn(move || {
+        crate::pdf::stream_rendered_pages(&pdf_path_for_render, begin_page, end_page, raster_tx)
+    });
 
     if concurrency <= 1 || total_pages <= 1 {
-        for (page_num, image_path, raw_page_text) in page_items {
-            let page_md = safe_process_single_page(
+        while let Ok(msg) = raster_rx.recv() {
+            let (page_num, page_img) = msg?;
+            let raw_page_text = pdf_pages
+                .as_ref()
+                .and_then(|pages| pages.get(page_num - 1))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let page_md = safe_process_single_page_image(
                 Some(input_path),
-                &image_path,
+                &page_img,
                 image_output_dir,
                 page_num,
                 raw_page_text.as_deref(),
+                script,
             );
             on_page(page_num, page_md)?;
         }
+        let _ = render_thread.join();
     } else {
         println!(
             "Processing {total_pages} pages concurrently (concurrency={concurrency}, ascending page order)..."
         );
 
-        let (work_tx, work_rx) = mpsc::channel();
-        for item in page_items {
-            let _ = work_tx.send(item);
-        }
-        drop(work_tx);
-
+        let raster_rx = Arc::new(Mutex::new(raster_rx));
         let (result_tx, result_rx) = mpsc::channel();
         let mut worker_handles = Vec::with_capacity(concurrency);
-        let work_rx = Arc::new(Mutex::new(work_rx));
         let input_path_buf = input_path.to_path_buf();
+        let pdf_pages = Arc::new(pdf_pages);
 
         for _ in 0..concurrency {
-            let work_rx_clone = Arc::clone(&work_rx);
+            let raster_rx_clone = Arc::clone(&raster_rx);
             let result_tx_clone = result_tx.clone();
             let img_out_dir = image_output_dir.to_path_buf();
             let input_path_clone = input_path_buf.clone();
+            let pdf_pages_clone = Arc::clone(&pdf_pages);
 
             let handle = thread::spawn(move || {
                 loop {
                     let item = {
-                        let Ok(rx) = work_rx_clone.lock() else { break };
+                        let Ok(rx) = raster_rx_clone.lock() else { break };
                         rx.recv().ok()
                     };
 
-                    let Some((page_num, image_path, raw_page_text)) = item else {
+                    let Some(res) = item else {
                         break;
                     };
 
-                    let page_md = safe_process_single_page(
+                    let (page_num, page_img) = match res {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            eprintln!("Warning: Rasterization error: {err:#}");
+                            continue;
+                        }
+                    };
+
+                    let raw_page_text = pdf_pages_clone
+                        .as_ref()
+                        .as_ref()
+                        .and_then(|pages| pages.get(page_num - 1))
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+
+                    let page_md = safe_process_single_page_image(
                         Some(&input_path_clone),
-                        &image_path,
+                        &page_img,
                         &img_out_dir,
                         page_num,
                         raw_page_text.as_deref(),
+                        script,
                     );
 
                     if result_tx_clone.send((page_num, page_md)).is_err() {
@@ -385,6 +434,7 @@ where
         for handle in worker_handles {
             let _ = handle.join();
         }
+        let _ = render_thread.join();
 
         while let Some((page, md)) = pending_results.pop_first() {
             if page == next_expected_page {
@@ -405,14 +455,55 @@ pub fn safe_process_single_page(
     image_output_dir: &Path,
     page_num: usize,
     raw_page_text: Option<&str>,
+    script: IndraScript,
+) -> String {
+    let page_img = match image::open(image_path) {
+        Ok(img) => img,
+        Err(err) => {
+            eprintln!("Warning: Failed to open image for page {page_num}: {err:#}");
+            let page_demarcation = format_page_demarcation(page_num);
+            let mut warning_block = format!(
+                "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
+                 > Failed to open image for OCR: {err:#}\n\n"
+            );
+            if let Some(txt) = raw_page_text {
+                if !txt.trim().is_empty() {
+                    warning_block.push_str("### Recovered Stream Text\n\n");
+                    warning_block.push_str(txt.trim());
+                    warning_block.push_str("\n\n");
+                }
+            }
+            return warning_block;
+        }
+    };
+    safe_process_single_page_image(
+        pdf_path,
+        &page_img,
+        image_output_dir,
+        page_num,
+        raw_page_text,
+        script,
+    )
+}
+
+/// Executes single-page processing on an in-memory DynamicImage directly,
+/// protected by panic and error boundaries.
+pub fn safe_process_single_page_image(
+    pdf_path: Option<&Path>,
+    page_img: &image::DynamicImage,
+    image_output_dir: &Path,
+    page_num: usize,
+    raw_page_text: Option<&str>,
+    script: IndraScript,
 ) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        process_single_page(
+        process_single_page_image(
             pdf_path,
-            image_path,
+            page_img,
             image_output_dir,
             page_num,
             raw_page_text,
+            script,
         )
     }));
 
@@ -453,27 +544,25 @@ pub fn safe_process_single_page(
     }
 }
 
-fn process_single_page(
+fn process_single_page_image(
     pdf_path: Option<&Path>,
-    image_path: &Path,
+    page_img: &image::DynamicImage,
     image_output_dir: &Path,
     page_num: usize,
     raw_page_text: Option<&str>,
+    script: IndraScript,
 ) -> Result<String> {
-    // Phase 1: YOLO Three-Way Layout Analysis
-    let mut layout = figure::analyze_page_layout(
+    // Phase 1: YOLO Three-Way Layout Analysis directly on the in-memory page canvas
+    let mut layout = figure::analyze_page_layout_image(
         pdf_path,
-        image_path,
+        page_img,
         image_output_dir,
         page_num,
     )?;
 
-    let page_img = image::open(image_path)
-        .with_context(|| format!("Failed to open image for OCR: {:?}", image_path))?;
-
     // Phase 2: Canvas Masking for Pictures (eliminates hallucinated text from drawings)
     let ocr_canvas = if !layout.picture_masks.is_empty() {
-        mask_page_regions(&page_img, &layout.picture_masks)
+        mask_page_regions(page_img, &layout.picture_masks)
     } else {
         page_img.clone()
     };
@@ -481,7 +570,7 @@ fn process_single_page(
     // Phase 3: Text OCR on the clean canvas
     let engine = get_indra_engine()?;
     let (ocr_text, text_lines) = engine
-        .transcribe_image_with_lines(&ocr_canvas)
+        .transcribe_image_with_script(&ocr_canvas, script)
         .with_context(|| format!("Indra OCR failed for page {page_num}"))?;
 
     // Phase 3.1: Proximity Caption Matching for Figures
@@ -568,9 +657,58 @@ fn process_single_page(
             String::new()
         };
 
-        if !formula_trimmed.is_empty() && !formula_trimmed.starts_with("$$") {
+        if formula_trimmed.is_empty() {
+            continue;
+        }
+
+        // Semantic Stop-word Gate: If candidate contains common prose stop words, reject math wrapping
+        if crate::markdown::is_likely_prose_sentence(&formula_trimmed) {
+            continue;
+        }
+
+        // Calculate average text line height
+        let avg_line_height = if !text_lines.is_empty() {
+            text_lines.iter().map(|l| l.bbox.height as f32).sum::<f32>() / text_lines.len() as f32
+        } else {
+            24.0
+        };
+
+        // Check if formula shares baseline with neighboring text on the same line
+        let f_mid_y = formula_rect.y + formula_rect.height / 2;
+        let line_shares = text_lines
+            .iter()
+            .filter(|l| {
+                let l_mid_y = l.bbox.y + l.bbox.height / 2;
+                (l_mid_y as i32 - f_mid_y as i32).abs() < (avg_line_height * 0.6) as i32
+                    && (l.bbox.x + l.bbox.width < formula_rect.x || l.bbox.x > formula_rect.x + formula_rect.width)
+            })
+            .count();
+
+        let is_inline = crate::markdown::is_inline_formula(
+            &formula_trimmed,
+            line_shares,
+            formula_rect.height,
+            avg_line_height,
+        );
+
+        if is_inline {
+            let inline_math = format!("${formula_trimmed}$");
+            if let Some(first_line) = inside_lines.first() {
+                let needle = first_line.text.trim();
+                if !needle.is_empty() && formatted_text.contains(needle) {
+                    formatted_text = formatted_text.replacen(needle, &inline_math, 1);
+                }
+            }
+            // Remove any remaining inside lines to prevent duplication
+            for extra_line in inside_lines.iter().skip(1) {
+                let extra_needle = extra_line.text.trim();
+                if !extra_needle.is_empty() && formatted_text.contains(extra_needle) {
+                    formatted_text = formatted_text.replacen(extra_needle, "", 1);
+                }
+            }
+        } else if !formula_trimmed.starts_with("$$") {
+            // Standalone display equation block
             let display_math = format!("\n\n$$\n{formula_trimmed}\n$$\n\n");
-            // Replace first occurrence of the raw text with display math block
             if let Some(first_line) = inside_lines.first() {
                 let needle = first_line.text.trim();
                 if !needle.is_empty() && formatted_text.contains(needle) {
@@ -580,6 +718,13 @@ fn process_single_page(
                 }
             } else {
                 formatted_text.push_str(&display_math);
+            }
+            // Remove any remaining inside lines to prevent duplication
+            for extra_line in inside_lines.iter().skip(1) {
+                let extra_needle = extra_line.text.trim();
+                if !extra_needle.is_empty() && formatted_text.contains(extra_needle) {
+                    formatted_text = formatted_text.replacen(extra_needle, "", 1);
+                }
             }
         }
     }
@@ -662,7 +807,7 @@ mod tests {
         let fake_out = Path::new("fake_out");
         let raw_text = Some("Fallback extracted stream text on page 7.");
 
-        let md = safe_process_single_page(None, fake_image, fake_out, 7, raw_text);
+        let md = safe_process_single_page(None, fake_image, fake_out, 7, raw_text, IndraScript::default());
 
         assert!(md.contains("<!-- Page 7 -->"));
         assert!(md.contains("> [!WARNING] Page 7 Processing Incomplete"));
