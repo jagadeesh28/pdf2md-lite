@@ -219,9 +219,8 @@ impl SlaNetEngine {
                     String::new()
                 };
                 cell_idx += 1;
-                // Escape pipe characters inside table cells
-                let sanitized = text.replace('|', "\\|").replace('\n', " ");
-                current_row.push(sanitized);
+                let formatted = crate::figure::table::format_table_cell_with_latex(&text);
+                current_row.push(formatted);
             }
         }
 
@@ -234,7 +233,8 @@ impl SlaNetEngine {
         }
 
         let max_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        if max_cols == 0 {
+        if max_cols <= 1 {
+            // Reject degenerate 1-column tables from SLANet so pipeline falls back to geometric extraction
             return Ok(String::new());
         }
 

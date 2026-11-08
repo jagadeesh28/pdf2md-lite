@@ -197,6 +197,97 @@ pub fn extract_header_metadata_fallback(header_text: &str) -> GlinerExtractionRe
     result
 }
 
+/// Extracts metadata from document header text and populates missing fields in `metadata`.
+/// Returns the number of new fields populated.
+pub fn populate_metadata_from_text(text: &str, metadata: &mut crate::markdown::DocumentMetadata) -> usize {
+    let mut fields_added = 0;
+    let header_slice = if text.len() > 8000 {
+        let boundary = text.floor_char_boundary(8000);
+        &text[..boundary]
+    } else {
+        text
+    };
+
+    if header_slice.trim().is_empty() {
+        return 0;
+    }
+
+    #[cfg(feature = "gliner-ort")]
+    if let Some(gliner) = get_gliner_engine() {
+        if let Ok(res) = gliner.extract_metadata(header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
+            if metadata.author.is_none() && !res.authors.is_empty() {
+                metadata.author = Some(res.authors.join(", "));
+                fields_added += 1;
+            }
+            if metadata.publication_date.is_none() && res.date.is_some() {
+                metadata.publication_date = res.date;
+                fields_added += 1;
+            }
+            if metadata.organization.is_none() && res.organization.is_some() {
+                metadata.organization = res.organization;
+                fields_added += 1;
+            }
+            if metadata.journal.is_none() && res.journal.is_some() {
+                metadata.journal = res.journal;
+                fields_added += 1;
+            }
+            if metadata.volume.is_none() && res.volume.is_some() {
+                metadata.volume = res.volume;
+                fields_added += 1;
+            }
+            if metadata.issue.is_none() && res.issue.is_some() {
+                metadata.issue = res.issue;
+                fields_added += 1;
+            }
+            if metadata.doi.is_none() && res.doi.is_some() {
+                metadata.doi = res.doi;
+                fields_added += 1;
+            }
+            if metadata.keywords.is_none() && !res.keywords.is_empty() {
+                metadata.keywords = Some(res.keywords.join(", "));
+                fields_added += 1;
+            }
+        }
+    }
+
+    // Pattern fallback
+    let res = extract_header_metadata_fallback(header_slice);
+    if metadata.author.is_none() && !res.authors.is_empty() {
+        metadata.author = Some(res.authors.join(", "));
+        fields_added += 1;
+    }
+    if metadata.publication_date.is_none() && res.date.is_some() {
+        metadata.publication_date = res.date;
+        fields_added += 1;
+    }
+    if metadata.organization.is_none() && res.organization.is_some() {
+        metadata.organization = res.organization;
+        fields_added += 1;
+    }
+    if metadata.journal.is_none() && res.journal.is_some() {
+        metadata.journal = res.journal;
+        fields_added += 1;
+    }
+    if metadata.volume.is_none() && res.volume.is_some() {
+        metadata.volume = res.volume;
+        fields_added += 1;
+    }
+    if metadata.issue.is_none() && res.issue.is_some() {
+        metadata.issue = res.issue;
+        fields_added += 1;
+    }
+    if metadata.doi.is_none() && res.doi.is_some() {
+        metadata.doi = res.doi;
+        fields_added += 1;
+    }
+    if metadata.keywords.is_none() && !res.keywords.is_empty() {
+        metadata.keywords = Some(res.keywords.join(", "));
+        fields_added += 1;
+    }
+
+    fields_added
+}
+
 /// Extracts dates like "JAN.-FEB. 1985", "Jan-Feb 1985", "January 1985", "Oct 1982"
 pub fn extract_publication_date(text: &str) -> Option<String> {
     let months = [
@@ -508,5 +599,16 @@ mod tests {
         assert_eq!(res.issue.as_deref(), Some("1"));
         assert_eq!(res.authors.first().map(|s| s.as_str()), Some("Dr. Gordon C. Oates"));
         assert_eq!(res.organization.as_deref(), Some("University of Washington"));
+    }
+
+    #[test]
+    fn test_populate_metadata_utf8_char_boundary() {
+        // Build a string where byte 8000 lands inside a multi-byte character (e.g. '→' which is 3 bytes: 7998..8001)
+        let prefix = "a".repeat(7998);
+        let sample = format!("{}→rest of text", prefix);
+        let mut meta = crate::markdown::DocumentMetadata::default();
+        let added = populate_metadata_from_text(&sample, &mut meta);
+        // Should not panic on slicing
+        assert_eq!(added, 0);
     }
 }

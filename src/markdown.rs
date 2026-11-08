@@ -149,8 +149,8 @@ pub fn render_markdown(result: &PdfExtractionResult) -> String {
             };
             let dir_name = fig.images_dir_name();
             output.push_str(&format!(
-                "![{}]({}/{})\n*{}*\n\n",
-                fig.figure_label, dir_name, fig.filename, caption_text
+                "![[{}/{}]]\n*{}*\n\n",
+                dir_name, fig.filename, caption_text
             ));
         }
     } else if !result.images.is_empty() {
@@ -158,9 +158,9 @@ pub fn render_markdown(result: &PdfExtractionResult) -> String {
             output.push('\n');
         }
         output.push_str("## Embedded images\n\n");
-        for (index, path) in result.images.iter().enumerate() {
+        for (_index, path) in result.images.iter().enumerate() {
             let path_str = path.to_string_lossy().replace('\\', "/");
-            output.push_str(&format!("![image-{}]({})\n\n", index + 1, path_str));
+            output.push_str(&format!("![[{}]]\n\n", path_str));
         }
     }
 
@@ -177,7 +177,7 @@ pub fn attach_figures_to_page_text(page_text: &str, figures: &[CroppedFigure]) -
 
     for fig in figures {
         let dir_name = fig.images_dir_name();
-        let image_link = format!("![{}]({dir_name}/{})", fig.figure_label, fig.filename);
+        let image_link = format!("![[{dir_name}/{}]]", fig.filename);
         if result.contains(&image_link) || result.contains(&fig.filename) {
             continue;
         }
@@ -227,6 +227,672 @@ pub fn format_page_demarcation(page_num: usize) -> String {
 /// Normalizes LaTeX math delimiters from standard LaTeX (`\(...\)` and `\[...\]`)
 /// to Obsidian-compatible Markdown delimiters (`$...$` for inline, `$$...$$` for block math).
 /// Content inside fenced code blocks (``` ... ```) and inline code (`...`) is preserved untouched.
+/// Fixes LaTeX formatting, delimiters, and syntax in Markdown content.
+pub fn fix_latex_formatting(content: &str) -> String {
+    normalize_latex_delimiters(content)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct NoteFormatReport {
+    pub codeblocks_unwrapped: usize,
+    pub banners_purged: usize,
+    pub latex_repaired: bool,
+    pub frontmatter_added: bool,
+    pub frontmatter_fields_backfilled: usize,
+    pub figure_links_converted: usize,
+}
+
+impl NoteFormatReport {
+    pub fn is_changed(&self) -> bool {
+        self.codeblocks_unwrapped > 0
+            || self.banners_purged > 0
+            || self.latex_repaired
+            || self.frontmatter_added
+            || self.frontmatter_fields_backfilled > 0
+            || self.figure_links_converted > 0
+    }
+}
+
+const PRESERVED_CODEBLOCK_TAGS: &[&str] = &[
+    "mermaid", "python", "py", "rust", "rs", "bash", "sh", "zsh", "c", "cpp", "c++", "csharp",
+    "cs", "java", "javascript", "js", "typescript", "ts", "json", "yaml", "yml", "toml", "sql",
+    "html", "css", "xml", "diff", "dockerfile", "go", "matlab", "fortran", "r", "julia",
+];
+
+/// Unwraps spurious codeblocks (such as ```markdown or generic ```) that contain Markdown elements,
+/// tables, callouts, equations, or prose paragraphs, while preserving legitimate code and diagram syntax.
+pub fn unwrap_spurious_codeblocks(text: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut in_code = false;
+    let mut current_tag = String::new();
+    let mut block_lines: Vec<&str> = Vec::new();
+    let mut unwrapped_count = 0;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            if !in_code {
+                in_code = true;
+                current_tag = trimmed[3..].trim().to_lowercase();
+                block_lines.clear();
+            } else {
+                in_code = false;
+                let tag = current_tag.as_str();
+                let is_protected = PRESERVED_CODEBLOCK_TAGS.contains(&tag);
+
+                let is_spurious = if is_protected {
+                    false
+                } else if tag == "markdown" || tag == "md" || tag == "text" || tag == "txt" || tag.is_empty() {
+                    let has_markdown_heading = block_lines.iter().any(|l| {
+                        let t = l.trim();
+                        t.starts_with("# ") || t.starts_with("## ") || t.starts_with("### ") || t.starts_with("#### ")
+                    });
+                    let has_table_pipe = block_lines.iter().any(|l| {
+                        let t = l.trim();
+                        t.starts_with('|') && t.ends_with('|') && t.len() >= 2
+                    });
+                    let has_callout = block_lines.iter().any(|l| l.trim().starts_with("> [!"));
+                    let has_image = block_lines.iter().any(|l| {
+                        (l.contains("![") && l.contains("](")) || (l.contains("![[") && l.contains("]]"))
+                    });
+                    let has_math_block = block_lines.iter().any(|l| l.trim().starts_with("$$") || l.contains(r"\begin{"));
+                    let has_list_items = block_lines.iter().filter(|l| {
+                        let t = l.trim();
+                        t.starts_with("* ") || t.starts_with("- ")
+                    }).count() >= 2;
+                    let has_prose = block_lines.iter().any(|l| {
+                        let t = l.trim();
+                        t.len() > 60 && is_likely_prose_sentence(t)
+                    });
+
+                    has_markdown_heading || has_table_pipe || has_callout || has_image || has_math_block || has_list_items || has_prose
+                } else {
+                    false
+                };
+
+                if is_spurious {
+                    unwrapped_count += 1;
+                    for bl in &block_lines {
+                        out.push_str(bl);
+                        out.push('\n');
+                    }
+                } else {
+                    out.push_str("```");
+                    out.push_str(&current_tag);
+                    out.push('\n');
+                    for bl in &block_lines {
+                        out.push_str(bl);
+                        out.push('\n');
+                    }
+                    out.push_str("```\n");
+                }
+                block_lines.clear();
+                current_tag.clear();
+            }
+        } else if in_code {
+            block_lines.push(line);
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    if in_code {
+        out.push_str("```");
+        out.push_str(&current_tag);
+        out.push('\n');
+        for bl in &block_lines {
+            out.push_str(bl);
+            out.push('\n');
+        }
+    }
+
+    if !text.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+
+    (out, unwrapped_count)
+}
+
+/// Parses an existing YAML frontmatter block from a Markdown document.
+/// Returns `(Option<DocumentMetadata>, body)` where body is the content after the closing `---`.
+pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &str) {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return (None, content);
+    }
+
+    let after_dashes = &trimmed[3..];
+    if !after_dashes.starts_with('\n') && !after_dashes.starts_with("\r\n") {
+        return (None, content);
+    }
+
+    if let Some(close_idx) = after_dashes.find("\n---") {
+        let yaml_text = &after_dashes[..close_idx];
+        let after_close = &after_dashes[close_idx + 4..];
+        let body = after_close.trim_start_matches('\r').trim_start_matches('\n');
+
+        let mut meta = DocumentMetadata::default();
+        let mut in_tags = false;
+
+        for line in yaml_text.lines() {
+            let line_trimmed = line.trim();
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            if line_trimmed == "tags:" {
+                in_tags = true;
+                continue;
+            }
+
+            if in_tags {
+                if line_trimmed.starts_with("- ") {
+                    let tag_val = line_trimmed[2..].trim().trim_matches('"').trim_matches('\'');
+                    if !tag_val.is_empty() && !meta.tags.contains(&tag_val.to_string()) {
+                        meta.tags.push(tag_val.to_string());
+                    }
+                    continue;
+                } else if !line_trimmed.starts_with(' ') && !line_trimmed.starts_with('\t') {
+                    in_tags = false;
+                }
+            }
+
+            if let Some((key, val)) = line_trimmed.split_once(':') {
+                let key_clean = key.trim().to_lowercase();
+                let val_clean = val.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                if val_clean.is_empty() {
+                    continue;
+                }
+
+                match key_clean.as_str() {
+                    "title" => meta.title = Some(val_clean),
+                    "source" => meta.source = Some(val_clean),
+                    "author" => meta.author = Some(val_clean),
+                    "organization" => meta.organization = Some(val_clean),
+                    "date" | "publication_date" => meta.publication_date = Some(val_clean),
+                    "journal" => meta.journal = Some(val_clean),
+                    "volume" => meta.volume = Some(val_clean),
+                    "issue" => meta.issue = Some(val_clean),
+                    "doi" => meta.doi = Some(val_clean),
+                    "keywords" => meta.keywords = Some(val_clean),
+                    "subject" => meta.subject = Some(val_clean),
+                    "total_pages" => meta.total_pages = val_clean.parse().ok(),
+                    "pages_processed" => meta.pages_processed = Some(val_clean),
+                    _ => {}
+                }
+            }
+        }
+
+        return (Some(meta), body);
+    }
+
+    (None, content)
+}
+
+/// Formats and repairs a Markdown note:
+/// 1. Unwraps spurious code blocks enclosing Markdown structures.
+/// 2. Purges legacy extraction banners and headers.
+/// 3. Normalizes LaTeX math equations and table cells.
+/// 4. Non-destructively synthesizes/backfills Obsidian YAML frontmatter with GLiNER and heuristics.
+pub fn format_note_document(content: &str, file_hint: Option<&std::path::Path>) -> (String, NoteFormatReport) {
+    let mut report = NoteFormatReport::default();
+
+    let (metadata_opt, raw_body) = parse_existing_frontmatter(content);
+    let had_frontmatter = metadata_opt.is_some();
+    let mut metadata = metadata_opt.unwrap_or_default();
+
+    // 1. Unwrap spurious codeblocks
+    let (unwrapped_body, unwrapped_count) = unwrap_spurious_codeblocks(raw_body);
+    report.codeblocks_unwrapped = unwrapped_count;
+
+    // 2. Purge extraction banners & running headers
+    let stripped_body = strip_running_headers_and_footers(&unwrapped_body);
+    if stripped_body.len() < unwrapped_body.len() {
+        report.banners_purged += 1;
+    }
+
+    // 3. Promote headings if unpromoted
+    let promoted_body = promote_headings(&stripped_body);
+
+    // 4. Normalize LaTeX delimiters and tables
+    let normalized_body = normalize_latex_delimiters(&promoted_body);
+    if normalized_body != promoted_body {
+        report.latex_repaired = true;
+    }
+
+    // 5. Convert figure / image links to Obsidian wiki-links (![[<Figure location>]])
+    let (converted_body, converted_links) = convert_figure_links_to_obsidian(&normalized_body);
+    report.figure_links_converted = converted_links;
+
+    // 6. Synthesize / Backfill frontmatter properties
+    if metadata.title.is_none() || metadata.title.as_deref() == Some("Extracted PDF text") {
+        for line in converted_body.lines().take(25) {
+            let t = line.trim();
+            if t.starts_with("# ") || t.starts_with("## ") {
+                let clean = t.trim_start_matches('#').trim();
+                if clean.len() > 3
+                    && clean != "Extracted PDF text"
+                    && !clean.to_uppercase().contains("TECHNICAL NOTES")
+                    && !clean.to_uppercase().contains("JOURNAL OF")
+                {
+                    metadata.title = Some(clean.to_string());
+                    break;
+                }
+            }
+        }
+        if metadata.title.is_none() {
+            if let Some(hint) = file_hint {
+                if let Some(stem) = hint.file_stem() {
+                    metadata.title = Some(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    if metadata.source.is_none() {
+        if let Some(hint) = file_hint {
+            if let Some(name) = hint.file_name() {
+                metadata.source = Some(name.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let added_fields = crate::metadata::populate_metadata_from_text(raw_body, &mut metadata);
+    enrich_document_metadata(&mut metadata, &converted_body);
+
+    if !had_frontmatter {
+        report.frontmatter_added = true;
+    } else {
+        report.frontmatter_fields_backfilled = added_fields;
+    }
+
+    let frontmatter_str = metadata.to_yaml_frontmatter();
+    let final_body = converted_body.trim_start();
+    let result = format!("{frontmatter_str}{final_body}");
+
+    (result, report)
+}
+
+/// Converts standard Markdown image links `![alt](location)` to Obsidian wiki-links `![[location]]`.
+///
+/// Features:
+/// - Replaces `![alt](path)` with `![[path]]`
+/// - Handles angle-bracket URLs `![alt](<path>)` -> `![[path]]`
+/// - Strips optional link titles `![alt](path "title")` -> `![[path]]`
+/// - Normalizes backslashes to forward slashes and strips leading `./`
+/// - Works on lines within callouts `> ![alt](path)` -> `> ![[path]]`
+/// - Preserves fenced codeblocks (``` and ~~~)
+/// - Preserves inline code spans (`...`)
+/// - Leaves existing Obsidian embeds (`![[...]`) and non-image links (`[...]`) intact
+pub fn convert_figure_links_to_obsidian(content: &str) -> (String, usize) {
+    let mut out = String::with_capacity(content.len());
+    let mut in_fence = false;
+    let mut fence_char = ' ';
+    let mut fence_len = 0;
+    let mut total_converted = 0;
+
+    for (line_idx, line) in content.split('\n').enumerate() {
+        if line_idx > 0 {
+            out.push('\n');
+        }
+
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
+            let ch = trimmed_start.chars().next().unwrap();
+            let count = trimmed_start.chars().take_while(|&c| c == ch).count();
+            if !in_fence {
+                in_fence = true;
+                fence_char = ch;
+                fence_len = count;
+                out.push_str(line);
+                continue;
+            } else if ch == fence_char && count >= fence_len {
+                in_fence = false;
+                out.push_str(line);
+                continue;
+            }
+        }
+
+        if in_fence {
+            out.push_str(line);
+        } else {
+            let converted_line = convert_figure_links_in_line(line, &mut total_converted);
+            out.push_str(&converted_line);
+        }
+    }
+
+    (out, total_converted)
+}
+
+fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.char_indices().peekable();
+
+    while let Some((i, ch)) = chars.next() {
+        // 1. Preserve inline code spans: `...` or ``...``
+        if ch == '`' {
+            let mut backtick_len = 1;
+            while let Some(&(_, next_c)) = chars.peek() {
+                if next_c == '`' {
+                    chars.next();
+                    backtick_len += 1;
+                } else {
+                    break;
+                }
+            }
+            let fence = "`".repeat(backtick_len);
+            out.push_str(&fence);
+
+            let rest_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+            let rest = &line[rest_start..];
+            if let Some(close_idx) = rest.find(&fence) {
+                let code_content = &rest[..close_idx];
+                out.push_str(code_content);
+                out.push_str(&fence);
+                let advance_to = rest_start + close_idx + backtick_len;
+                while let Some(&(idx, _)) = chars.peek() {
+                    if idx < advance_to {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // 2. Detect and convert `![alt](url)`
+        if ch == '!' {
+            if let Some(&(_, next_c)) = chars.peek() {
+                if next_c == '[' {
+                    // Check if already an obsidian embed: `![[`
+                    let after_bracket = &line[i + 2..];
+                    if after_bracket.starts_with('[') {
+                        out.push('!');
+                        continue;
+                    }
+
+                    // Attempt to parse standard Markdown image link: `![alt](url)`
+                    chars.next(); // Consume '['
+
+                    let mut bracket_depth = 1;
+                    let mut escaped = false;
+                    let mut alt_end = None;
+
+                    while let Some((alt_idx, alt_c)) = chars.next() {
+                        if escaped {
+                            escaped = false;
+                            continue;
+                        }
+                        if alt_c == '\\' {
+                            escaped = true;
+                            continue;
+                        }
+                        if alt_c == '[' {
+                            bracket_depth += 1;
+                        } else if alt_c == ']' {
+                            bracket_depth -= 1;
+                            if bracket_depth == 0 {
+                                alt_end = Some(alt_idx);
+                                break;
+                            }
+                        }
+                    }
+
+                    if alt_end.is_some() {
+                        // Check if immediate next character is '('
+                        if let Some(&(_, paren_c)) = chars.peek() {
+                            if paren_c == '(' {
+                                chars.next(); // Consume '('
+                                let mut paren_depth = 1;
+                                let mut paren_escaped = false;
+                                let paren_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+                                let mut paren_end = None;
+
+                                while let Some((p_idx, p_c)) = chars.next() {
+                                    if paren_escaped {
+                                        paren_escaped = false;
+                                        continue;
+                                    }
+                                    if p_c == '\\' {
+                                        paren_escaped = true;
+                                        continue;
+                                    }
+                                    if p_c == '(' {
+                                        paren_depth += 1;
+                                    } else if p_c == ')' {
+                                        paren_depth -= 1;
+                                        if paren_depth == 0 {
+                                            paren_end = Some(p_idx);
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if let Some(p_end) = paren_end {
+                                    let raw_inner = &line[paren_start..p_end];
+                                    let trimmed = raw_inner.trim();
+
+                                    let location = if trimmed.starts_with('<') {
+                                        if let Some(end_angle) = trimmed.find('>') {
+                                            trimmed[1..end_angle].trim()
+                                        } else {
+                                            trimmed.trim_start_matches('<').trim()
+                                        }
+                                    } else {
+                                        let mut parts = trimmed.split_whitespace();
+                                        parts.next().unwrap_or(trimmed).trim_matches('"').trim_matches('\'')
+                                    };
+
+                                    if !location.is_empty() {
+                                        let clean_location = location.replace('\\', "/");
+                                        let final_location = clean_location.strip_prefix("./").unwrap_or(&clean_location);
+                                        out.push_str("![[");
+                                        out.push_str(final_location);
+                                        out.push_str("]]");
+                                        *count += 1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback: parsing did not yield an image link, re-emit consumed text
+                    let current_idx = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+                    out.push_str(&line[i..current_idx]);
+                    continue;
+                }
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
+/// Converts image links in Markdown documents pointing to `.png` files to `.jpg`.
+///
+/// Modifies both Obsidian wiki-links (`![[...png]]` / `![[...png|size]]`) and standard
+/// Markdown links (`![alt](...png)`), while preserving code blocks and inline code spans.
+pub fn replace_png_links_with_jpg(content: &str) -> (String, usize) {
+    let mut out = String::with_capacity(content.len());
+    let mut in_fence = false;
+    let mut fence_char = ' ';
+    let mut fence_len = 0;
+    let mut total_converted = 0;
+
+    for (line_idx, line) in content.split('\n').enumerate() {
+        if line_idx > 0 {
+            out.push('\n');
+        }
+
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
+            let ch = trimmed_start.chars().next().unwrap();
+            let count = trimmed_start.chars().take_while(|&c| c == ch).count();
+            if !in_fence {
+                in_fence = true;
+                fence_char = ch;
+                fence_len = count;
+                out.push_str(line);
+                continue;
+            } else if ch == fence_char && count >= fence_len {
+                in_fence = false;
+                out.push_str(line);
+                continue;
+            }
+        }
+
+        if in_fence {
+            out.push_str(line);
+        } else {
+            let converted_line = replace_png_links_in_line(line, &mut total_converted);
+            out.push_str(&converted_line);
+        }
+    }
+
+    (out, total_converted)
+}
+
+fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.char_indices().peekable();
+
+    while let Some((i, ch)) = chars.next() {
+        // 1. Preserve inline code spans: `...`
+        if ch == '`' {
+            let mut backtick_len = 1;
+            while let Some(&(_, next_c)) = chars.peek() {
+                if next_c == '`' {
+                    chars.next();
+                    backtick_len += 1;
+                } else {
+                    break;
+                }
+            }
+            let fence = "`".repeat(backtick_len);
+            out.push_str(&fence);
+
+            let rest_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+            let rest = &line[rest_start..];
+            if let Some(close_idx) = rest.find(&fence) {
+                let code_content = &rest[..close_idx];
+                out.push_str(code_content);
+                out.push_str(&fence);
+                let advance_to = rest_start + close_idx + backtick_len;
+                while let Some(&(idx, _)) = chars.peek() {
+                    if idx < advance_to {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // 2. Obsidian embed: ![[...]]
+        if ch == '!' {
+            let rest = &line[i..];
+            if rest.starts_with("![[") {
+                if let Some(close_pos) = rest.find("]]") {
+                    let inner = &rest[3..close_pos];
+                    let (target, extra) = match inner.split_once('|') {
+                        Some((t, e)) => (t, Some(e)),
+                        None => (inner, None),
+                    };
+
+                    let trimmed_target = target.trim();
+                    if trimmed_target.to_ascii_lowercase().ends_with(".png") {
+                        let new_target = format!("{}.jpg", &trimmed_target[..trimmed_target.len() - 4]);
+                        out.push_str("![[");
+                        out.push_str(&new_target);
+                        if let Some(e) = extra {
+                            out.push('|');
+                            out.push_str(e);
+                        }
+                        out.push_str("]]");
+                        *count += 1;
+
+                        let advance_to = i + close_pos + 2;
+                        while let Some(&(idx, _)) = chars.peek() {
+                            if idx < advance_to {
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // 3. Standard markdown: ![alt](url)
+        if ch == '!' {
+            let rest = &line[i..];
+            if rest.starts_with("![") && !rest.starts_with("![[") {
+                if let Some(bracket_end) = rest.find(']') {
+                    let after_bracket = &rest[bracket_end + 1..];
+                    if after_bracket.starts_with('(') {
+                        if let Some(paren_end) = after_bracket.find(')') {
+                            let alt = &rest[2..bracket_end];
+                            let raw_url = &after_bracket[1..paren_end];
+                            let trimmed_url = raw_url.trim();
+
+                            let (url_part, suffix) = if trimmed_url.starts_with('<') {
+                                if let Some(end_angle) = trimmed_url.find('>') {
+                                    (&trimmed_url[1..end_angle], &trimmed_url[end_angle..])
+                                } else {
+                                    (trimmed_url, "")
+                                }
+                            } else if let Some(space_idx) = trimmed_url.find(|c: char| c.is_whitespace()) {
+                                (&trimmed_url[..space_idx], &trimmed_url[space_idx..])
+                            } else {
+                                (trimmed_url, "")
+                            };
+
+                            if url_part.to_ascii_lowercase().ends_with(".png") {
+                                let new_url = format!("{}.jpg", &url_part[..url_part.len() - 4]);
+                                out.push_str("![");
+                                out.push_str(alt);
+                                out.push_str("](");
+                                if trimmed_url.starts_with('<') {
+                                    out.push('<');
+                                    out.push_str(&new_url);
+                                    out.push_str(suffix);
+                                } else {
+                                    out.push_str(&new_url);
+                                    out.push_str(suffix);
+                                }
+                                out.push(')');
+                                *count += 1;
+
+                                let advance_to = i + bracket_end + 1 + paren_end + 1;
+                                while let Some(&(idx, _)) = chars.peek() {
+                                    if idx < advance_to {
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
 pub fn normalize_latex_delimiters(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let mut in_code_block = false;
@@ -307,6 +973,7 @@ const LATEX_GREEK_AND_MATH: &[&str] = &[
     r"\frac", r"\dfrac", r"\tfrac", r"\sqrt", r"\sum", r"\prod", r"\int", r"\iint", r"\oint",
     r"\partial", r"\nabla", r"\infty", r"\times", r"\pm", r"\mp", r"\cdot", r"\leq", r"\geq",
     r"\neq", r"\approx", r"\equiv", r"\propto", r"\to", r"\implies",
+    r"\dot", r"\ddot", r"\hat", r"\bar", r"\tilde", r"\vec", r"\left", r"\right", r"\exp", r"\ln", r"\log",
 ];
 
 const PROSE_STOP_WORDS: &[&str] = &[
@@ -399,14 +1066,16 @@ pub fn is_likely_prose_sentence(text: &str) -> bool {
         return true;
     }
 
-    // Common scientific prose words that often appear in false-positive formula boxes
+    // Common scientific prose words that often appear in false-positive formula boxes or table descriptions
     let sentence_markers = [
         "where", "expressing", "yields", "assuming", "equation", "equations", "gives", "shows",
         "defined", "denotes", "represents", "substituted", "substituting", "conservation",
         "balance", "results", "density", "velocity", "temperature", "pressure", "flux",
+        "number", "constant", "ratio", "rate", "factor", "fraction", "diameter", "coefficient",
+        "mass", "volume", "radius", "area", "energy", "enthalpy", "dimensionless",
     ];
     let has_sentence_marker = words.iter().any(|&w| sentence_markers.contains(&w));
-    if has_sentence_marker && words.len() >= 3 {
+    if has_sentence_marker {
         return true;
     }
 
@@ -508,12 +1177,17 @@ pub fn strip_running_headers_and_footers(text: &str) -> String {
     for line in text.lines() {
         let trimmed = line.trim();
         let upper = trimmed.to_uppercase();
+        let clean = upper.replace('$', "").replace('#', "").trim().to_string();
 
-        let is_running_hdr = (upper.starts_with("VOL. ") && upper.contains("NO. "))
-            || (upper.contains("J. PROPULSION") && (upper.contains("VOL.") || upper.contains("198") || upper.contains("199")))
-            || (upper.starts_with("AIAA JOURNAL") && upper.len() < 40)
-            || (upper.starts_with("DOWNLOADED BY ") || upper.starts_with("DOWNLOADED ON "))
-            || (upper.starts_with("PAGE ") && upper.contains(" OF ") && upper.len() < 25);
+        let is_running_hdr = (clean.starts_with("VOL. ") && clean.contains("NO. "))
+            || (clean.contains("J. PROPULSION") && (clean.contains("VOL.") || clean.contains("198") || clean.contains("199")))
+            || (clean.starts_with("AIAA JOURNAL") && clean.len() < 40)
+            || (clean.starts_with("DOWNLOADED BY ") || clean.starts_with("DOWNLOADED ON "))
+            || (clean.starts_with("PAGE ") && clean.contains(" OF ") && clean.len() < 25)
+            || clean == "EXTRACTED PDF TEXT"
+            || ((clean.starts_with("MARCH") || clean.starts_with("JAN") || clean.starts_with("FEB") || clean.starts_with("APR") || clean.starts_with("MAY") || clean.starts_with("JUNE") || clean.starts_with("JULY") || clean.starts_with("AUG") || clean.starts_with("SEPT") || clean.starts_with("OCT") || clean.starts_with("NOV") || clean.starts_with("DEC"))
+                && (clean.contains("TECHNICAL NOTES") || clean.contains("198") || clean.contains("199") || clean.contains("200"))
+                && clean.len() < 80);
 
         if !is_running_hdr {
             out.push_str(line);
@@ -707,12 +1381,59 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
 }
 
 fn wrap_inline_math(line: &str) -> String {
-    if !line.contains('\\') {
+    if !line.contains('\\') && !line.contains('$') && !line.contains('_') {
         return line.to_string();
     }
 
-    let mut result = String::with_capacity(line.len() + 16);
-    let mut chars = line.char_indices().peekable();
+    // Step 1: Repair any existing $...$ spans with broken LaTeX syntax
+    let mut intermediate = String::with_capacity(line.len() + 16);
+    let mut rem = line;
+    let mut has_repaired_dollars = false;
+
+    while let Some(start_d) = rem.find('$') {
+        intermediate.push_str(&rem[..start_d]);
+        let after_start = &rem[start_d + 1..];
+        if let Some(end_d) = after_start.find('$') {
+            let formula = &after_start[..end_d];
+            if !formula.contains('\n') && !formula.trim().is_empty() {
+                if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(formula) {
+                    intermediate.push('$');
+                    intermediate.push_str(&repaired);
+                    intermediate.push('$');
+                    has_repaired_dollars = true;
+                    rem = &after_start[end_d + 1..];
+                    continue;
+                }
+            }
+            intermediate.push('$');
+            intermediate.push_str(formula);
+            intermediate.push('$');
+            rem = &after_start[end_d + 1..];
+        } else {
+            // Stray unclosed dollar at end of line: check if it's an inline formula candidate
+            let trailing = after_start.trim();
+            if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trailing) {
+                intermediate.push('$');
+                intermediate.push_str(&repaired);
+                intermediate.push('$');
+                has_repaired_dollars = true;
+            } else {
+                intermediate.push_str(after_start);
+            }
+            rem = "";
+            break;
+        }
+    }
+    intermediate.push_str(rem);
+
+    let active_line = if has_repaired_dollars { intermediate } else { line.to_string() };
+
+    if !active_line.contains('\\') && !active_line.contains('_') && !active_line.contains('^') {
+        return active_line;
+    }
+
+    let mut result = String::with_capacity(active_line.len() + 16);
+    let mut chars = active_line.char_indices().peekable();
     let mut inside_dollar = false;
 
     while let Some((idx, ch)) = chars.next() {
@@ -722,41 +1443,134 @@ fn wrap_inline_math(line: &str) -> String {
             continue;
         }
 
-        if !inside_dollar && ch == '\\' {
-            let slice = &line[idx..];
-            if let Some(&cmd) = LATEX_GREEK_AND_MATH.iter().find(|&&cmd| slice.starts_with(cmd)) {
-                let after_cmd_idx = idx + cmd.len();
-                let mut end_idx = after_cmd_idx;
+        if !inside_dollar {
+            if ch == '\\' {
+                let slice = &active_line[idx..];
+                if let Some(&cmd) = LATEX_GREEK_AND_MATH.iter().find(|&&cmd| slice.starts_with(cmd)) {
+                    let after_cmd_idx = idx + cmd.len();
+                    let rem_str = &active_line[after_cmd_idx..];
+                    let mut cur_offset = 0;
 
-                let rem = &line[after_cmd_idx..];
-                if rem.starts_with('{') {
-                    if let Some(close_brace) = rem.find('}') {
-                        end_idx = after_cmd_idx + close_brace + 1;
+                    // Capture argument in braces e.g. \dot{m}
+                    if rem_str.starts_with('{') {
+                        if let Some(close_brace) = rem_str.find('}') {
+                            cur_offset = close_brace + 1;
+                        }
                     }
-                } else if rem.starts_with("_{") {
-                    if let Some(close_brace) = rem.find('}') {
-                        end_idx = after_cmd_idx + close_brace + 1;
-                    }
-                } else if rem.starts_with('_') || rem.starts_with('^') {
-                    let sub_rem = &rem[1..];
-                    if let Some(first_char) = sub_rem.chars().next() {
-                        end_idx = after_cmd_idx + 1 + first_char.len_utf8();
-                    }
-                }
 
-                let math_token = &line[idx..end_idx];
-                result.push('$');
-                result.push_str(math_token);
-                result.push('$');
+                    // Capture chained subscripts/superscripts e.g. \dot{m}_{nn} or \rho_{i0}
+                    let rest_after_arg = &rem_str[cur_offset..];
+                    if rest_after_arg.starts_with("_{") || rest_after_arg.starts_with("^{") {
+                        if let Some(close_brace) = rest_after_arg.find('}') {
+                            cur_offset += close_brace + 1;
+                        }
+                    } else if rest_after_arg.starts_with('_') || rest_after_arg.starts_with('^') {
+                        let sub_rem = &rest_after_arg[1..];
+                        if let Some(first_char) = sub_rem.chars().next() {
+                            cur_offset += 1 + first_char.len_utf8();
+                        }
+                    }
 
-                while let Some(&(next_idx, _)) = chars.peek() {
-                    if next_idx < end_idx {
-                        chars.next();
+                    let end_idx = after_cmd_idx + cur_offset;
+                    let math_token = &active_line[idx..end_idx];
+
+                    if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(math_token) {
+                        result.push('$');
+                        result.push_str(&repaired);
+                        result.push('$');
                     } else {
-                        break;
+                        result.push('$');
+                        result.push_str(math_token);
+                        result.push('$');
+                    }
+
+                    while let Some(&(next_idx, _)) = chars.peek() {
+                        if next_idx < end_idx {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            } else if ch.is_ascii_alphabetic() {
+                // Check for single variable with subscript/superscript e.g. T_{n}, p_{p}, R_i, R_i}$
+                let prev_ok = if idx == 0 {
+                    true
+                } else {
+                    let prev_char = active_line[..idx].chars().last().unwrap();
+                    !prev_char.is_alphanumeric() && prev_char != '_' && prev_char != '^' && prev_char != '$'
+                };
+
+                if prev_ok {
+                    let slice = &active_line[idx..];
+                    let base_len = slice.chars().take_while(|c| c.is_ascii_alphabetic()).count();
+                    if base_len > 0 && base_len <= 3 {
+                        let after_base = &slice[base_len..];
+                        if after_base.starts_with('_') || after_base.starts_with('^') {
+                            let cur_offset = base_len;
+                            let sub_slice = &slice[cur_offset..];
+                            let mut captured = 0;
+
+                            if sub_slice.starts_with("_{") || sub_slice.starts_with("^{") {
+                                if let Some(cb) = sub_slice.find('}') {
+                                    captured = cb + 1;
+                                }
+                            } else if sub_slice.starts_with('_') || sub_slice.starts_with('^') {
+                                let sub_rem = &sub_slice[1..];
+                                let sub_word_len = sub_rem.chars().take_while(|c| c.is_ascii_alphanumeric()).count();
+                                if sub_word_len > 0 {
+                                    captured = 1 + sub_word_len;
+                                    let rem_after_sub = &sub_rem[sub_word_len..];
+                                    if rem_after_sub.starts_with("}$") {
+                                        captured += 2;
+                                    } else if rem_after_sub.starts_with('}') {
+                                        captured += 1;
+                                    }
+                                }
+                            }
+
+                            if captured > 0 {
+                                let end_idx = idx + base_len + captured;
+                                let next_ok = if end_idx >= active_line.len() {
+                                    true
+                                } else {
+                                    let next_c = active_line[end_idx..].chars().next().unwrap();
+                                    !next_c.is_alphanumeric() && next_c != '_' && next_c != '^'
+                                };
+
+                                if next_ok {
+                                    let raw_token = &active_line[idx..end_idx];
+                                    let clean_token = raw_token.replace('$', "");
+                                    let token_to_repair = if clean_token.ends_with('}') && !clean_token.contains('{') {
+                                        clean_token.trim_end_matches('}').to_string()
+                                    } else {
+                                        clean_token
+                                    };
+
+                                    if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(&token_to_repair) {
+                                        result.push('$');
+                                        result.push_str(&repaired);
+                                        result.push('$');
+                                    } else {
+                                        result.push('$');
+                                        result.push_str(&token_to_repair);
+                                        result.push('$');
+                                    }
+
+                                    while let Some(&(next_idx, _)) = chars.peek() {
+                                        if next_idx < end_idx {
+                                            chars.next();
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
                     }
                 }
-                continue;
             }
         }
 
@@ -766,39 +1580,224 @@ fn wrap_inline_math(line: &str) -> String {
     result
 }
 
+fn is_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() >= 2
+}
+
+fn is_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !is_table_row(trimmed) {
+        return false;
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    inner.chars().all(|c| c == '-' || c == ':' || c == '|' || c.is_whitespace())
+}
+
+fn split_table_row(row: &str) -> Vec<String> {
+    let trimmed = row.trim();
+    let inner = if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() >= 2 {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    };
+
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = inner.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next == '|' {
+                    current.push('|');
+                    chars.next();
+                    continue;
+                }
+            }
+            current.push(c);
+        } else if c == '|' {
+            cells.push(current.trim().to_string());
+            current.clear();
+        } else {
+            current.push(c);
+        }
+    }
+    cells.push(current.trim().to_string());
+    cells
+}
+
+fn format_table_row(row: &str) -> String {
+    if is_table_separator(row) {
+        return row.to_string();
+    }
+    let cells = split_table_row(row);
+    let mut out = String::with_capacity(row.len() + 16);
+    out.push('|');
+    for cell in cells {
+        out.push(' ');
+        out.push_str(&crate::figure::table::format_table_cell_with_latex(&cell));
+        out.push_str(" |");
+    }
+    out
+}
+
 fn wrap_unfenced_math(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 64);
     let mut in_display_math = false;
+    let mut display_buf = String::new();
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("$$") {
-            in_display_math = !in_display_math || !trimmed.ends_with("$$") || trimmed == "$$";
-            out.push_str(line);
+
+        // An empty line NEVER stays in display math mode: close hanging display math immediately
+        // so that subsequent paragraphs are never rendered as italicized math font.
+        if trimmed.is_empty() {
+            if in_display_math {
+                let trimmed_buf = display_buf.trim();
+                if !trimmed_buf.is_empty() {
+                    if is_likely_prose_sentence(trimmed_buf) {
+                        out.push_str(trimmed_buf);
+                        out.push_str("\n\n");
+                    } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+                        out.push_str("$$\n");
+                        out.push_str(&repaired);
+                        out.push_str("\n$$\n");
+                    } else {
+                        out.push_str(trimmed_buf);
+                        out.push('\n');
+                    }
+                }
+                display_buf.clear();
+                in_display_math = false;
+            }
             out.push('\n');
             continue;
         }
 
+        if trimmed == "$$" {
+            if in_display_math {
+                let trimmed_buf = display_buf.trim();
+                if !trimmed_buf.is_empty() {
+                    if is_likely_prose_sentence(trimmed_buf) {
+                        out.push_str(trimmed_buf);
+                        out.push_str("\n\n");
+                    } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+                        out.push_str("$$\n");
+                        out.push_str(&repaired);
+                        out.push_str("\n$$\n");
+                    } else {
+                        out.push_str(trimmed_buf);
+                        out.push('\n');
+                    }
+                }
+                display_buf.clear();
+                in_display_math = false;
+            } else {
+                in_display_math = true;
+                display_buf.clear();
+            }
+            continue;
+        }
+
+        // Self-contained or single-line display math: e.g. "$$formula$$" or "$$formula$$ (9)"
+        if !in_display_math && trimmed.starts_with("$$") {
+            let after_open = &trimmed[2..];
+            if let Some(close_pos) = after_open.find("$$") {
+                let inside_math = &after_open[..close_pos];
+                let tag_suffix = after_open[close_pos + 2..].trim();
+                let repaired = crate::figure::latex::validate_and_repair_latex(inside_math)
+                    .unwrap_or_else(|| inside_math.to_string());
+
+                if tag_suffix.is_empty() {
+                    out.push_str(&format!("$${repaired}$$\n"));
+                } else {
+                    out.push_str(&format!("$${repaired}$$ {tag_suffix}\n"));
+                }
+                continue;
+            } else {
+                // Line starts with $$ but has no closing $$ on this line
+                let candidate = &trimmed[2..];
+                if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(candidate) {
+                    out.push_str(&format!("$${repaired}$$\n"));
+                    continue;
+                } else {
+                    in_display_math = true;
+                    display_buf.clear();
+                    display_buf.push_str(candidate);
+                    continue;
+                }
+            }
+        }
+
         if in_display_math {
-            out.push_str(line);
+            if trimmed.ends_with("$$") {
+                let before_close = trimmed.trim_end_matches('$').trim();
+                if !before_close.is_empty() {
+                    if !display_buf.is_empty() {
+                        display_buf.push(' ');
+                    }
+                    display_buf.push_str(before_close);
+                }
+                let trimmed_buf = display_buf.trim();
+                let repaired = crate::figure::latex::validate_and_repair_latex(trimmed_buf)
+                    .unwrap_or_else(|| trimmed_buf.to_string());
+                out.push_str("$$\n");
+                out.push_str(&repaired);
+                out.push_str("\n$$\n");
+                display_buf.clear();
+                in_display_math = false;
+            } else {
+                if !display_buf.is_empty() {
+                    display_buf.push('\n');
+                }
+                display_buf.push_str(line);
+            }
+            continue;
+        }
+
+        if is_table_row(line) {
+            out.push_str(&format_table_row(line));
             out.push('\n');
             continue;
         }
 
         if is_display_equation_line(line) {
             let cleaned = trimmed.replace('$', "");
-            if !out.ends_with("\n\n") && !out.is_empty() {
-                if !out.ends_with('\n') {
+            if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(&cleaned) {
+                if !out.ends_with("\n\n") && !out.is_empty() {
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
                     out.push('\n');
                 }
+                out.push_str("$$\n");
+                out.push_str(&repaired);
+                out.push_str("\n$$\n\n");
+            } else {
+                out.push_str(line);
                 out.push('\n');
             }
-            out.push_str("$$\n");
-            out.push_str(&cleaned);
-            out.push_str("\n$$\n\n");
         } else {
             out.push_str(&wrap_inline_math(line));
             out.push('\n');
+        }
+    }
+
+    if in_display_math {
+        let trimmed_buf = display_buf.trim();
+        if !trimmed_buf.is_empty() {
+            if is_likely_prose_sentence(trimmed_buf) {
+                out.push_str(trimmed_buf);
+                out.push_str("\n\n");
+            } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+                out.push_str("$$\n");
+                out.push_str(&repaired);
+                out.push_str("\n$$\n");
+            } else {
+                out.push_str(trimmed_buf);
+                out.push('\n');
+            }
         }
     }
 
@@ -940,7 +1939,7 @@ mod tests {
 
         let output = render_markdown(&result);
         assert!(output.contains("## Figures"));
-        assert!(output.contains("![Figure VII-3](images/Figure-VII-3.png)"));
+        assert!(output.contains("![[images/Figure-VII-3.png]]"));
         assert!(output.contains("*Figure VII-3*"));
     }
 
@@ -965,7 +1964,7 @@ mod tests {
 
         let output = render_markdown(&result);
         assert!(output.contains("## Figures"));
-        assert!(output.contains("![Figure 4.7](images/Figure-4-7.png)"));
+        assert!(output.contains("![[images/Figure-4-7.png]]"));
         assert!(
             output.contains("*Figure 4.7. Variation of species mole fractions with distance.*")
         );
@@ -992,14 +1991,14 @@ mod tests {
         let attached = attach_figures_to_page_text(page_text, &figures);
         assert!(
             attached.contains(
-                "![Figure 4.7](images/Figure-4-7.png)"
+                "![[images/Figure-4-7.png]]"
             )
         );
 
         // Case 2: Figure label is absent from page text
         let page_text_no_label = "Page with only text paragraphs.";
         let attached2 = attach_figures_to_page_text(page_text_no_label, &figures);
-        assert!(attached2.contains("![Figure 4.7](images/Figure-4-7.png)"));
+        assert!(attached2.contains("![[images/Figure-4-7.png]]"));
         assert!(
             attached2.contains("*Figure 4.7. Variation of species mole fractions with distance.*")
         );
@@ -1024,7 +2023,7 @@ mod tests {
 
         let page_text = "Refer to Figure 2.3 for contour details.";
         let attached = attach_figures_to_page_text(page_text, &figures);
-        assert!(attached.contains("![Figure 2.3](propulsion_report_images/Figure-2-3.png)"));
+        assert!(attached.contains("![[propulsion_report_images/Figure-2-3.png]]"));
 
         let result = PdfExtractionResult {
             text: String::new(),
@@ -1032,7 +2031,7 @@ mod tests {
             figures,
         };
         let rendered = render_markdown(&result);
-        assert!(rendered.contains("![Figure 2.3](propulsion_report_images/Figure-2-3.png)"));
+        assert!(rendered.contains("![[propulsion_report_images/Figure-2-3.png]]"));
     }
 
     #[test]
@@ -1188,5 +2187,234 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         assert!(meta.tags.contains(&"domain/aerospace".to_string()));
         assert!(meta.tags.contains(&"domain/combustion".to_string()));
         assert!(meta.tags.contains(&"topic/scramjet".to_string()));
+    }
+
+    #[test]
+    fn test_fix_latex_formatting_multi_line_display_math() {
+        let input = "Intro\n\n$$\nq=4\\pi{m_{t}e\\epsilon{\\sigma_r}{(T_{n^{}-T{}}{}\\left(m_{j}V{n})$ $ (9)\n$$\n\nProse text after equation.";
+        let res = fix_latex_formatting(input);
+        assert!(res.contains("Intro\n\n$$\n"));
+        assert!(res.contains(r"\tag{9}"));
+        assert!(res.contains(r"\right)"));
+        assert!(res.contains("$$\n\nProse text after equation."));
+        assert!(!res.contains("$$\nProse text"));
+    }
+
+    #[test]
+    fn test_fix_latex_formatting_table_math() {
+        let input = "| Variable | Description |\n| :--- | :--- |\n| Re | = Reynolds number |\n| Nu | = Nusselt number |\n| \\dot{m} | = mass flow rate |\n| V_{p0}/V_{ref} | 1.0 |";
+        let res = fix_latex_formatting(input);
+        assert!(res.contains("| $Re$ | = Reynolds number |"));
+        assert!(res.contains("| $Nu$ | = Nusselt number |"));
+        assert!(res.contains(r"| $\dot{m}$ | = mass flow rate |"));
+        assert!(res.contains(r"| $V_{p0}/V_{ref}$ | 1.0 |"));
+        assert!(res.contains("| :--- | :--- |"));
+    }
+
+    #[test]
+    fn test_unwrap_spurious_codeblocks() {
+        let input = r#"Normal text.
+
+```markdown
+| Col 1 | Col 2 |
+| :--- | :--- |
+| Val 1 | Val 2 |
+```
+
+```mermaid
+graph TD;
+    A-->B;
+```
+
+```python
+def foo():
+    return 42
+```
+
+```
+# Section In Untagged Fence
+
+This is an unadorned prose paragraph that was trapped inside backticks.
+```
+"#;
+        let (unwrapped, count) = unwrap_spurious_codeblocks(input);
+        assert_eq!(count, 2);
+        // Table should be unwrapped
+        assert!(unwrapped.contains("| Col 1 | Col 2 |"));
+        assert!(!unwrapped.contains("```markdown\n| Col 1"));
+        // Mermaid should be preserved
+        assert!(unwrapped.contains("```mermaid\ngraph TD;\n    A-->B;\n```"));
+        // Python should be preserved
+        assert!(unwrapped.contains("```python\ndef foo():\n    return 42\n```"));
+        // Section in untagged fence should be unwrapped
+        assert!(unwrapped.contains("# Section In Untagged Fence\n\nThis is an unadorned prose paragraph"));
+    }
+
+    #[test]
+    fn test_parse_existing_frontmatter() {
+        let input = r#"---
+title: "Existing Title"
+author: "Existing Author"
+date: "1985"
+tags:
+  - type/journal-article
+---
+
+# Body Content
+Hello world.
+"#;
+        let (meta_opt, body) = parse_existing_frontmatter(input);
+        assert!(meta_opt.is_some());
+        let meta = meta_opt.unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Existing Title"));
+        assert_eq!(meta.author.as_deref(), Some("Existing Author"));
+        assert_eq!(meta.publication_date.as_deref(), Some("1985"));
+        assert!(meta.tags.contains(&"type/journal-article".to_string()));
+        assert_eq!(body, "# Body Content\nHello world.\n");
+    }
+
+    #[test]
+    fn test_format_note_document_end_to_end() {
+        let input = r#"# Extracted PDF text
+
+# MARCH-APRIL 1985 TECHNICAL NOTES
+
+## Scramjet Combustor Analysis
+
+**G. A. Sullins and P. J. Waltrupt**
+The Johns Hopkins University Applied Physics Laboratory, Laurel, Maryland
+
+```markdown
+| Fuel | Air capture ratio |
+| :--- | :--- |
+| RJ-5 | \( A_0/A_i = 0.65 \) |
+```
+
+Under these conditions, \( M = 1 \) is reached.
+"#;
+        let hint = std::path::Path::new("Scramjet Combustor Analysis.md");
+        let (output, report) = format_note_document(input, Some(hint));
+
+        assert!(report.is_changed());
+        assert_eq!(report.codeblocks_unwrapped, 1);
+        assert!(report.frontmatter_added);
+
+        // Banners must be purged
+        assert!(!output.contains("# Extracted PDF text"));
+        assert!(!output.contains("# MARCH-APRIL 1985 TECHNICAL NOTES"));
+
+        // Table must be unwrapped and math normalized
+        assert!(!output.contains("```markdown"));
+        assert!(output.contains("| Fuel | Air capture ratio |"));
+        assert!(output.contains("$A_0/A_i = 0.65$"));
+        assert!(output.contains("$M = 1$"));
+
+        // Frontmatter must be synthesized with properties
+        assert!(output.starts_with("---\n"));
+        assert!(output.contains("title: \"Scramjet Combustor Analysis\"\n"));
+        assert!(output.contains("author: \"G. A. Sullins and P. J. Waltrupt\"\n"));
+        assert!(output.contains("date: \"MARCH-APRIL 1985\"\n"));
+        assert!(output.contains("tags:"));
+    }
+
+    #[test]
+    fn test_convert_figure_links_to_obsidian_basic() {
+        let input = "Here is ![Figure 1](images/Figure-1.png)\n*Figure 1*";
+        let (output, count) = convert_figure_links_to_obsidian(input);
+        assert_eq!(count, 1);
+        assert_eq!(output, "Here is ![[images/Figure-1.png]]\n*Figure 1*");
+    }
+
+    #[test]
+    fn test_convert_figure_links_to_obsidian_varieties() {
+        let input = r#"
+![Fig 2](Approximate_factorization_algori_images/page_2_fig_2.png)
+*Fig 2. Computational domain.*
+
+![](images/empty_alt.png)
+![With Title](images/with_title.png "Figure title")
+![Angle Brackets](<images/path with spaces/fig.png>)
+![Backslashes](images\subfolder\fig.png)
+![Dot Slash](./images/dot_slash.png)
+> [!table]- Original Crop: Table 1
+> ![Table 1](images/Table-1.png)
+> *Table 1*
+"#;
+        let (output, count) = convert_figure_links_to_obsidian(input);
+        assert_eq!(count, 7);
+        assert!(output.contains("![[Approximate_factorization_algori_images/page_2_fig_2.png]]"));
+        assert!(output.contains("![[images/empty_alt.png]]"));
+        assert!(output.contains("![[images/with_title.png]]"));
+        assert!(output.contains("![[images/path with spaces/fig.png]]"));
+        assert!(output.contains("![[images/subfolder/fig.png]]"));
+        assert!(output.contains("![[images/dot_slash.png]]"));
+        assert!(output.contains("> ![[images/Table-1.png]]"));
+    }
+
+    #[test]
+    fn test_convert_figure_links_to_obsidian_preserves_code_and_existing() {
+        let input = r#"
+Already obsidian: ![[images/already.png]]
+Regular link: [Click Here](https://example.com)
+Inline code: `![Ignore](images/code.png)`
+
+```markdown
+![Do Not Touch](images/codeblock.png)
+```
+
+~~~
+![Tilde Fence](images/tilde.png)
+~~~
+"#;
+        let (output, count) = convert_figure_links_to_obsidian(input);
+        assert_eq!(count, 0);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_format_note_document_converts_figure_links() {
+        let input = r#"# Extracted PDF text
+
+## Propulsion Overview
+
+Refer to the system schematic below.
+
+![Figure 2.1](propulsion_images/page_2_fig_1.png)
+*Figure 2.1. Schematic of the hypersonic inlet.*
+"#;
+        let (output, report) = format_note_document(input, None);
+        assert!(report.is_changed());
+        assert_eq!(report.figure_links_converted, 1);
+        assert!(output.contains("![[propulsion_images/page_2_fig_1.png]]"));
+        assert!(!output.contains("![Figure 2.1](propulsion_images/page_2_fig_1.png)"));
+    }
+
+    #[test]
+    fn test_replace_png_links_with_jpg() {
+        let input = r#"
+![[propulsion_report_images/page_2_fig_1.png]]
+![[page_1_fig_2.png|400]]
+![[uppercase.PNG]]
+![Figure 1](images/page_1.png)
+![Figure 2](<images/page_2.png>)
+![Figure 3](images/page_3.png "Title")
+> ![[quote/page_4.png]]
+`![[code_span.png]]`
+```markdown
+![[fenced_block.png]]
+```
+"#;
+        let (output, count) = replace_png_links_with_jpg(input);
+        assert_eq!(count, 7);
+        assert!(output.contains("![[propulsion_report_images/page_2_fig_1.jpg]]"));
+        assert!(output.contains("![[page_1_fig_2.jpg|400]]"));
+        assert!(output.contains("![[uppercase.jpg]]"));
+        assert!(output.contains("![Figure 1](images/page_1.jpg)"));
+        assert!(output.contains("![Figure 2](<images/page_2.jpg>)"));
+        assert!(output.contains("![Figure 3](images/page_3.jpg \"Title\")"));
+        assert!(output.contains("> ![[quote/page_4.jpg]]"));
+        // Code spans and fenced blocks preserved
+        assert!(output.contains("`![[code_span.png]]`"));
+        assert!(output.contains("![[fenced_block.png]]"));
     }
 }

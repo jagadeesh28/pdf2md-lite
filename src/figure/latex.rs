@@ -171,10 +171,12 @@ impl RapidLatexEngine {
             (ctx_shape[1] as usize, ctx_shape[2] as usize, ctx_slice.to_vec())
         };
 
-        // 5. Autoregressive Decoder Loop
+        // 5. Autoregressive Decoder Loop with Repetition Early-Stop
         let mut tokens: Vec<i64> = vec![1]; // [BOS]
         let mut mask: Vec<bool> = vec![true];
-        let max_seq_len = 256;
+        let max_seq_len = 128; // Standard formulas in DocLayNet do not exceed 128 tokens; prevents runaway quadratic iterations
+        let mut repeat_count = 0;
+        let mut prev_token = -1;
 
         let mut decoder_session = self.decoder.lock().map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
 
@@ -223,6 +225,17 @@ impl RapidLatexEngine {
                 break;
             }
 
+            // Repetition detection: abort immediately if identical token repeats 3+ times (e.g. infinite ~ / spaces)
+            if next_tok == prev_token {
+                repeat_count += 1;
+                if repeat_count >= 3 {
+                    break;
+                }
+            } else {
+                repeat_count = 0;
+                prev_token = next_tok;
+            }
+
             tokens.push(next_tok);
             mask.push(true);
         }
@@ -242,7 +255,11 @@ impl RapidLatexEngine {
         let detok = latex.replace('\u{0120}', " ");
         let cleaned = Self::post_process(&detok);
 
-        Ok(cleaned)
+        if let Some(repaired) = validate_and_repair_latex(&cleaned) {
+            Ok(repaired)
+        } else {
+            Ok(String::new())
+        }
     }
 
     /// Cleans and formats raw LaTeX string produced by token decoding.
@@ -266,6 +283,320 @@ impl RapidLatexEngine {
     }
 }
 
+/// Strips all unescaped dollar signs ($ and $$) from raw formula strings.
+pub fn clean_stray_dollars(s: &str) -> String {
+    s.replace('$', "")
+}
+
+/// Extracts trailing equation tags like `(6a)`, `(9)`, `7 (6a)` from candidate formula string.
+pub fn extract_equation_tag(s: &str) -> (String, Option<String>) {
+    let trimmed = s.trim();
+    if let Some(open_paren) = trimmed.rfind('(') {
+        if let Some(close_paren) = trimmed[open_paren..].find(')') {
+            let tag_candidate = trimmed[open_paren + 1..open_paren + close_paren].trim();
+            let after_tag = trimmed[open_paren + close_paren + 1..].trim();
+            let is_valid_tag = !tag_candidate.is_empty()
+                && tag_candidate.len() <= 8
+                && tag_candidate.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+
+            let is_at_end = after_tag.is_empty()
+                || after_tag == "$"
+                || after_tag == "$$"
+                || after_tag == "dx"
+                || after_tag == "dr"
+                || after_tag.starts_with("where")
+                || after_tag.starts_with("with");
+
+            if is_valid_tag && is_at_end {
+                let before = trimmed[..open_paren].trim_end();
+                let before_tag = if let Some(last_space) = before.rfind(' ') {
+                    let trailing_word = before[last_space + 1..].trim();
+                    if trailing_word.chars().all(|c| c.is_ascii_digit()) {
+                        before[..last_space].trim_end()
+                    } else {
+                        before
+                    }
+                } else {
+                    before
+                };
+
+                if !before_tag.is_empty() {
+                    return (before_tag.to_string(), Some(tag_candidate.to_string()));
+                }
+            }
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
+/// Replaces known OCR command corruptions and typos with standard LaTeX commands.
+pub fn fix_common_latex_command_typos(s: &str) -> String {
+    let mut res = s.to_string();
+
+    res = res.replace(r"_{p\}", "_{p}")
+             .replace(r"^{p\}", "^{p}")
+             .replace(r"p_{p\}", "p_p")
+             .replace(r"\}", "}");
+
+    res = res.replace(r"\dotm_", r"\dot{m}_")
+             .replace(r"\dotm", r"\dot{m}")
+             .replace(r"\ddotm_", r"\ddot{m}_")
+             .replace(r"\ddotm", r"\ddot{m}");
+
+    res = res.replace("{n^{}}", "{n}")
+             .replace("T{{}}", "T")
+             .replace(r"\sigma_r{}", r"\sigma_r");
+
+    let mut out = String::with_capacity(res.len());
+    let mut i = 0;
+    let chars: Vec<char> = res.chars().collect();
+
+    while i < chars.len() {
+        if i + 6 <= chars.len() && chars[i..i + 6].iter().collect::<String>() == r"\right" {
+            let after_idx = i + 6;
+            if after_idx < chars.len() {
+                let c = chars[after_idx];
+                let valid_delims = [')', ']', '}', '|', '.', '/'];
+                if c.is_ascii_alphabetic() && !valid_delims.contains(&c) {
+                    i += 6;
+                    continue;
+                }
+            }
+        }
+
+        if i + 2 <= chars.len() && chars[i..i + 2].iter().collect::<String>() == "|(" {
+            out.push_str("/(");
+            i += 2;
+            continue;
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
+/// Balances unescaped curly braces `{` and `}` in a LaTeX string.
+pub fn balance_braces(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut depth: i32 = 0;
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            out.push(c);
+            if let Some(&next_c) = chars.peek() {
+                out.push(next_c);
+                chars.next();
+            }
+            continue;
+        }
+
+        if c == '{' {
+            depth += 1;
+            out.push(c);
+        } else if c == '}' {
+            if depth > 0 {
+                depth -= 1;
+                out.push(c);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+
+    while depth > 0 {
+        out.push('}');
+        depth -= 1;
+    }
+
+    out
+}
+
+/// Matches `\left` and `\right` delimiters and balances plain parentheses.
+pub fn balance_delimiters(s: &str) -> String {
+    let mut left_stack: Vec<char> = Vec::new();
+    let mut out = String::with_capacity(s.len() + 32);
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if i + 5 <= chars.len() && chars[i..i + 5].iter().collect::<String>() == r"\left" {
+            let mut delim_idx = i + 5;
+            while delim_idx < chars.len() && chars[delim_idx].is_whitespace() {
+                delim_idx += 1;
+            }
+            if delim_idx < chars.len() {
+                let delim = chars[delim_idx];
+                let is_valid_delim = matches!(delim, '(' | '[' | '|' | '.' | '/' | '{');
+                if is_valid_delim {
+                    left_stack.push(delim);
+                    out.push_str(r"\left");
+                    out.push(delim);
+                    i = delim_idx + 1;
+                    continue;
+                } else {
+                    left_stack.push('.');
+                    out.push_str(r"\left.");
+                    i = i + 5;
+                    continue;
+                }
+            } else {
+                left_stack.push('.');
+                out.push_str(r"\left.");
+                i = chars.len();
+                continue;
+            }
+        }
+
+        if i + 6 <= chars.len() && chars[i..i + 6].iter().collect::<String>() == r"\right" {
+            let mut delim_idx = i + 6;
+            while delim_idx < chars.len() && chars[delim_idx].is_whitespace() {
+                delim_idx += 1;
+            }
+            if delim_idx < chars.len() {
+                let delim = chars[delim_idx];
+                let is_valid_delim = matches!(delim, ')' | ']' | '|' | '.' | '/' | '}');
+                if is_valid_delim {
+                    if left_stack.pop().is_some() {
+                        out.push_str(r"\right");
+                        out.push(delim);
+                    } else {
+                        out.push(delim);
+                    }
+                    i = delim_idx + 1;
+                    continue;
+                } else {
+                    i = i + 6;
+                    continue;
+                }
+            } else {
+                i = chars.len();
+                continue;
+            }
+        }
+
+        // If plain closing bracket matches unclosed \left, promote to \right
+        if chars[i] == ')' && left_stack.last() == Some(&'(') {
+            left_stack.pop();
+            out.push_str(r"\right)");
+            i += 1;
+            continue;
+        }
+
+        if chars[i] == ']' && left_stack.last() == Some(&'[') {
+            left_stack.pop();
+            out.push_str(r"\right]");
+            i += 1;
+            continue;
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    for open_delim in left_stack.into_iter().rev() {
+        let matching = match open_delim {
+            '(' => r"\right)",
+            '[' => r"\right]",
+            '{' => r"\right\}",
+            '|' => r"\right|",
+            _ => r"\right.",
+        };
+        out.push_str(matching);
+    }
+
+    out
+}
+
+/// Checks whether a cleaned LaTeX string represents valid, non-trivial mathematical formula syntax.
+pub fn is_valid_latex_formula(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.len() < 2 {
+        return false;
+    }
+
+    if crate::markdown::is_likely_prose_sentence(trimmed) {
+        return false;
+    }
+
+    // Explanatory table column descriptions like "= Reynolds number" without math commands/subscripts
+    if trimmed.starts_with('=') && !trimmed.contains('\\') && !trimmed.contains('_') && !trimmed.contains('^') {
+        return false;
+    }
+
+    const KNOWN_MATH_COMMANDS: &[&str] = &[
+        r"\alpha", r"\beta", r"\gamma", r"\delta", r"\epsilon", r"\varepsilon", r"\zeta", r"\eta",
+        r"\theta", r"\vartheta", r"\iota", r"\kappa", r"\lambda", r"\mu", r"\nu", r"\xi",
+        r"\pi", r"\varpi", r"\rho", r"\varrho", r"\sigma", r"\varsigma", r"\tau", r"\upsilon",
+        r"\phi", r"\varphi", r"\chi", r"\psi", r"\omega",
+        r"\Gamma", r"\Delta", r"\Theta", r"\Lambda", r"\Xi", r"\Pi", r"\Sigma", r"\Upsilon",
+        r"\Phi", r"\Psi", r"\Omega",
+        r"\frac", r"\dfrac", r"\tfrac", r"\sqrt", r"\sum", r"\prod", r"\int", r"\iint", r"\oint",
+        r"\partial", r"\nabla", r"\infty", r"\times", r"\pm", r"\mp", r"\cdot", r"\leq", r"\geq",
+        r"\neq", r"\approx", r"\equiv", r"\propto", r"\to", r"\implies",
+        r"\dot", r"\ddot", r"\hat", r"\bar", r"\tilde", r"\vec", r"\left", r"\right", r"\exp", r"\ln", r"\log",
+    ];
+
+    let has_cmd = KNOWN_MATH_COMMANDS.iter().any(|cmd| trimmed.contains(cmd));
+    if has_cmd {
+        return true;
+    }
+
+    // Subscripts and superscripts are explicit math notations in LaTeX
+    if trimmed.contains('_') || trimmed.contains('^') {
+        return true;
+    }
+
+    // Math delimiters like absolute values |x|
+    if (trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() >= 3)
+        || (trimmed.starts_with(r"\|") && trimmed.ends_with(r"\|"))
+    {
+        return true;
+    }
+
+    let has_relation = trimmed.contains('=')
+        || trimmed.contains(r"\approx")
+        || trimmed.contains(r"\le")
+        || trimmed.contains(r"\ge")
+        || trimmed.contains(r"\neq");
+
+    let math_chars = ['+', '-', '*', '/', '^', '_'];
+    let has_op = trimmed.chars().any(|c| math_chars.contains(&c));
+
+    if has_relation {
+        return true;
+    }
+
+    if has_op && trimmed.contains('(') && trimmed.contains(')') {
+        return true;
+    }
+
+    false
+}
+
+/// Validates, cleans, and auto-repairs a candidate LaTeX formula string.
+/// Returns `None` if the formula contains unfixable fatal syntax or pure noise.
+pub fn validate_and_repair_latex(raw: &str) -> Option<String> {
+    let clean_dollars = clean_stray_dollars(raw);
+    let (body, tag_opt) = extract_equation_tag(&clean_dollars);
+    let typos_fixed = fix_common_latex_command_typos(&body);
+    let delims_balanced = balance_delimiters(&typos_fixed);
+    let braces_balanced = balance_braces(&delims_balanced);
+
+    let trimmed = braces_balanced.trim();
+    if !is_valid_latex_formula(trimmed) {
+        return None;
+    }
+
+    if let Some(tag) = tag_opt {
+        Some(format!("{trimmed} \\tag{{{tag}}}"))
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +612,50 @@ mod tests {
                 assert!(result.is_ok());
             }
         }
+    }
+
+    #[test]
+    fn test_validate_and_repair_unbalanced_braces() {
+        // User screenshot 1 sample: unclosed braces
+        let input = r"\dot{m}_{nn}=m_{tt0+\dotm_i0} 7 (6a)";
+        let repaired = validate_and_repair_latex(input).expect("Should repair");
+        assert!(repaired.contains(r"\dot{m}"));
+        assert!(repaired.contains(r"\tag{6a}"));
+        assert_eq!(repaired.matches('{').count(), repaired.matches('}').count());
+
+        // Escaped brace sample
+        let input2 = r"p_{p\}=\rho_{i0}";
+        let repaired2 = validate_and_repair_latex(input2).expect("Should repair");
+        assert_eq!(repaired2.matches('{').count(), repaired2.matches('}').count());
+        assert!(!repaired2.contains(r"\}"));
+    }
+
+    #[test]
+    fn test_validate_and_repair_unclosed_left_right() {
+        // User screenshot 2 sample: \left( without \right)
+        let input = r"$V_{n}=\left(m_{tk}+{m_{n}+{m_{n})RT_{n}|(PA)$";
+        let repaired = validate_and_repair_latex(input).expect("Should repair");
+        assert!(repaired.contains(r"\left("));
+        assert!(repaired.contains(r"\right)"));
+        assert!(!repaired.contains('$'));
+        assert_eq!(repaired.matches('{').count(), repaired.matches('}').count());
+
+        // Sample with stray $ and equation number
+        let input2 = r"q=4\pi{m_{t}e\epsilon{\sigma_r}{(T_{n^{}}-T{{}}) \left(m_{j}V{n})$ $ (9)";
+        let repaired2 = validate_and_repair_latex(input2).expect("Should repair");
+        assert!(repaired2.contains(r"\tag{9}"));
+        assert!(!repaired2.contains('$'));
+        assert!(repaired2.contains(r"\right)"));
+    }
+
+    #[test]
+    fn test_reject_pure_noise() {
+        // User screenshot 2 OCR noise sample: dd)mc,(m
+        let input = "dd)mc,(m";
+        assert!(validate_and_repair_latex(input).is_none());
+
+        // Stray numbers
+        assert!(validate_and_repair_latex("00").is_none());
+        assert!(validate_and_repair_latex("(8) dr").is_none());
     }
 }

@@ -6,8 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::backends::indra::IndraScript;
+use crate::figure::ImageOptions;
 use crate::pdf::get_pdf_page_count;
-use crate::pipeline::process_pdf_with_options;
+use crate::pipeline::process_pdf_with_pipeline_options;
 
 /// Default directory search depth for PDF batch conversion.
 pub const DEFAULT_MAX_SEARCH_DEPTH: usize = 3;
@@ -33,7 +34,8 @@ pub fn sanitize_short_slug(name: &str) -> String {
     }
 
     if clean.len() > 32 {
-        clean[..32].trim_end_matches('_').to_string()
+        let boundary = clean.floor_char_boundary(32);
+        clean[..boundary].trim_end_matches('_').to_string()
     } else {
         clean.to_string()
     }
@@ -134,6 +136,54 @@ pub fn process_pdf_directory_with_options(
     script: IndraScript,
     quiet: bool,
 ) -> Result<BatchConversionResult> {
+    process_pdf_directory_full(
+        input_dir,
+        output_base_dir,
+        page_range,
+        max_depth,
+        explicit_concurrency,
+        script,
+        quiet,
+        false,
+    )
+}
+
+/// Converts a directory of PDF files with configurable quiet mode and optional resume support.
+pub fn process_pdf_directory_full(
+    input_dir: &Path,
+    output_base_dir: &Path,
+    page_range: Option<(usize, usize)>,
+    max_depth: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    quiet: bool,
+    resume: bool,
+) -> Result<BatchConversionResult> {
+    process_pdf_directory_with_image_options(
+        input_dir,
+        output_base_dir,
+        page_range,
+        max_depth,
+        explicit_concurrency,
+        script,
+        quiet,
+        resume,
+        ImageOptions::default(),
+    )
+}
+
+/// Converts a directory of PDF files with explicit ImageOptions, quiet mode, and resume support.
+pub fn process_pdf_directory_with_image_options(
+    input_dir: &Path,
+    output_base_dir: &Path,
+    page_range: Option<(usize, usize)>,
+    max_depth: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    quiet: bool,
+    resume: bool,
+    image_opts: ImageOptions,
+) -> Result<BatchConversionResult> {
     let pdf_files = collect_pdf_files_with_depth(input_dir, max_depth)?;
     if pdf_files.is_empty() {
         return Err(anyhow!(
@@ -153,11 +203,12 @@ pub fn process_pdf_directory_with_options(
 
     if !quiet {
         println!(
-            "\nFound {} PDF files in '{}'. Processing batch (concurrency={}, Language: {})...",
+            "\nFound {} PDF files in '{}'. Processing batch (concurrency={}, Language: {}{})...",
             pdf_files.len(),
             input_dir.display(),
             total_workers,
-            script
+            script,
+            if resume { ", Resume: enabled" } else { "" }
         );
     }
 
@@ -175,6 +226,8 @@ pub fn process_pdf_directory_with_options(
     let mut used_slugs = HashSet::new();
     let mut doc_items = Vec::with_capacity(pdf_files.len());
     let mut initial_failed = Vec::new();
+    let mut initial_succeeded = 0;
+    let total_pdf_count = pdf_files.len();
 
     for (index, pdf_path) in pdf_files.into_iter().enumerate() {
         let relative_parent = pdf_path
@@ -214,6 +267,25 @@ pub fn process_pdf_directory_with_options(
         }
 
         let target_md_path = pdf_output_dir.join(format!("{folder_slug}.md"));
+
+        // Incremental Batch Resume: If the target markdown file already exists and contains
+        // valid converted content (at least 100 bytes), skip re-conversion.
+        if resume && target_md_path.is_file() {
+            if let Ok(meta) = fs::metadata(&target_md_path) {
+                if meta.len() > 100 {
+                    if !quiet {
+                        println!(
+                            "[{}/{}] [SKIPPED] {} (already converted)",
+                            index + 1,
+                            total_pdf_count,
+                            folder_slug
+                        );
+                    }
+                    initial_succeeded += 1;
+                    continue;
+                }
+            }
+        }
 
         let total_pages = match get_pdf_page_count(&pdf_path) {
             Ok(count) => count,
@@ -264,10 +336,10 @@ pub fn process_pdf_directory_with_options(
         });
     }
 
-    let total_docs = doc_items.len() + initial_failed.len();
+    let total_docs = doc_items.len() + initial_succeeded + initial_failed.len();
     let result = std::sync::Arc::new(std::sync::Mutex::new(BatchConversionResult {
         total: total_docs,
-        succeeded: 0,
+        succeeded: initial_succeeded,
         failed: initial_failed,
     }));
 
@@ -276,7 +348,7 @@ pub fn process_pdf_directory_with_options(
         for item in doc_items {
             let t0 = std::time::Instant::now();
             let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
-            match process_pdf_with_options(
+            match process_pdf_with_pipeline_options(
                 &item.pdf_path,
                 &item.target_md_path,
                 item.begin_page,
@@ -284,6 +356,7 @@ pub fn process_pdf_directory_with_options(
                 Some(1),
                 item.rel_source.as_deref(),
                 script,
+                image_opts,
             ) {
                 Ok(_) => {
                     let elapsed = t0.elapsed().as_secs_f32();
@@ -305,8 +378,13 @@ pub fn process_pdf_directory_with_options(
         // Global Multi-Document Work Pool:
         // Allocate up to 4 concurrent documents in flight, each allocated proportional sub-workers,
         // strictly guaranteeing that sum(doc_workers) <= total_workers across the process.
+        // Uses batch_page_worker_limit to prevent nested concurrency oversubscription.
         let concurrent_docs = total_workers.min(4).min(doc_items.len()).max(1);
-        let per_doc_workers = (total_workers / concurrent_docs).max(1);
+        let per_doc_workers = crate::concurrency::batch_page_worker_limit(
+            None,
+            total_workers,
+        ) / concurrent_docs;
+        let per_doc_workers = per_doc_workers.max(1);
 
         let queue = std::sync::Arc::new(std::sync::Mutex::new(doc_items.into_iter()));
         let mut handles = Vec::with_capacity(concurrent_docs);
@@ -326,7 +404,7 @@ pub fn process_pdf_directory_with_options(
                     let t0 = std::time::Instant::now();
                     let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
 
-                    let conv_res = process_pdf_with_options(
+                    let conv_res = process_pdf_with_pipeline_options(
                         &item.pdf_path,
                         &item.target_md_path,
                         item.begin_page,
@@ -334,6 +412,7 @@ pub fn process_pdf_directory_with_options(
                         Some(per_doc_workers),
                         item.rel_source.as_deref(),
                         script,
+                        image_opts,
                     );
 
                     let mut res_guard = result_clone.lock().unwrap();
@@ -400,5 +479,47 @@ mod tests {
         let output_base = Path::new("output");
         let target_dir = output_base.join(rel_parent).join("stage1");
         assert_eq!(target_dir, Path::new("output/aerodynamics/turbines/stage1"));
+    }
+
+    #[test]
+    fn test_resume_mode_skips_existing_markdown() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let input_dir = temp_dir.path().join("in");
+        let output_dir = temp_dir.path().join("out");
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        // Write a minimal valid PDF
+        let pdf_path = input_dir.join("sample.pdf");
+        let doc = lopdf::Document::with_version("1.4");
+        let mut f = fs::File::create(&pdf_path).unwrap();
+        let mut doc_mut = doc;
+        doc_mut.save_to(&mut f).unwrap();
+
+        // Pre-create the output markdown note with valid length (> 100 bytes)
+        let note_dir = output_dir.join("sample");
+        fs::create_dir_all(&note_dir).unwrap();
+        let note_path = note_dir.join("sample.md");
+        fs::write(
+            &note_path,
+            "---\ntitle: Sample Document\nsource: sample.pdf\ntags:\n  - test\n---\n\nExisting note content that was already processed.\n",
+        )
+        .unwrap();
+
+        let result = process_pdf_directory_full(
+            &input_dir,
+            &output_dir,
+            None,
+            3,
+            Some(1),
+            IndraScript::English,
+            true,
+            true, // resume enabled
+        )
+        .unwrap();
+
+        assert_eq!(result.succeeded, 1);
+        assert_eq!(result.total, 1);
+        assert!(result.failed.is_empty());
     }
 }

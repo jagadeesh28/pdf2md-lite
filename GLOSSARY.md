@@ -92,3 +92,11 @@ _Avoid_: Per-document thread pool, nested worker spawning, uncoordinated concurr
 **Pipelined In-Memory Rasterization**:
 A zero-disk streaming architecture where a dedicated rendering thread streams decoded in-memory page canvases through a bounded channel directly to active OCR workers, eliminating intermediate PNG disk writes.
 _Avoid_: Disk spooling, batch PNG caching, sequential pre-rendering
+
+**Spurious Codeblock Stripping**:
+The automated unwrapping of accidental fence boundaries (` ```markdown ` or generic ` ``` `) enclosing standard Markdown elements (tables, callouts, headings, prose) while strictly preserving legitimate programming and diagram syntax blocks.
+_Avoid_: Naive codeblock deletion, universal backtick stripping
+
+**Post-Extraction Note Formatter**:
+A unified offline document sanitization routine that unwraps spurious codeblocks, cleans legacy extraction banners, normalizes LaTeX equations/tables, and synthesizes missing YAML frontmatter properties using GLiNER neural entity extraction and transcript heuristics.
+_Avoid_: Separate cleaning scripts, external linter, blind overwriting

@@ -15,6 +15,125 @@ use std::path::{Path, PathBuf};
 use caption::FigureRect;
 use yolo::{LayoutClass, get_yolo_detector};
 
+/// Supported output image formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFormat {
+    #[serde(alias = "jpg")]
+    Jpeg,
+    Png,
+    Webp,
+}
+
+impl Default for ImageFormat {
+    fn default() -> Self {
+        Self::Jpeg
+    }
+}
+
+impl ImageFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+            Self::Webp => "webp",
+        }
+    }
+
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "png" => Some(Self::Png),
+            "webp" => Some(Self::Webp),
+            _ => None,
+        }
+    }
+}
+
+/// Image configuration options for figure extraction and saving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageOptions {
+    pub format: ImageFormat,
+    pub quality: u8,
+    pub save_table_images: bool,
+}
+
+impl Default for ImageOptions {
+    fn default() -> Self {
+        Self {
+            format: ImageFormat::Jpeg,
+            quality: 80,
+            save_table_images: false,
+        }
+    }
+}
+
+impl ImageOptions {
+    pub fn new(format: ImageFormat, quality: u8, save_table_images: bool) -> Self {
+        Self {
+            format,
+            quality: quality.clamp(1, 100),
+            save_table_images,
+        }
+    }
+}
+
+/// Flattens an image to 24-bit RGB, blending RGBA transparency cleanly over a white background.
+pub fn flatten_to_rgb(img: &DynamicImage) -> image::RgbImage {
+    match img {
+        DynamicImage::ImageRgb8(rgb) => rgb.clone(),
+        DynamicImage::ImageLuma8(gray) => DynamicImage::ImageLuma8(gray.clone()).to_rgb8(),
+        _ => {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            let rgba_raw = rgba.into_raw();
+            let mut rgb_raw = vec![0u8; (w as usize) * (h as usize) * 3];
+            for (dst_chunk, src_chunk) in rgb_raw.chunks_exact_mut(3).zip(rgba_raw.chunks(4)) {
+                let alpha = src_chunk[3] as f32 / 255.0;
+                dst_chunk[0] = ((src_chunk[0] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+                dst_chunk[1] = ((src_chunk[1] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+                dst_chunk[2] = ((src_chunk[2] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+            }
+            image::RgbImage::from_raw(w, h, rgb_raw).expect("RgbImage dimensions match")
+        }
+    }
+}
+
+/// Encodes and saves a DynamicImage according to the specified ImageFormat and quality.
+pub fn save_image_with_format(
+    img: &DynamicImage,
+    path: &Path,
+    format: ImageFormat,
+    quality: u8,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    match format {
+        ImageFormat::Jpeg => {
+            let rgb = flatten_to_rgb(img);
+            let file = fs::File::create(path)
+                .with_context(|| format!("Failed to create JPEG file: {}", path.display()))?;
+            let mut writer = std::io::BufWriter::new(file);
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
+            encoder
+                .encode_image(&rgb)
+                .with_context(|| format!("Failed to encode JPEG: {}", path.display()))?;
+        }
+        ImageFormat::Png => {
+            img.save_with_format(path, image::ImageFormat::Png)
+                .with_context(|| format!("Failed to save PNG: {}", path.display()))?;
+        }
+        ImageFormat::Webp => {
+            img.save_with_format(path, image::ImageFormat::WebP)
+                .with_context(|| format!("Failed to save WebP: {}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// A visual figure or table crop extracted from a document page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CroppedFigure {
@@ -89,6 +208,37 @@ pub fn analyze_page_layout_image(
     image_output_dir: &Path,
     page_num: usize,
 ) -> Result<PageLayoutResult> {
+    analyze_page_layout_image_with_doc(None, pdf_path, page_img, image_output_dir, page_num)
+}
+
+/// Analyzes page layout using YOLOv8n DocLayNet and PDF streams, accepting an optional pre-parsed `lopdf::Document`
+/// to completely eliminate redundant per-page PDF parsing from disk.
+pub fn analyze_page_layout_image_with_doc(
+    preloaded_doc: Option<&lopdf::Document>,
+    pdf_path: Option<&Path>,
+    page_img: &DynamicImage,
+    image_output_dir: &Path,
+    page_num: usize,
+) -> Result<PageLayoutResult> {
+    analyze_page_layout_image_with_doc_and_options(
+        preloaded_doc,
+        pdf_path,
+        page_img,
+        image_output_dir,
+        page_num,
+        ImageOptions::default(),
+    )
+}
+
+/// Analyzes page layout using YOLOv8n DocLayNet and PDF streams with pre-parsed lopdf Document and custom ImageOptions.
+pub fn analyze_page_layout_image_with_doc_and_options(
+    preloaded_doc: Option<&lopdf::Document>,
+    pdf_path: Option<&Path>,
+    page_img: &DynamicImage,
+    image_output_dir: &Path,
+    page_num: usize,
+    image_opts: ImageOptions,
+) -> Result<PageLayoutResult> {
     fs::create_dir_all(image_output_dir).with_context(|| {
         format!(
             "Failed to create image output directory {:?}",
@@ -98,34 +248,39 @@ pub fn analyze_page_layout_image(
 
     let (page_w, page_h) = page_img.dimensions();
     let mut result = PageLayoutResult::default();
+    let ext = image_opts.format.extension();
 
-    // 1. Check native PDF DOM streams for digital vector/raster images
-    if let Some(pdf_file) = pdf_path {
-        if let Ok(doc) = lopdf::Document::load(pdf_file) {
-            if let Ok(stream_figs) =
-                pdf_stream::extract_page_stream_figures(&doc, page_num, page_w, page_h)
-            {
-                for (idx, sf) in stream_figs.into_iter().enumerate() {
-                    let rect = caption::FigureRect::from_stream_figure(&sf);
-                    let filename = format!("page_{page_num}_stream_{}.png", idx + 1);
-                    let file_path = image_output_dir.join(&filename);
-                    let _ = sf.image.save(&file_path);
+    // 1. Check native PDF DOM streams for digital vector/raster images using pre-parsed or lazily loaded doc
+    let stream_figs_opt = if let Some(doc) = preloaded_doc {
+        pdf_stream::extract_page_stream_figures(doc, page_num, page_w, page_h).ok()
+    } else if let Some(pdf_file) = pdf_path {
+        lopdf::Document::load(pdf_file)
+            .ok()
+            .and_then(|doc| pdf_stream::extract_page_stream_figures(&doc, page_num, page_w, page_h).ok())
+    } else {
+        None
+    };
 
-                    result.picture_masks.push(rect);
-                    result.pictures.push(CroppedFigure {
-                        file_path,
-                        filename,
-                        figure_label: format!("Figure {page_num}-{}", idx + 1),
-                        caption: None,
-                        page_num,
-                        x: rect.x,
-                        y: rect.y,
-                        width: rect.width,
-                        height: rect.height,
-                        is_table: false,
-                    });
-                }
-            }
+    if let Some(stream_figs) = stream_figs_opt {
+        for (idx, sf) in stream_figs.into_iter().enumerate() {
+            let rect = caption::FigureRect::from_stream_figure(&sf);
+            let filename = format!("page_{page_num}_stream_{}.{ext}", idx + 1);
+            let file_path = image_output_dir.join(&filename);
+            let _ = save_image_with_format(&sf.image, &file_path, image_opts.format, image_opts.quality);
+
+            result.picture_masks.push(rect);
+            result.pictures.push(CroppedFigure {
+                file_path,
+                filename,
+                figure_label: format!("Figure {page_num}-{}", idx + 1),
+                caption: None,
+                page_num,
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+                is_table: false,
+            });
         }
     }
 
@@ -157,12 +312,12 @@ pub fn analyze_page_layout_image(
 
                 if !overlaps {
                     figure_idx += 1;
-                    let filename = format!("page_{page_num}_fig_{figure_idx}.png");
+                    let filename = format!("page_{page_num}_fig_{figure_idx}.{ext}");
                     let file_path = image_output_dir.join(&filename);
 
                     // Crop raw unenhanced image directly from page canvas
                     if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
-                        let _ = cropped.save(&file_path);
+                        let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
                     }
 
                     result.picture_masks.push(rect.clone());
@@ -182,12 +337,14 @@ pub fn analyze_page_layout_image(
             }
             LayoutClass::Table => {
                 table_idx += 1;
-                let filename = format!("page_{page_num}_table_{table_idx}.png");
+                let filename = format!("page_{page_num}_table_{table_idx}.{ext}");
                 let file_path = image_output_dir.join(&filename);
 
-                // Save companion raw table crop
-                if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
-                    let _ = cropped.save(&file_path);
+                // Save companion raw table crop only if configured
+                if image_opts.save_table_images {
+                    if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                        let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
+                    }
                 }
 
                 let fig = CroppedFigure {
@@ -243,3 +400,48 @@ fn crop_rectangle(
 
     Ok(img.crop_imm(min_x, min_y, crop_w, crop_h))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_image_format_extension_and_parsing() {
+        assert_eq!(ImageFormat::Jpeg.extension(), "jpg");
+        assert_eq!(ImageFormat::Png.extension(), "png");
+        assert_eq!(ImageFormat::Webp.extension(), "webp");
+
+        assert_eq!(ImageFormat::from_str_loose("jpg"), Some(ImageFormat::Jpeg));
+        assert_eq!(ImageFormat::from_str_loose("JPEG"), Some(ImageFormat::Jpeg));
+        assert_eq!(ImageFormat::from_str_loose("png"), Some(ImageFormat::Png));
+        assert_eq!(ImageFormat::from_str_loose("webp"), Some(ImageFormat::Webp));
+        assert_eq!(ImageFormat::from_str_loose("unknown"), None);
+    }
+
+    #[test]
+    fn test_flatten_rgba_to_rgb() {
+        let mut rgba = image::RgbaImage::new(2, 2);
+        // Fully transparent black pixel should become white
+        rgba.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
+        // Fully opaque red pixel should remain red
+        rgba.put_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+
+        let dynamic = DynamicImage::ImageRgba8(rgba);
+        let rgb = flatten_to_rgb(&dynamic);
+
+        assert_eq!(rgb.get_pixel(0, 0), &image::Rgb([255, 255, 255]));
+        assert_eq!(rgb.get_pixel(1, 1), &image::Rgb([255, 0, 0]));
+    }
+
+    #[test]
+    fn test_save_image_as_jpeg() {
+        let dummy = DynamicImage::new_rgba8(20, 20);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target = temp_dir.path().join("sample.jpg");
+
+        save_image_with_format(&dummy, &target, ImageFormat::Jpeg, 80).unwrap();
+        assert!(target.exists());
+        assert!(fs::metadata(&target).unwrap().len() > 0);
+    }
+}
+

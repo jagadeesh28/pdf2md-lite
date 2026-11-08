@@ -5,4 +5,8 @@ temp/
 *.log
 .cargo/
 docs/
-models/metadata/
+models
+completed/
+*.zip
+check_output.txt
+outputlog.txt

@@ -15,6 +15,9 @@ pub struct AppConfig {
     pub models_dir: Option<PathBuf>,
     pub layout_model: Option<PathBuf>,
     pub language: Option<String>,
+    pub image_format: Option<String>,
+    pub image_quality: Option<u8>,
+    pub save_table_images: Option<bool>,
 }
 
 impl AppConfig {

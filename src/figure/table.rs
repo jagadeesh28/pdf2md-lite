@@ -30,7 +30,7 @@ impl TableGrid {
         for c in 0..self.num_cols {
             let cell = header.get(c).map(|s| s.trim()).unwrap_or("");
             out.push(' ');
-            out.push_str(&escape_cell(cell));
+            out.push_str(&format_table_cell_with_latex(cell));
             out.push_str(" |");
         }
         out.push('\n');
@@ -53,7 +53,7 @@ impl TableGrid {
             for c in 0..self.num_cols {
                 let cell = row.get(c).map(|s| s.trim()).unwrap_or("");
                 out.push(' ');
-                out.push_str(&escape_cell(cell));
+                out.push_str(&format_table_cell_with_latex(cell));
                 out.push_str(" |");
             }
             out.push('\n');
@@ -63,9 +63,68 @@ impl TableGrid {
     }
 }
 
-/// Escapes markdown pipe symbols within cell text to prevent broken table syntax.
-fn escape_cell(cell: &str) -> String {
-    cell.replace('|', "\\|").replace('\n', " ")
+/// Formats table cell content, escaping markdown pipes and properly wrapping inline LaTeX expressions.
+pub fn format_table_cell_with_latex(cell: &str) -> String {
+    let trimmed = cell.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let cell_no_newlines = trimmed
+        .replace('\n', " ")
+        .replace(r"\(", "$")
+        .replace(r"\)", "$")
+        .replace(r"\[", "$")
+        .replace(r"\]", "$");
+
+    if cell_no_newlines.starts_with('$') && cell_no_newlines.ends_with('$') && cell_no_newlines.len() >= 2 {
+        let inside = &cell_no_newlines[1..cell_no_newlines.len() - 1];
+        if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(inside) {
+            let stripped_tag = strip_tag_from_inline_latex(&repaired);
+            let escaped_pipe = stripped_tag.replace('|', r"\|");
+            return format!("${escaped_pipe}$");
+        } else {
+            return cell_no_newlines.replace('|', r"\|");
+        }
+    }
+
+    // Dimensionless numbers and physical ratios (e.g. "Re", "Nu", "Pr", "H/C")
+    let is_dimensionless_symbol = trimmed == "Re" || trimmed == "Nu" || trimmed == "Pr" || trimmed == "CD" || trimmed == "CP" || trimmed == "H/C"
+        || trimmed == "Ma" || trimmed == "Kn" || trimmed == "Pe" || trimmed == "Sc" || trimmed == "St";
+
+    if is_dimensionless_symbol {
+        return format!("${trimmed}$");
+    }
+
+    let has_math_cmd = crate::figure::latex::is_valid_latex_formula(&cell_no_newlines)
+        || cell_no_newlines.contains('\\');
+    let has_sub_super = cell_no_newlines.contains('_') || cell_no_newlines.contains('^');
+
+    if has_math_cmd || has_sub_super {
+        if !crate::markdown::is_likely_prose_sentence(&cell_no_newlines) {
+            if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(&cell_no_newlines) {
+                let stripped_tag = strip_tag_from_inline_latex(&repaired);
+                let escaped_pipe = stripped_tag.replace('|', r"\|");
+                return format!("${escaped_pipe}$");
+            }
+        } else {
+            let normalized = crate::markdown::normalize_latex_delimiters(&cell_no_newlines);
+            return normalized.replace('|', r"\|");
+        }
+    }
+
+    cell_no_newlines.replace('|', r"\|")
+}
+
+fn strip_tag_from_inline_latex(s: &str) -> String {
+    if let Some(pos) = s.rfind(r"\tag{") {
+        if let Some(end) = s[pos..].find('}') {
+            let tag_content = &s[pos + 5..pos + end];
+            let before = s[..pos].trim_end();
+            return format!("{before} ({tag_content})");
+        }
+    }
+    s.to_string()
 }
 
 /// Extracts a structured Markdown table from text lines located within a detected table boundary.
@@ -304,6 +363,29 @@ fn expand_single_line_tokens(row_groups: &[Vec<&TextLine>]) -> Vec<Vec<TableCell
 
         for line in row {
             let text = line.text.trim();
+
+            // Check if line contains "= " preceded by a symbol (common in nomenclature tables)
+            if let Some(eq_idx) = text.find(" = ") {
+                let sym = text[..eq_idx].trim();
+                let def = text[eq_idx + 1..].trim(); // starts with "= ..."
+                if !sym.is_empty() && !def.is_empty() && sym.len() <= 15 && !sym.contains("  ") {
+                    let sym_w = (line.bbox.width as f32 * (sym.len() as f32 / text.len().max(1) as f32)).max(15.0) as u32;
+                    let def_x = line.bbox.x + sym_w + 10;
+                    let def_w = line.bbox.width.saturating_sub(sym_w + 10);
+                    tokens_in_row.push(TableCellToken {
+                        x: line.bbox.x,
+                        width: sym_w,
+                        text: sym.to_string(),
+                    });
+                    tokens_in_row.push(TableCellToken {
+                        x: def_x,
+                        width: def_w,
+                        text: def.to_string(),
+                    });
+                    continue;
+                }
+            }
+
             // Check if line contains 2 or more consecutive spaces indicating column gutter
             if text.contains("  ") {
                 let sub_chunks: Vec<&str> = text
@@ -514,5 +596,29 @@ mod tests {
         assert!(res.contains("> [!table]- Original Table Image: Table 1"));
         assert!(!res.contains("\nCol1 Col2\n"));
         assert!(!res.contains("\nVal1 Val2\n"));
+    }
+
+    #[test]
+    fn test_format_table_cell_with_latex() {
+        assert_eq!(format_table_cell_with_latex("Re"), "$Re$");
+        assert_eq!(format_table_cell_with_latex("T"), "T");
+        assert_eq!(format_table_cell_with_latex(r"\dot{m}"), r"$\dot{m}$");
+        assert_eq!(format_table_cell_with_latex(r"V_{p0}/V_{ref}"), r"$V_{p0}/V_{ref}$");
+        assert_eq!(format_table_cell_with_latex(r"|V_p - V_g|"), r"$\|V_p - V_g\|$");
+        assert_eq!(format_table_cell_with_latex("= Reynolds number"), "= Reynolds number");
+    }
+
+    #[test]
+    fn test_expand_nomenclature_line() {
+        let table_rect = FigureRect::new(10, 10, 400, 200);
+        let l1 = make_line(20, 20, 300, 20, "Re = Reynolds number");
+        let l2 = make_line(20, 50, 300, 20, "Nu = Nusselt number");
+        let lines = vec![l1, l2];
+
+        let grid = extract_table_grid(&table_rect, &lines).expect("Should extract 2 columns");
+        assert_eq!(grid.num_cols, 2);
+        let md = grid.to_markdown();
+        assert!(md.contains("$Re$"));
+        assert!(md.contains("= Reynolds number"));
     }
 }

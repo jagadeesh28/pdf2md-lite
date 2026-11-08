@@ -195,11 +195,32 @@ impl IndraEngine {
 
         // 2. Crop each line and run character recognition
         let mut recognized_lines = Vec::with_capacity(boxes.len());
-        for bbox in boxes {
-            let (text, _conf) = self.transcribe_line(&gray, &bbox, script)?;
 
-            if !text.trim().is_empty() {
-                recognized_lines.push(TextLine { bbox, text });
+        match script {
+            IndraScript::English | IndraScript::Latin => {
+                // Batched SVTR inference: groups lines by bucket width and runs
+                // one ONNX inference per bucket group, amortizing dispatch overhead.
+                let batch_results = self
+                    .recognizer
+                    .recognize_lines_batch(&gray, &boxes, None)?;
+                for (bbox, (text, _conf)) in boxes.iter().zip(batch_results.iter()) {
+                    if !text.trim().is_empty() {
+                        recognized_lines.push(TextLine {
+                            bbox: *bbox,
+                            text: text.clone(),
+                        });
+                    }
+                }
+            }
+            IndraScript::Telugu | IndraScript::World | IndraScript::Auto => {
+                // Per-line recognition required for script selection / masking.
+                for bbox in boxes {
+                    let (text, _conf) = self.transcribe_line(&gray, &bbox, script)?;
+
+                    if !text.trim().is_empty() {
+                        recognized_lines.push(TextLine { bbox, text });
+                    }
+                }
             }
         }
 

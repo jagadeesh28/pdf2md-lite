@@ -79,6 +79,29 @@ pub fn process_pdf_with_options(
     source_label: Option<&str>,
     script: IndraScript,
 ) -> Result<()> {
+    process_pdf_with_pipeline_options(
+        input_path,
+        output_path,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        source_label,
+        script,
+        crate::figure::ImageOptions::default(),
+    )
+}
+
+/// Converts a single PDF file with full pipeline and image configuration options.
+pub fn process_pdf_with_pipeline_options(
+    input_path: &Path,
+    output_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    source_label: Option<&str>,
+    script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
+) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
 
     let pdf_stem = input_path
@@ -199,13 +222,14 @@ pub fn process_pdf_with_options(
 
     let mut raw_body = String::new();
 
-    process_pages_stream(
+    process_pages_stream_with_options(
         input_path,
         &image_output_dir,
         begin_page,
         end_page,
         explicit_concurrency,
         script,
+        image_opts,
         |page_num, page_md| {
             // For the first processed page, if metadata fields are still missing (e.g. scanned PDF where
             // initial header_slice had no digital text), attempt extraction from the OCR text of page 1.
@@ -301,6 +325,32 @@ pub fn process_pages_stream<F>(
     end_page: usize,
     explicit_concurrency: Option<usize>,
     script: IndraScript,
+    on_page: F,
+) -> Result<()>
+where
+    F: FnMut(usize, String) -> Result<()>,
+{
+    process_pages_stream_with_options(
+        input_path,
+        image_output_dir,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        script,
+        crate::figure::ImageOptions::default(),
+        on_page,
+    )
+}
+
+/// Concurrent page processing worker engine with explicit ImageOptions.
+pub fn process_pages_stream_with_options<F>(
+    input_path: &Path,
+    image_output_dir: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
     mut on_page: F,
 ) -> Result<()>
 where
@@ -319,6 +369,9 @@ where
     let pdf_pages = pdf_bytes
         .as_ref()
         .and_then(|bytes| safe_extract_text_by_pages(bytes));
+
+    // Parse lopdf::Document once per document to avoid redundant per-page file reads and DOM parsing
+    let lopdf_doc = Arc::new(lopdf::Document::load(input_path).ok());
 
     let concurrency = resolve_concurrency(explicit_concurrency);
     let total_pages = end_page.saturating_sub(begin_page) + 1;
@@ -341,13 +394,15 @@ where
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
 
-            let page_md = safe_process_single_page_image(
+            let page_md = safe_process_single_page_image_with_doc_and_options(
+                lopdf_doc.as_ref().as_ref(),
                 Some(input_path),
                 &page_img,
                 image_output_dir,
                 page_num,
                 raw_page_text.as_deref(),
                 script,
+                image_opts,
             );
             on_page(page_num, page_md)?;
         }
@@ -369,6 +424,7 @@ where
             let img_out_dir = image_output_dir.to_path_buf();
             let input_path_clone = input_path_buf.clone();
             let pdf_pages_clone = Arc::clone(&pdf_pages);
+            let lopdf_doc_clone = Arc::clone(&lopdf_doc);
 
             let handle = thread::spawn(move || {
                 loop {
@@ -396,13 +452,15 @@ where
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
 
-                    let page_md = safe_process_single_page_image(
+                    let page_md = safe_process_single_page_image_with_doc_and_options(
+                        lopdf_doc_clone.as_ref().as_ref(),
                         Some(&input_path_clone),
                         &page_img,
                         &img_out_dir,
                         page_num,
                         raw_page_text.as_deref(),
                         script,
+                        image_opts,
                     );
 
                     if result_tx_clone.send((page_num, page_md)).is_err() {
@@ -496,14 +554,62 @@ pub fn safe_process_single_page_image(
     raw_page_text: Option<&str>,
     script: IndraScript,
 ) -> String {
+    safe_process_single_page_image_with_doc(
+        None,
+        pdf_path,
+        page_img,
+        image_output_dir,
+        page_num,
+        raw_page_text,
+        script,
+    )
+}
+
+/// Executes single-page processing on an in-memory DynamicImage directly with a shared pre-parsed PDF DOM document,
+/// protected by panic and error boundaries.
+pub fn safe_process_single_page_image_with_doc(
+    lopdf_doc: Option<&lopdf::Document>,
+    pdf_path: Option<&Path>,
+    page_img: &image::DynamicImage,
+    image_output_dir: &Path,
+    page_num: usize,
+    raw_page_text: Option<&str>,
+    script: IndraScript,
+) -> String {
+    safe_process_single_page_image_with_doc_and_options(
+        lopdf_doc,
+        pdf_path,
+        page_img,
+        image_output_dir,
+        page_num,
+        raw_page_text,
+        script,
+        crate::figure::ImageOptions::default(),
+    )
+}
+
+/// Executes single-page processing on an in-memory DynamicImage directly with a shared pre-parsed PDF DOM document
+/// and explicit ImageOptions.
+pub fn safe_process_single_page_image_with_doc_and_options(
+    lopdf_doc: Option<&lopdf::Document>,
+    pdf_path: Option<&Path>,
+    page_img: &image::DynamicImage,
+    image_output_dir: &Path,
+    page_num: usize,
+    raw_page_text: Option<&str>,
+    script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
+) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        process_single_page_image(
+        process_single_page_image_with_doc(
+            lopdf_doc,
             pdf_path,
             page_img,
             image_output_dir,
             page_num,
             raw_page_text,
             script,
+            image_opts,
         )
     }));
 
@@ -544,20 +650,24 @@ pub fn safe_process_single_page_image(
     }
 }
 
-fn process_single_page_image(
+fn process_single_page_image_with_doc(
+    lopdf_doc: Option<&lopdf::Document>,
     pdf_path: Option<&Path>,
     page_img: &image::DynamicImage,
     image_output_dir: &Path,
     page_num: usize,
     raw_page_text: Option<&str>,
     script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
 ) -> Result<String> {
     // Phase 1: YOLO Three-Way Layout Analysis directly on the in-memory page canvas
-    let mut layout = figure::analyze_page_layout_image(
+    let mut layout = figure::analyze_page_layout_image_with_doc_and_options(
+        lopdf_doc,
         pdf_path,
         page_img,
         image_output_dir,
         page_num,
+        image_opts,
     )?;
 
     // Phase 2: Canvas Masking for Pictures (eliminates hallucinated text from drawings)
@@ -610,7 +720,17 @@ fn process_single_page_image(
 
     // Phase 5: Formula Box Recognition & Wrapping (DocLayNet Class 2)
     // Uses RapidLaTeXOCR neural equation recognition with seamless fallback to OCR text
+    let mut table_formula_lines: Vec<TextLine> = Vec::new();
+
     for formula_rect in &layout.formulas {
+        // Check if formula is located inside any table boundary
+        let is_inside_table = layout.tables.iter().any(|(t_rect, _)| {
+            let cx = formula_rect.x + formula_rect.width / 2;
+            let cy = formula_rect.y + formula_rect.height / 2;
+            cx >= t_rect.x && cx <= t_rect.x + t_rect.width
+                && cy >= t_rect.y && cy <= t_rect.y + t_rect.height
+        });
+
         let inside_lines: Vec<&TextLine> = text_lines
             .iter()
             .filter(|l| {
@@ -625,23 +745,48 @@ fn process_single_page_image(
 
         let mut recognized_latex: Option<String> = None;
 
-        #[cfg(feature = "latex-ort")]
-        if let Some(latex_engine) = figure::latex::get_latex_engine() {
-            let (pw, ph) = page_img.dimensions();
-            let crop_w = formula_rect.width.min(pw.saturating_sub(formula_rect.x));
-            let crop_h = formula_rect.height.min(ph.saturating_sub(formula_rect.y));
-            if crop_w > 0 && crop_h > 0 {
-                let crop = page_img.crop_imm(formula_rect.x, formula_rect.y, crop_w, crop_h);
-                if let Ok(pred) = latex_engine.predict_latex(&crop) {
-                    if !pred.trim().is_empty() {
-                        recognized_latex = Some(pred);
+        // Formula Triage Fast-Path:
+        // Skip the heavy neural LaTeX transformer decoder for tiny formula boxes
+        // (isolated single-char variables like x, y, i, digits) that don't need
+        // full equation transcription. Wrap directly as inline math instead.
+        let is_tiny_formula = formula_rect.width < 25 && formula_rect.height < 25;
+        let single_char_cand = if is_tiny_formula && inside_lines.len() == 1 {
+            let t = inside_lines[0].text.trim();
+            if (t.len() == 1 && t.chars().all(|c| c.is_alphanumeric()))
+                || (t.len() <= 2 && t.chars().all(|c| c.is_ascii_digit()))
+            {
+                Some(t.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(sc) = single_char_cand {
+            recognized_latex = Some(sc);
+        } else if is_tiny_formula && inside_lines.is_empty() {
+            // Tiny box with no OCR text — likely a symbol or noise; emit as inline math placeholder
+            recognized_latex = Some("?".to_string());
+        } else {
+            #[cfg(feature = "latex-ort")]
+            if let Some(latex_engine) = figure::latex::get_latex_engine() {
+                let (pw, ph) = page_img.dimensions();
+                let crop_w = formula_rect.width.min(pw.saturating_sub(formula_rect.x));
+                let crop_h = formula_rect.height.min(ph.saturating_sub(formula_rect.y));
+                if crop_w > 15 && crop_h > 15 {
+                    let crop = page_img.crop_imm(formula_rect.x, formula_rect.y, crop_w, crop_h);
+                    if let Ok(pred) = latex_engine.predict_latex(&crop) {
+                        if !pred.trim().is_empty() {
+                            recognized_latex = Some(pred);
+                        }
                     }
                 }
             }
         }
 
         // Fall back to concatenating inside OCR lines if RapidLaTeXOCR is not available or yielded empty
-        let formula_trimmed = if let Some(latex) = recognized_latex {
+        let formula_candidate = if let Some(latex) = recognized_latex {
             latex
         } else if !inside_lines.is_empty() {
             let mut formula_text = String::new();
@@ -657,12 +802,32 @@ fn process_single_page_image(
             String::new()
         };
 
-        if formula_trimmed.is_empty() {
+        if formula_candidate.is_empty() {
             continue;
         }
 
-        // Semantic Stop-word Gate: If candidate contains common prose stop words, reject math wrapping
-        if crate::markdown::is_likely_prose_sentence(&formula_trimmed) {
+        // Validate and repair LaTeX syntax: preserve valid single-letter variables, reject unfixable noise
+        let formula_trimmed = if formula_candidate.len() == 1 && formula_candidate.chars().all(|c| c.is_ascii_alphabetic()) {
+            formula_candidate
+        } else {
+            match figure::latex::validate_and_repair_latex(&formula_candidate) {
+                Some(repaired) => repaired,
+                None => continue,
+            }
+        };
+
+        // If the formula is located inside a table, retain it for Phase 6 table cell population
+        if is_inside_table {
+            table_formula_lines.push(TextLine {
+                bbox: crate::backends::indra::detect::TextBoundingBox {
+                    x: formula_rect.x,
+                    y: formula_rect.y,
+                    width: formula_rect.width,
+                    height: formula_rect.height,
+                    score: 0.99,
+                },
+                text: format!("${formula_trimmed}$"),
+            });
             continue;
         }
 
@@ -730,7 +895,10 @@ fn process_single_page_image(
     }
 
     // Phase 6: Table Extraction (DocLayNet Class 8)
-    // Uses neural SLANet table structure recognition with seamless geometric fallback
+    // Combines OCR text lines and recognized table formulas
+    let mut table_input_lines = text_lines.clone();
+    table_input_lines.extend(table_formula_lines);
+
     for (table_rect, fig) in &layout.tables {
         let mut table_md_opt = None;
         let mut raw_lines: Vec<String> = Vec::new();
@@ -738,7 +906,7 @@ fn process_single_page_image(
         #[cfg(feature = "slanet-ort")]
         if let Some(slanet) = figure::slanet::get_slanet_engine() {
             let crop = page_img.crop_imm(table_rect.x, table_rect.y, table_rect.width, table_rect.height);
-            if let Ok(md) = slanet.predict_table_markdown(&crop, &text_lines, table_rect.x, table_rect.y) {
+            if let Ok(md) = slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y) {
                 if !md.trim().is_empty() {
                     table_md_opt = Some(md);
                     raw_lines = text_lines
@@ -757,10 +925,10 @@ fn process_single_page_image(
             }
         }
 
-        // Fall back to pure geometric table grid extraction if SLANet not used or yields empty output
+        // Fall back to pure geometric table grid extraction if SLANet not used or yields empty/degenerate output
         if table_md_opt.is_none() {
             if let Some((geom_md, geom_lines)) =
-                figure::table::extract_table_with_lines(table_rect, &text_lines)
+                figure::table::extract_table_with_lines(table_rect, &table_input_lines)
             {
                 table_md_opt = Some(geom_md);
                 raw_lines = geom_lines;
@@ -768,21 +936,24 @@ fn process_single_page_image(
         }
 
         if let Some(table_md) = table_md_opt {
-            let dir_name = fig.images_dir_name();
-            let callout = format!(
-                "> [!table]- Original Crop: {}\n> ![{}]({dir_name}/{})\n> *{}*",
-                fig.figure_label,
-                fig.figure_label,
-                fig.filename,
-                fig.caption.as_deref().unwrap_or(&fig.figure_label)
-            );
+            let callout = if image_opts.save_table_images {
+                let dir_name = fig.images_dir_name();
+                Some(format!(
+                    "> [!table]- Original Crop: {}\n> ![[{dir_name}/{}]]\n> *{}*",
+                    fig.figure_label,
+                    fig.filename,
+                    fig.caption.as_deref().unwrap_or(&fig.figure_label)
+                ))
+            } else {
+                None
+            };
 
             formatted_text = figure::table::integrate_table_into_markdown(
                 &formatted_text,
                 &table_md,
                 &raw_lines,
                 &fig.figure_label,
-                Some(&callout),
+                callout.as_deref(),
             );
         }
     }
