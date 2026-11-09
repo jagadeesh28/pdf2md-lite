@@ -1,6 +1,7 @@
 //! Batch directory conversion with short-slug asset folders per ADR 0004.
 
 use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -520,7 +521,7 @@ pub fn process_pdf_directory_all(
 }
 
 /// Information describing a planned conversion for a single document during dry-run.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConversionPlan {
     pub input_path: PathBuf,
     pub target_md_path: PathBuf,
@@ -533,7 +534,7 @@ pub struct ConversionPlan {
 }
 
 /// Comprehensive dry-run projection report without performing disk writes or rasterization.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DryRunReport {
     pub plans: Vec<ConversionPlan>,
     pub total_documents: usize,

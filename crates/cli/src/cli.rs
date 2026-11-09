@@ -45,6 +45,7 @@ OPTIONS:
                                 or retroactively embed an existing Markdown vault
     --download-models           Download official INT8 all-MiniLM-L6-v2 ONNX model (~22MB)
                                 and tokenizer into models/embeddings/
+    --serve [PORT]              Start local embedded Axum web server daemon (default: 127.0.0.1:3000)
     --force                     Force re-embedding of existing Markdown notes
     --convert-images-to-jpeg, --png-to-jpeg <PATH>
                                 Convert all PNG images in vault/folder to JPEG in place
@@ -117,6 +118,26 @@ pub fn run() {
     });
     let dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n");
     let mut watch_mode = args.iter().any(|a| a == "--watch" || a == "-w");
+
+    let serve_pos = args.iter().position(|a| a == "--serve" || a == "serve");
+    if let Some(pos) = serve_pos {
+        let port_or_addr = args
+            .get(pos + 1)
+            .filter(|a| !a.starts_with('-'))
+            .cloned()
+            .unwrap_or_else(|| "127.0.0.1:3000".to_string());
+        let bind_addr = if port_or_addr.contains(':') {
+            port_or_addr
+        } else {
+            format!("127.0.0.1:{port_or_addr}")
+        };
+        let rt = tokio::runtime::Runtime::new().expect("Failed to initialize Tokio runtime");
+        if let Err(e) = rt.block_on(pdfmd_lite_server::start_server(&bind_addr)) {
+            eprintln!("Error starting web daemon: {e:#}");
+            process::exit(1);
+        }
+        process::exit(0);
+    }
 
     let download_models_mode = args
         .iter()

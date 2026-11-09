@@ -2759,9 +2759,11 @@ dependencies = [
  "image",
  "indicatif",
  "pdfmd-lite",
+ "pdfmd-lite-server",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

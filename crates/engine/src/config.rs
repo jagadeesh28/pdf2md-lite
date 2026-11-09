@@ -22,6 +22,7 @@ pub struct AppConfig {
     pub log_file: Option<PathBuf>,
     pub log_level: Option<String>,
     pub dom_extraction: Option<String>,
+    pub embed: Option<bool>,
 }
 
 impl AppConfig {
@@ -54,5 +55,14 @@ impl AppConfig {
         }
 
         Ok(Self::default())
+    }
+
+    /// Serializes and writes configuration to a TOML file.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let content =
+            toml::to_string_pretty(self).context("Failed to serialize AppConfig to TOML format")?;
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write configuration to {}", path.display()))?;
+        Ok(())
     }
 }
