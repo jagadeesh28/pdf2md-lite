@@ -464,10 +464,6 @@ where
         }
         let _ = render_thread.join();
     } else {
-        println!(
-            "Processing {total_pages} pages concurrently (concurrency={concurrency}, ascending page order)..."
-        );
-
         let raster_rx = Arc::new(Mutex::new(raster_rx));
         let (result_tx, result_rx) = mpsc::channel();
         let mut worker_handles = Vec::with_capacity(concurrency);

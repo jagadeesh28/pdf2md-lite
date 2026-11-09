@@ -9,6 +9,7 @@ pub mod markdown;
 pub mod metadata;
 pub mod pdf;
 pub mod pipeline;
+pub mod progress;
 pub mod xycut;
 
 pub use backends::indra::{IndraEngine, IndraScript, TextLine};
@@ -21,6 +22,7 @@ pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult};
+pub use progress::{BatchProgressTracker, format_eta};
 pub use markdown::{
     attach_figures_to_page_text, convert_figure_links_to_obsidian, format_page_demarcation,
     normalize_latex_delimiters, render_markdown, replace_png_links_with_jpg, DocumentMetadata,

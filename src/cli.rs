@@ -865,12 +865,14 @@ pub fn run() {
             embed,
         ) {
             Ok(summary) => {
-                println!(
-                    "\nBatch complete: {} processed ({} succeeded, {} failed)",
-                    summary.total,
-                    summary.succeeded,
-                    summary.failed.len()
-                );
+                if !quiet {
+                    println!(
+                        "\nBatch complete: {} processed ({} succeeded, {} failed)",
+                        summary.total,
+                        summary.succeeded,
+                        summary.failed.len()
+                    );
+                }
                 if !summary.failed.is_empty() {
                     for (f, err) in summary.failed {
                         eprintln!(" - {}: {err}", f.display());

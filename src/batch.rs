@@ -254,9 +254,10 @@ pub fn process_pdf_directory_all(
 
     let mut used_slugs = HashSet::new();
     let mut doc_items = Vec::with_capacity(pdf_files.len());
+    let mut skipped_items = Vec::new();
     let mut initial_failed = Vec::new();
     let mut initial_succeeded = 0;
-    let total_pdf_count = pdf_files.len();
+    let _total_pdf_count = pdf_files.len();
 
     for (index, pdf_path) in pdf_files.into_iter().enumerate() {
         let relative_parent = pdf_path
@@ -313,14 +314,7 @@ pub fn process_pdf_directory_all(
                     }
 
                     if should_skip {
-                        if !quiet {
-                            println!(
-                                "[{}/{}] [SKIPPED] {} (already converted)",
-                                index + 1,
-                                total_pdf_count,
-                                folder_slug
-                            );
-                        }
+                        skipped_items.push((index + 1, folder_slug));
                         initial_succeeded += 1;
                         continue;
                     }
@@ -376,6 +370,21 @@ pub fn process_pdf_directory_all(
     }
 
     let total_docs = doc_items.len() + initial_succeeded + initial_failed.len();
+    let total_pages_to_process: usize = doc_items
+        .iter()
+        .map(|item| item.end_page.saturating_sub(item.begin_page) + 1)
+        .sum();
+
+    let tracker = std::sync::Arc::new(crate::progress::BatchProgressTracker::new(
+        total_docs,
+        total_pages_to_process,
+        quiet,
+    ));
+
+    for (idx, slug) in skipped_items {
+        tracker.on_doc_skipped(idx, &slug);
+    }
+
     let result = std::sync::Arc::new(std::sync::Mutex::new(BatchConversionResult {
         total: total_docs,
         succeeded: initial_succeeded,
@@ -387,7 +396,8 @@ pub fn process_pdf_directory_all(
         for item in doc_items {
             let t0 = std::time::Instant::now();
             let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
-            match crate::pipeline::process_pdf_full(
+            tracker.on_doc_start(0, &item.folder_slug, 1);
+            let conv_res = crate::pipeline::process_pdf_full(
                 &item.pdf_path,
                 &item.target_md_path,
                 item.begin_page,
@@ -397,19 +407,15 @@ pub fn process_pdf_directory_all(
                 script,
                 image_opts,
                 embed,
-            ) {
+            );
+            let elapsed = t0.elapsed().as_secs_f32();
+            match conv_res {
                 Ok(_) => {
-                    let elapsed = t0.elapsed().as_secs_f32();
-                    if !quiet {
-                        println!(
-                            "[{}/{}] [OK] {} ({} page(s), {:.2}s)",
-                            item.index, total_docs, item.folder_slug, pages_count, elapsed
-                        );
-                    }
+                    tracker.on_doc_complete(0, item.index, &item.folder_slug, pages_count, elapsed, true);
                     result.lock().unwrap().succeeded += 1;
                 }
                 Err(err) => {
-                    eprintln!("Failed to convert '{}': {err:#}", item.pdf_path.display());
+                    tracker.on_doc_failed(0, item.index, &item.folder_slug, &err.to_string());
                     result.lock().unwrap().failed.push((item.pdf_path, err.to_string()));
                 }
             }
@@ -429,9 +435,10 @@ pub fn process_pdf_directory_all(
         let queue = std::sync::Arc::new(std::sync::Mutex::new(doc_items.into_iter()));
         let mut handles = Vec::with_capacity(concurrent_docs);
 
-        for _ in 0..concurrent_docs {
+        for worker_id in 0..concurrent_docs {
             let queue_clone = std::sync::Arc::clone(&queue);
             let result_clone = std::sync::Arc::clone(&result);
+            let tracker_clone = std::sync::Arc::clone(&tracker);
 
             let handle = std::thread::spawn(move || {
                 loop {
@@ -443,6 +450,7 @@ pub fn process_pdf_directory_all(
                     let Some(item) = item else { break };
                     let t0 = std::time::Instant::now();
                     let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
+                    tracker_clone.on_doc_start(worker_id, &item.folder_slug, per_doc_workers);
 
                     let conv_res = crate::pipeline::process_pdf_full(
                         &item.pdf_path,
@@ -455,21 +463,28 @@ pub fn process_pdf_directory_all(
                         image_opts,
                         embed,
                     );
+                    let elapsed = t0.elapsed().as_secs_f32();
 
                     let mut res_guard = result_clone.lock().unwrap();
                     match conv_res {
                         Ok(_) => {
-                            let elapsed = t0.elapsed().as_secs_f32();
-                            if !quiet {
-                                println!(
-                                    "[{}/{}] [OK] {} ({} page(s), {:.2}s)",
-                                    item.index, total_docs, item.folder_slug, pages_count, elapsed
-                                );
-                            }
+                            tracker_clone.on_doc_complete(
+                                worker_id,
+                                item.index,
+                                &item.folder_slug,
+                                pages_count,
+                                elapsed,
+                                true,
+                            );
                             res_guard.succeeded += 1;
                         }
                         Err(err) => {
-                            eprintln!("Failed to convert '{}': {err:#}", item.pdf_path.display());
+                            tracker_clone.on_doc_failed(
+                                worker_id,
+                                item.index,
+                                &item.folder_slug,
+                                &err.to_string(),
+                            );
                             res_guard.failed.push((item.pdf_path, err.to_string()));
                         }
                     }
@@ -487,6 +502,8 @@ pub fn process_pdf_directory_all(
         .unwrap()
         .into_inner()
         .unwrap();
+
+    tracker.finish();
 
     Ok(final_res)
 }

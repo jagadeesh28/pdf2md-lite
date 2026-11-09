@@ -176,11 +176,12 @@ flowchart TD
 - Preserves standard Markdown links and shields base64 data URIs from wiki-link rewriting during note formatting passes.
 - Kept `<slug>/<slug>_images/` disk directory layout as the default per [ADR 0004](./docs/adr/0004-short-slug-batch-directory-layout.md).
 
-#### Milestone 3.3: Rich Batch Progress & ETA Indicators
-- Integrate `indicatif` progress bar for multi-document batch runs:
+#### Milestone 3.3: Rich Batch Progress & ETA Indicators ✅
+- Integrated `indicatif` progress bar in `src/progress.rs` for multi-document batch runs:
   - Total documents completed / remaining.
-  - Active document names and concurrent page workers.
+  - Active document names and concurrent page workers displayed dynamically.
   - Estimated time of arrival (ETA) derived from rolling average per-page latency.
+  - Non-flickering message logging (`pb.println`) ensuring clean output above active bars.
 - Suppressed cleanly when `-q` / `--quiet` is specified.
 
 #### Milestone 3.4: Directory Watch Mode & Conversion Dry-Run
