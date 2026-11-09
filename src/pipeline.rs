@@ -750,11 +750,41 @@ fn process_single_page_image_with_doc(
         mask_gray_regions_mut(&mut gray_canvas, &layout.picture_masks);
     }
 
-    // Phase 3: Text OCR on the clean grayscale canvas
-    let engine = get_indra_engine()?;
-    let (ocr_text, text_lines) = engine
-        .transcribe_gray_with_script(&gray_canvas, script)
-        .with_context(|| format!("Indra OCR failed for page {page_num}"))?;
+    // Phase 3: Text Extraction (Baseline-Aware Hybrid DOM Extraction or Indra OCR, ADR 0012)
+    let hybrid_dom_viable = lopdf_doc
+        .is_some_and(|doc| crate::pdf::can_use_hybrid_dom(doc, page_num, image_opts.dom_mode));
+
+    let (ocr_text, text_lines) = if hybrid_dom_viable {
+        let doc = lopdf_doc.unwrap();
+        let mut exclude_regions: Vec<crate::figure::caption::FigureRect> = Vec::new();
+        exclude_regions.extend(layout.picture_masks.iter().cloned());
+        exclude_regions.extend(layout.formulas.iter().cloned());
+
+        match crate::pdf::extract_baseline_aware_dom_text_lines(
+            doc,
+            page_num,
+            2.0,
+            &exclude_regions,
+        ) {
+            Ok(dom_lines) if !dom_lines.is_empty() => {
+                let mut lines_for_md = dom_lines.clone();
+                let md = crate::backends::indra::sort_and_format_markdown(&mut lines_for_md);
+                (md, dom_lines)
+            }
+            _ => {
+                // If DOM extraction returned empty or failed, fall back to pure-vision Indra OCR
+                let engine = get_indra_engine()?;
+                engine
+                    .transcribe_gray_with_script(&gray_canvas, script)
+                    .with_context(|| format!("Indra OCR fallback failed for page {page_num}"))?
+            }
+        }
+    } else {
+        let engine = get_indra_engine()?;
+        engine
+            .transcribe_gray_with_script(&gray_canvas, script)
+            .with_context(|| format!("Indra OCR failed for page {page_num}"))?
+    };
 
     // Phase 3.1: Proximity Caption Matching for Figures
     for fig in &mut layout.pictures {
@@ -941,6 +971,22 @@ fn process_single_page_image_with_doc(
                 if !needle.is_empty() && formatted_text.contains(needle) {
                     formatted_text = formatted_text.replacen(needle, &inline_math, 1);
                 }
+            } else {
+                let preceding = text_lines
+                    .iter()
+                    .filter(|l| l.bbox.y <= formula_rect.y + formula_rect.height / 2)
+                    .max_by_key(|l| l.bbox.y);
+                if let Some(prec) = preceding {
+                    let needle = prec.text.trim();
+                    if !needle.is_empty() && formatted_text.contains(needle) {
+                        let replacement = format!("{needle} {inline_math}");
+                        formatted_text = formatted_text.replacen(needle, &replacement, 1);
+                    } else {
+                        formatted_text.push_str(&format!(" {inline_math} "));
+                    }
+                } else {
+                    formatted_text.push_str(&format!(" {inline_math} "));
+                }
             }
             // Remove any remaining inside lines to prevent duplication
             for extra_line in inside_lines.iter().skip(1) {
@@ -960,7 +1006,21 @@ fn process_single_page_image_with_doc(
                     formatted_text.push_str(&display_math);
                 }
             } else {
-                formatted_text.push_str(&display_math);
+                let preceding = text_lines
+                    .iter()
+                    .filter(|l| l.bbox.y <= formula_rect.y)
+                    .max_by_key(|l| l.bbox.y);
+                if let Some(prec) = preceding {
+                    let needle = prec.text.trim();
+                    if !needle.is_empty() && formatted_text.contains(needle) {
+                        let replacement = format!("{needle}{display_math}");
+                        formatted_text = formatted_text.replacen(needle, &replacement, 1);
+                    } else {
+                        formatted_text.push_str(&display_math);
+                    }
+                } else {
+                    formatted_text.push_str(&display_math);
+                }
             }
             // Remove any remaining inside lines to prevent duplication
             for extra_line in inside_lines.iter().skip(1) {

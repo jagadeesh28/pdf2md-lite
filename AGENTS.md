@@ -208,7 +208,7 @@ flowchart TD
 ### Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction 🚀
 
 > **Architectural Decisions**: [ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md) & [ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md)  
-> **Status**: In Progress  
+> **Status**: Completed & Verified ✅  
 > **Primary Goal**: Deliver maximum multi-core CPU throughput, zero memory duplication churn, production observability, and 5×–10× faster digital text extraction without compromising mathematical fidelity.
 
 #### Milestone 4.1: In-Place Grayscale Canvas Masking ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md)) ✅
@@ -238,14 +238,14 @@ flowchart TD
   3. Replaced scattered `eprintln!` warnings across `src/pipeline.rs`, `src/batch.rs`, and `src/watch.rs` with structured `tracing::warn!` and `tracing::error!` events.
 - **Verification**: Verified via `test_parse_log_level`, `test_init_telemetry_with_log_file`, and the entire 91-test suite.
 
-#### Milestone 4.4: Baseline-Aware Hybrid DOM Extraction ([ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
+#### Milestone 4.4: Baseline-Aware Hybrid DOM Extraction ([ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md)) ✅
 - **Objective**: Accelerate digital PDF text processing by 5×–10× while preserving subscripts, superscripts, and equations.
 - **Tasks**:
-  1. Add `--dom-extraction <auto|always|never>` CLI parameter and config option.
-  2. Implement baseline vertical offset tracking ($\Delta y$) in `src/pdf.rs` to detect and format sub/superscripts (`_i`, `^2`).
-  3. Implement font CMap `/ToUnicode` validation; fall back to Indra OCR automatically if CMaps are missing or corrupt.
-  4. Exclude YOLOv8n formula (Class 2) and table (Class 1) regions from DOM text streams, routing them exclusively to neural vision extractors.
-- **Verification**: Tests validating that academic PDFs with vector text extract mathematical sub/superscripts cleanly while isolating equations to display math blocks.
+  1. Added `--dom-extraction <auto|always|never>` (and `--dom-mode`) CLI parameters and `dom_extraction` config option in `pdfmd-lite.toml`.
+  2. Implemented baseline vertical offset tracking ($\Delta y$) in `src/pdf.rs` (`extract_baseline_aware_dom_text_lines`) to detect and synthesize Markdown sub/superscripts (`_e`, `^2`).
+  3. Implemented font CMap `/ToUnicode` catalog validation in `can_use_hybrid_dom`; falls back to pure-vision Indra OCR automatically if CMaps are missing or corrupt.
+  4. Excluded YOLOv8n formula (Class 2) and visual picture regions from DOM text streams, routing formulas to RapidLaTeXOCR with reading-order anchor insertion.
+- **Verification**: Verified via `test_dom_extraction_mode_parsing`, `test_baseline_aware_subscript_superscript_detection`, `test_dom_exclusion_of_layout_regions`, and the entire 94-test suite.
 
 ---
 

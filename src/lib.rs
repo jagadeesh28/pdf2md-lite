@@ -33,8 +33,9 @@ pub use markdown::{
     render_markdown, replace_png_links_with_jpg,
 };
 pub use pdf::{
-    clean_extracted_text, extract_pdf_metadata, extract_pdf_text, get_pdf_page_count,
-    render_pages_to_images, safe_extract_text_by_pages, validate_page_range,
+    DomExtractionMode, can_use_hybrid_dom, clean_extracted_text,
+    extract_baseline_aware_dom_text_lines, extract_pdf_metadata, extract_pdf_text,
+    get_pdf_page_count, render_pages_to_images, safe_extract_text_by_pages, validate_page_range,
 };
 pub use pipeline::{
     get_indra_engine, process_pages_stream, process_pages_stream_with_options, process_pdf,

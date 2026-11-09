@@ -138,16 +138,16 @@ The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-pr
 | **Conversion Dry-Run (`--dry-run`)** | Read-only plan projection previewing document pages, memory budgets, and skip/convert statuses without modifying disk in `src/batch.rs`. |
 | **CI Quality Gates & Health** | Added `deny.toml` and GitHub Actions quality gate covering `cargo fmt --check`, `clippy -D warnings`, `test --all-targets`, `check --benches`, and `cargo-deny-action`. |
 
-## Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction (Planned)
+## Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction
 
-**Status:** Planned / Specified (ADRs: [ADR 0011](docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md), [ADR 0012](docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
+**Status:** Implemented & Verified ✅ (ADRs: [ADR 0011](docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md), [ADR 0012](docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
 
 | Milestone | Key Capability & Technical Approach |
 |-----------|-------------------------------------|
 | **4.1: In-Place Grayscale Canvas Masking** | Eliminate 30 MB RGBA deep clones per page; mutate 8-bit `GrayImage` directly in-place (`mask_gray_regions_mut`). |
 | **4.2: Fine-Grained LaTeX Session Mutexing** | Narrow `Mutex<Session>` scope in `RapidLatexEngine` to individual 1–2ms inference steps, unlocking concurrent decoding across page workers. |
 | **4.3: Structured Tracing & Telemetry** | Integrate `tracing` and `tracing-subscriber` with non-flicker `indicatif` bridge, `--log-file <PATH>`, and `--log-level <LEVEL>`. |
-| **4.4: Baseline-Aware Hybrid DOM Extraction** | Analyze glyph vertical offset baseline shifts ($\Delta y$) for sub/superscripts on pristine vector PDFs with YOLO formula/table exclusion and CMap validation. |
+| **4.4: Baseline-Aware Hybrid DOM Extraction** | Analyze glyph vertical offset baseline shifts ($\Delta y$) for sub/superscripts on pristine vector PDFs with YOLO formula/picture exclusion, CMap validation, and reading-order anchor insertion. |
 
 ## Verification
 

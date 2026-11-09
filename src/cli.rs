@@ -75,6 +75,8 @@ OPTIONS:
     --english, -en              Pure English/Latin OCR (rec.onnx, default, zero foreign character hallucinations)
     --telugu, -te               Telugu OCR (rec_world.onnx)
     -l, --lang, --language <L>  Explicit language/script: english, telugu, auto
+    --dom-extraction <MODE>     DOM extraction strategy: auto (default), always, never
+    --dom-mode <MODE>           Alias for --dom-extraction
     -h, --help                  Print this help message
 
 FEATURES:
@@ -737,6 +739,7 @@ pub fn run() {
     let mut force = false;
     let mut log_file: Option<PathBuf> = None;
     let mut log_level: Option<String> = None;
+    let mut dom_extraction: Option<crate::pdf::DomExtractionMode> = None;
 
     let mut positional = Vec::new();
     let mut i = 0;
@@ -836,6 +839,19 @@ pub fn run() {
                         eprintln!("Error: {err}");
                         process::exit(1);
                     }
+                }
+                i += 2;
+                continue;
+            }
+        } else if arg == "--dom-extraction" || arg == "--dom-mode" {
+            if i + 1 < args.len() {
+                dom_extraction = crate::pdf::DomExtractionMode::from_str_loose(&args[i + 1]);
+                if dom_extraction.is_none() {
+                    eprintln!(
+                        "Error: Invalid --dom-extraction mode '{}'. Expected 'auto', 'always', or 'never'.",
+                        args[i + 1]
+                    );
+                    process::exit(1);
                 }
                 i += 2;
                 continue;
@@ -947,12 +963,22 @@ pub fn run() {
 
     let final_embed_base64 = embed_images_base64 || config.embed_images_base64.unwrap_or(false);
 
+    let final_dom_mode = dom_extraction
+        .or_else(|| {
+            config
+                .dom_extraction
+                .as_deref()
+                .and_then(crate::pdf::DomExtractionMode::from_str_loose)
+        })
+        .unwrap_or(crate::pdf::DomExtractionMode::Auto);
+
     let image_opts = ImageOptions::new(
         final_image_format,
         final_image_quality,
         final_save_table_images,
     )
-    .with_embed_base64(final_embed_base64);
+    .with_embed_base64(final_embed_base64)
+    .with_dom_mode(final_dom_mode);
 
     if watch_mode {
         let watch_opts = crate::watch::WatchOptions {

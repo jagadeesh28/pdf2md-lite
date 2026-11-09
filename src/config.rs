@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub embed_images_base64: Option<bool>,
     pub log_file: Option<PathBuf>,
     pub log_level: Option<String>,
+    pub dom_extraction: Option<String>,
 }
 
 impl AppConfig {

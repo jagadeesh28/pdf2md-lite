@@ -53,6 +53,7 @@ pub struct ImageOptions {
     pub quality: u8,
     pub save_table_images: bool,
     pub embed_base64: bool,
+    pub dom_mode: crate::pdf::DomExtractionMode,
 }
 
 impl Default for ImageOptions {
@@ -62,6 +63,7 @@ impl Default for ImageOptions {
             quality: 80,
             save_table_images: false,
             embed_base64: false,
+            dom_mode: crate::pdf::DomExtractionMode::Auto,
         }
     }
 }
@@ -73,11 +75,17 @@ impl ImageOptions {
             quality: quality.clamp(1, 100),
             save_table_images,
             embed_base64: false,
+            dom_mode: crate::pdf::DomExtractionMode::Auto,
         }
     }
 
     pub fn with_embed_base64(mut self, embed_base64: bool) -> Self {
         self.embed_base64 = embed_base64;
+        self
+    }
+
+    pub fn with_dom_mode(mut self, dom_mode: crate::pdf::DomExtractionMode) -> Self {
+        self.dom_mode = dom_mode;
         self
     }
 }
