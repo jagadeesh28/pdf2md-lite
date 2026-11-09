@@ -184,9 +184,15 @@ flowchart TD
   - Non-flickering message logging (`pb.println`) ensuring clean output above active bars.
 - Suppressed cleanly when `-q` / `--quiet` is specified.
 
-#### Milestone 3.4: Directory Watch Mode & Conversion Dry-Run
-- Add `--watch <input-dir> <output-dir>` utilizing file system notify events to automatically convert new or modified PDFs.
-- Add `--dry-run` to preview page counts, memory budgets, and estimated conversion time without writing files to disk.
+#### Milestone 3.4: Directory Watch Mode & Conversion Dry-Run ✅
+- Implemented autonomous directory watch mode in `src/watch.rs` (`--watch <input-dir> <output-dir>`):
+  - Uses `notify` with native OS filesystem events and debouncing (800ms) to detect completed PDF writes.
+  - Automatically converts new or modified PDFs while preserving relative folder hierarchy in the output vault.
+  - Performs initial batch pass with stateless content-hash (`pdf_sha256`) resume to catch up on un-indexed documents.
+- Implemented comprehensive conversion dry-run mode (`--dry-run`):
+  - Previews complete conversion plans, page counts, memory budgets ($350\text{ MB} + W \times 200\text{ MB}$), and estimated conversion times.
+  - Checks existing note content hashes to identify `WOULD_SKIP`, `WOULD_OVERWRITE`, and `WOULD_CONVERT` statuses.
+  - Operates strictly read-only without rasterizing pages or modifying files on disk.
 
 #### Milestone 3.5: CI Quality Gates & Code Health
 - Establish GitHub Actions CI pipeline:

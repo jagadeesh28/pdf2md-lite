@@ -20,6 +20,10 @@ USAGE:
     # Batch directory conversion:
     pdfmd-lite <input-dir> <output-dir> [begin-page] [end-page]
 
+    # Autonomous directory watch mode:
+    pdfmd-lite --watch <input-dir> <output-dir> [--embed] [--resume]
+    pdfmd-lite <input-dir> <output-dir> --watch
+
     # Note formatting & post-processing for existing Markdown notes:
     pdfmd-lite --format-notes <file-or-dir> [--dry-run] [-o <output.md>]
     pdfmd-lite --fix-latex <file-or-dir> [-o <output.md>]
@@ -55,7 +59,9 @@ OPTIONS:
                                 purge extraction banners, normalize LaTeX math/tables,
                                 convert figure links to Obsidian wiki-links (![[...]]),
                                 and synthesize missing YAML frontmatter
-    --dry-run                   Preview note formatting changes without modifying files
+    -w, --watch                 Watch directory for new/modified PDFs and automatically convert
+    --dry-run                   Preview conversion plans, page counts, memory budgets, and ETA
+                                without writing files to disk (works for batch and single PDF)
     -f, --fix-latex <PATH>      Fix LaTeX formatting, delimiters, and syntax in Markdown file(s)
     --fix-math <PATH>           Alias for --fix-latex
     -p, --pages <BEGIN-END>     Page range (1-based, e.g. 1-10)
@@ -476,6 +482,7 @@ pub fn run() {
             || a == "--convert-to-jpeg"
     });
     let dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n");
+    let mut watch_mode = args.iter().any(|a| a == "--watch" || a == "-w");
 
     let download_models_mode = args.iter().any(|a| a == "--download-models" || a == "--fetch-models");
     if download_models_mode {
@@ -721,6 +728,8 @@ pub fn run() {
             save_table_images = Some(false);
         } else if arg == "--embed-images-base64" || arg == "--base64-images" {
             embed_images_base64 = true;
+        } else if arg == "-w" || arg == "--watch" {
+            watch_mode = true;
         } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
             quiet = true;
         } else if arg == "-r" || arg == "--resume" {
@@ -845,6 +854,75 @@ pub fn run() {
         final_image_quality,
         final_save_table_images,
     ).with_embed_base64(final_embed_base64);
+
+    if watch_mode {
+        let watch_opts = crate::watch::WatchOptions {
+            debounce_delay: std::time::Duration::from_millis(800),
+            poll_interval: std::time::Duration::from_millis(250),
+            concurrency: final_concurrency,
+            script: final_script,
+            image_opts,
+            embed,
+            quiet,
+        };
+        if let Err(e) = crate::watch::watch_directory(&input, &output, watch_opts) {
+            eprintln!("Watch mode error: {e:#}");
+            process::exit(1);
+        }
+        process::exit(0);
+    }
+
+    if dry_run {
+        if input.is_dir() {
+            let page_range = match (begin_page, end_page) {
+                (Some(s), Some(e)) => Some((s, e)),
+                _ => None,
+            };
+            match crate::batch::dry_run_pdf_directory(
+                &input,
+                &output,
+                page_range,
+                final_max_depth,
+                final_concurrency,
+                final_script,
+                resume,
+                image_opts,
+                embed,
+            ) {
+                Ok(report) => {
+                    report.print();
+                    process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Dry-run error: {e:#}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            let begin = begin_page.unwrap_or(1);
+            let end = end_page.unwrap_or_else(|| {
+                crate::pdf::get_pdf_page_count(&input).unwrap_or(begin)
+            });
+            match crate::batch::dry_run_single_pdf(
+                &input,
+                &output,
+                begin,
+                end,
+                final_concurrency,
+                image_opts,
+                embed,
+            ) {
+                Ok(report) => {
+                    report.print();
+                    process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Dry-run error: {e:#}");
+                    process::exit(1);
+                }
+            }
+        }
+    }
 
     if input.is_dir() {
         let page_range = match (begin_page, end_page) {

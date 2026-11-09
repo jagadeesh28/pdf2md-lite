@@ -10,12 +10,14 @@ pub mod metadata;
 pub mod pdf;
 pub mod pipeline;
 pub mod progress;
+pub mod watch;
 pub mod xycut;
 
 pub use backends::indra::{IndraEngine, IndraScript, TextLine};
 pub use batch::{
-    process_pdf_directory, process_pdf_directory_all, process_pdf_directory_full,
-    process_pdf_directory_with_image_options, BatchConversionResult, sanitize_short_slug,
+    dry_run_pdf_directory, dry_run_single_pdf, process_pdf_directory, process_pdf_directory_all,
+    process_pdf_directory_full, process_pdf_directory_with_image_options, BatchConversionResult,
+    ConversionPlan, DryRunReport, sanitize_short_slug,
 };
 pub use cli::{convert_vault_png_to_jpeg, embed_vault_in_path, ConvertImagesSummary, EmbedVaultSummary};
 pub use concurrency::resolve_concurrency;
@@ -23,6 +25,7 @@ pub use config::AppConfig;
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult};
 pub use progress::{BatchProgressTracker, format_eta};
+pub use watch::{watch_directory, WatchOptions};
 pub use markdown::{
     attach_figures_to_page_text, convert_figure_links_to_obsidian, format_page_demarcation,
     normalize_latex_delimiters, render_markdown, replace_png_links_with_jpg, DocumentMetadata,
