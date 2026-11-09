@@ -10,6 +10,7 @@ pub mod metadata;
 pub mod pdf;
 pub mod pipeline;
 pub mod progress;
+pub mod telemetry;
 pub mod watch;
 pub mod xycut;
 
@@ -41,4 +42,5 @@ pub use pipeline::{
     process_pdf_with_source, safe_process_single_page,
 };
 pub use progress::{BatchProgressTracker, format_eta};
+pub use telemetry::{init_telemetry, parse_log_level};
 pub use watch::{WatchOptions, watch_directory};

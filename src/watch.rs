@@ -195,9 +195,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
                 }
             }
             Ok(Err(err)) => {
-                if !options.quiet {
-                    eprintln!("Watcher warning: {err:#}");
-                }
+                tracing::warn!("Watcher warning: {err:#}");
             }
             Err(RecvTimeoutError::Timeout) => {
                 // Timeout elapsed, evaluate debounced pending files
@@ -245,7 +243,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
             }
 
             if let Err(e) = fs::create_dir_all(&doc_out_dir) {
-                eprintln!(
+                tracing::error!(
                     "Failed to create directory {}: {e:#}",
                     doc_out_dir.display()
                 );
@@ -278,8 +276,8 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
                     }
                 }
                 Err(err) => {
-                    eprintln!(
-                        "[WATCH] [ERROR] Failed to convert '{}': {err:#}",
+                    tracing::error!(
+                        "[WATCH] Failed to convert '{}': {err:#}",
                         pdf_path.display()
                     );
                 }

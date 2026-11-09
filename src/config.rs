@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub image_quality: Option<u8>,
     pub save_table_images: Option<bool>,
     pub embed_images_base64: Option<bool>,
+    pub log_file: Option<PathBuf>,
+    pub log_level: Option<String>,
 }
 
 impl AppConfig {

@@ -69,6 +69,8 @@ OPTIONS:
     -d, --max-depth <DEPTH>     Max directory search depth for batch mode (default: 3)
     -r, --resume                Skip already converted documents in batch mode
     -c, --config <PATH>         Path to custom configuration file (default: pdfmd-lite.toml)
+    --log-file <PATH>           Path to optional structured log file
+    --log-level <LEVEL>         Log level: trace, debug, info (default), warn, error
     -q, --quiet, --silent       Silent operation (suppress verbose per-page/document logs)
     --english, -en              Pure English/Latin OCR (rec.onnx, default, zero foreign character hallucinations)
     --telugu, -te               Telugu OCR (rec_world.onnx)
@@ -733,6 +735,8 @@ pub fn run() {
     let mut resume = false;
     let mut embed = false;
     let mut force = false;
+    let mut log_file: Option<PathBuf> = None;
+    let mut log_level: Option<String> = None;
 
     let mut positional = Vec::new();
     let mut i = 0;
@@ -800,6 +804,18 @@ pub fn run() {
             watch_mode = true;
         } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
             quiet = true;
+        } else if arg == "--log-file" {
+            if i + 1 < args.len() {
+                log_file = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+                continue;
+            }
+        } else if arg == "--log-level" {
+            if i + 1 < args.len() {
+                log_level = Some(args[i + 1].clone());
+                i += 2;
+                continue;
+            }
         } else if arg == "-r" || arg == "--resume" {
             resume = true;
         } else if arg == "--embed" || arg == "--embeddings" {
@@ -842,6 +858,19 @@ pub fn run() {
     }
     if end_page.is_none() && positional.len() > 3 {
         end_page = positional[3].parse().ok();
+    }
+
+    // Load config file if present
+    let config = AppConfig::load(config_path.as_deref()).unwrap_or_default();
+    let final_log_file = log_file.or(config.log_file.clone());
+    let final_log_level = log_level.or(config.log_level.clone());
+
+    if let Err(e) = crate::telemetry::init_telemetry(
+        final_log_level.as_deref(),
+        final_log_file.as_deref(),
+        quiet,
+    ) {
+        eprintln!("Warning: Failed to initialize structured logging: {e:#}");
     }
 
     // Standalone vault embedding mode: `pdfmd-lite --embed <vault-dir-or-file> [--force]`
@@ -890,8 +919,6 @@ pub fn run() {
         }
     };
 
-    // Load config file if present
-    let config = AppConfig::load(config_path.as_deref()).unwrap_or_default();
     let final_concurrency = concurrency.or(config.concurrency);
     let final_max_depth = max_depth.or(config.max_depth).unwrap_or(3);
     let final_script = language

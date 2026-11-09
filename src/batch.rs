@@ -60,8 +60,8 @@ fn collect_pdf_files_recursive(
     let entries = match fs::read_dir(current_dir) {
         Ok(entries) => entries,
         Err(err) => {
-            eprintln!(
-                "Warning: could not read directory '{}': {err}",
+            tracing::warn!(
+                "Could not read directory '{}': {err}",
                 current_dir.display()
             );
             return Ok(());
@@ -288,7 +288,7 @@ pub fn process_pdf_directory_all(
 
         let pdf_output_dir = base_output_target_dir.join(&folder_slug);
         if let Err(err) = fs::create_dir_all(&pdf_output_dir) {
-            eprintln!(
+            tracing::error!(
                 "Failed to create output directory {}: {err:#}",
                 pdf_output_dir.display()
             );
@@ -327,7 +327,7 @@ pub fn process_pdf_directory_all(
         let total_pages = match get_pdf_page_count(&pdf_path) {
             Ok(count) => count,
             Err(err) => {
-                eprintln!(
+                tracing::warn!(
                     "Failed to read page count for {}: {err:#}",
                     pdf_path.display()
                 );
@@ -339,12 +339,10 @@ pub fn process_pdf_directory_all(
         let (begin_page, end_page) = match page_range {
             Some((start, end)) => {
                 if start > total_pages {
-                    if !quiet {
-                        eprintln!(
-                            "Warning: Skipping {} (start page {start} exceeds total pages {total_pages})",
-                            pdf_path.display()
-                        );
-                    }
+                    tracing::warn!(
+                        "Skipping {} (start page {start} exceeds total pages {total_pages})",
+                        pdf_path.display()
+                    );
                     initial_failed.push((
                         pdf_path,
                         format!("start page {start} exceeds total pages {total_pages}"),

@@ -227,16 +227,16 @@ flowchart TD
   3. Preserved the resident session memory footprint strictly within the 350 MB base concurrency budget without duplicating session weights.
 - **Verification**: Verified via test suite and criterion benchmark execution with zero compiler warnings.
 
-#### Milestone 4.3: Structured Observability & Tracing Telemetry
+#### Milestone 4.3: Structured Observability & Tracing Telemetry ✅
 - **Objective**: Integrate industrial-grade structured logging with non-flickering progress bars and file export.
 - **Tasks**:
-  1. Add `tracing` and `tracing-subscriber` to `Cargo.toml`.
-  2. Implement unified logging initialization in `src/lib.rs` / `src/main.rs`:
-     - CLI flags: `--log-file <PATH>` and `--log-level <trace|debug|info|warn|error>` (default: `info`).
-     - Support non-interfering output when `indicatif` progress bars are active.
-     - Respect `-q` / `--quiet` flags by muting stdout traces while keeping `--log-file` writes intact.
-  3. Replace scattered `eprintln!` and `println!` warnings with structured `tracing::warn!`, `tracing::info!`, and `tracing::debug!` events.
-- **Verification**: CLI tests verifying log file generation, log level filtering, and quiet mode compliance.
+  1. Added `tracing` and `tracing-subscriber` (with `fmt`, `std`, `ansi`, `registry` features) to `Cargo.toml`.
+  2. Implemented `src/telemetry.rs` with `init_telemetry` and `parse_log_level`:
+     - CLI flags `--log-file <PATH>` and `--log-level <trace|debug|info|warn|error>` (default: `info`).
+     - Added `log_file` and `log_level` to `AppConfig` in `src/config.rs`.
+     - Supports quiet mode (`-q` / `--quiet`) by silencing the console layer while keeping disk log-file writes intact.
+  3. Replaced scattered `eprintln!` warnings across `src/pipeline.rs`, `src/batch.rs`, and `src/watch.rs` with structured `tracing::warn!` and `tracing::error!` events.
+- **Verification**: Verified via `test_parse_log_level`, `test_init_telemetry_with_log_file`, and the entire 91-test suite.
 
 #### Milestone 4.4: Baseline-Aware Hybrid DOM Extraction ([ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
 - **Objective**: Accelerate digital PDF text processing by 5×–10× while preserving subscripts, superscripts, and equations.

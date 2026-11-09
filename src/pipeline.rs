@@ -366,12 +366,12 @@ pub fn process_pdf_full(
                     );
                 }
                 Err(err) => {
-                    eprintln!("Warning: Failed to generate embedding sidecar: {err:#}");
+                    tracing::warn!("Failed to generate embedding sidecar: {err:#}");
                 }
             }
         } else {
-            eprintln!(
-                "Warning: Embedding generation requested but embedding model is not loaded. Run 'pdfmd-lite --download-models'."
+            tracing::warn!(
+                "Embedding generation requested but embedding model is not loaded. Run 'pdfmd-lite --download-models'."
             );
         }
     }
@@ -510,7 +510,7 @@ where
                     let (page_num, page_img) = match res {
                         Ok(pair) => pair,
                         Err(err) => {
-                            eprintln!("Warning: Rasterization error: {err:#}");
+                            tracing::warn!("Rasterization error: {err:#}");
                             continue;
                         }
                     };
@@ -588,7 +588,7 @@ pub fn safe_process_single_page(
     let page_img = match image::open(image_path) {
         Ok(img) => img,
         Err(err) => {
-            eprintln!("Warning: Failed to open image for page {page_num}: {err:#}");
+            tracing::warn!("Failed to open image for page {page_num}: {err:#}");
             let page_demarcation = format_page_demarcation(page_num);
             let mut warning_block = format!(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
@@ -687,8 +687,8 @@ pub fn safe_process_single_page_image_with_doc_and_options(
     match result {
         Ok(Ok(page_md)) => page_md,
         Ok(Err(err)) => {
-            eprintln!(
-                "Warning: Page {page_num} processing failed ({err:#}). Emitting warning callout."
+            tracing::warn!(
+                "Page {page_num} processing failed ({err:#}). Emitting warning callout."
             );
             let page_demarcation = format_page_demarcation(page_num);
             let mut warning_block = format!(
@@ -705,7 +705,7 @@ pub fn safe_process_single_page_image_with_doc_and_options(
             warning_block
         }
         Err(_) => {
-            eprintln!("Warning: Page {page_num} processing panicked. Emitting warning callout.");
+            tracing::warn!("Page {page_num} processing panicked. Emitting warning callout.");
             let page_demarcation = format_page_demarcation(page_num);
             let mut warning_block = format!(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
