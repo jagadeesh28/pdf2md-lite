@@ -3,6 +3,7 @@ members = [
     "crates/engine",
     "crates/cli",
     "crates/server",
+    "crates/desktop",
 ]
 default-members = ["crates/cli"]
 resolver = "2"
@@ -39,6 +40,8 @@ tokio = { version = "1.38", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
 futures = "0.3"
 criterion = "0.5"
+tauri = "2"
+tauri-build = "2"
 
 [profile.dev]
 debug = 1
