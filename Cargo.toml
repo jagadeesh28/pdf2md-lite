@@ -10,6 +10,7 @@ clap = { version = "4.5", features = ["derive"] }
 image = "0.25"
 lopdf = "0.46.0"
 pdf-extract = "0.12.0"
+sha2 = "0.10"
 hayro = { version = "0.9.0", features = ["embed-fonts"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -18,13 +19,16 @@ tempfile = "3.12"
 toml = "1.2.1"
 tract-onnx = "0.23.10"
 ort = { version = "2.0.0-rc.15", optional = true }
+tokenizers = { version = "0.20", optional = true, default-features = false, features = ["onig"] }
 
 [features]
-default = ["slanet-ort", "latex-ort", "gliner-ort"]
-slanet-ort = ["dep:ort"]
-latex-ort = ["dep:ort"]
-gliner-ort = ["dep:ort"]
-embed-models = []
+default = ["slanet-ort", "latex-ort", "gliner-ort", "embed-models", "embed-ort"]
+ort = ["dep:ort"]
+slanet-ort = ["ort"]
+latex-ort = ["ort"]
+gliner-ort = ["ort"]
+embed-models = ["dep:tokenizers"]
+embed-ort = ["embed-models", "ort"]
 
 [profile.dev]
 debug = 1

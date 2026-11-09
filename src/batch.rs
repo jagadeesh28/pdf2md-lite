@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use crate::backends::indra::IndraScript;
 use crate::figure::ImageOptions;
 use crate::pdf::get_pdf_page_count;
-use crate::pipeline::process_pdf_with_pipeline_options;
 
 /// Default directory search depth for PDF batch conversion.
 pub const DEFAULT_MAX_SEARCH_DEPTH: usize = 3;
@@ -184,6 +183,33 @@ pub fn process_pdf_directory_with_image_options(
     resume: bool,
     image_opts: ImageOptions,
 ) -> Result<BatchConversionResult> {
+    process_pdf_directory_all(
+        input_dir,
+        output_base_dir,
+        page_range,
+        max_depth,
+        explicit_concurrency,
+        script,
+        quiet,
+        resume,
+        image_opts,
+        false,
+    )
+}
+
+/// Converts a directory of PDF files with all configuration options including embedding generation.
+pub fn process_pdf_directory_all(
+    input_dir: &Path,
+    output_base_dir: &Path,
+    page_range: Option<(usize, usize)>,
+    max_depth: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    quiet: bool,
+    resume: bool,
+    image_opts: ImageOptions,
+    embed: bool,
+) -> Result<BatchConversionResult> {
     let pdf_files = collect_pdf_files_with_depth(input_dir, max_depth)?;
     if pdf_files.is_empty() {
         return Err(anyhow!(
@@ -269,20 +295,34 @@ pub fn process_pdf_directory_with_image_options(
         let target_md_path = pdf_output_dir.join(format!("{folder_slug}.md"));
 
         // Incremental Batch Resume: If the target markdown file already exists and contains
-        // valid converted content (at least 100 bytes), skip re-conversion.
+        // valid converted content (at least 100 bytes), verify content-hash or length before skipping.
         if resume && target_md_path.is_file() {
             if let Ok(meta) = fs::metadata(&target_md_path) {
                 if meta.len() > 100 {
-                    if !quiet {
-                        println!(
-                            "[{}/{}] [SKIPPED] {} (already converted)",
-                            index + 1,
-                            total_pdf_count,
-                            folder_slug
-                        );
+                    let mut should_skip = true;
+                    if let Ok(existing_content) = fs::read_to_string(&target_md_path) {
+                        let (existing_meta, _) = crate::markdown::parse_existing_frontmatter(&existing_content);
+                        if let Some(em) = existing_meta {
+                            if let Some(existing_sha) = em.pdf_sha256 {
+                                if let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path) {
+                                    should_skip = existing_sha == source_sha;
+                                }
+                            }
+                        }
                     }
-                    initial_succeeded += 1;
-                    continue;
+
+                    if should_skip {
+                        if !quiet {
+                            println!(
+                                "[{}/{}] [SKIPPED] {} (already converted)",
+                                index + 1,
+                                total_pdf_count,
+                                folder_slug
+                            );
+                        }
+                        initial_succeeded += 1;
+                        continue;
+                    }
                 }
             }
         }
@@ -348,7 +388,7 @@ pub fn process_pdf_directory_with_image_options(
         for item in doc_items {
             let t0 = std::time::Instant::now();
             let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
-            match process_pdf_with_pipeline_options(
+            match crate::pipeline::process_pdf_full(
                 &item.pdf_path,
                 &item.target_md_path,
                 item.begin_page,
@@ -357,6 +397,7 @@ pub fn process_pdf_directory_with_image_options(
                 item.rel_source.as_deref(),
                 script,
                 image_opts,
+                embed,
             ) {
                 Ok(_) => {
                     let elapsed = t0.elapsed().as_secs_f32();
@@ -404,7 +445,7 @@ pub fn process_pdf_directory_with_image_options(
                     let t0 = std::time::Instant::now();
                     let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
 
-                    let conv_res = process_pdf_with_pipeline_options(
+                    let conv_res = crate::pipeline::process_pdf_full(
                         &item.pdf_path,
                         &item.target_md_path,
                         item.begin_page,
@@ -413,6 +454,7 @@ pub fn process_pdf_directory_with_image_options(
                         item.rel_source.as_deref(),
                         script,
                         image_opts,
+                        embed,
                     );
 
                     let mut res_guard = result_clone.lock().unwrap();

@@ -102,6 +102,31 @@ pub fn process_pdf_with_pipeline_options(
     script: IndraScript,
     image_opts: crate::figure::ImageOptions,
 ) -> Result<()> {
+    process_pdf_full(
+        input_path,
+        output_path,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        source_label,
+        script,
+        image_opts,
+        false,
+    )
+}
+
+/// Converts a single PDF file with full pipeline, image options, and optional embedding generation.
+pub fn process_pdf_full(
+    input_path: &Path,
+    output_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    source_label: Option<&str>,
+    script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
+    embed: bool,
+) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
 
     let pdf_stem = input_path
@@ -123,6 +148,9 @@ pub fn process_pdf_with_pipeline_options(
     let mut metadata = crate::pdf::extract_pdf_metadata(input_path);
     if metadata.title.is_none() {
         metadata.title = Some(pdf_stem.to_string());
+    }
+    if metadata.pdf_sha256.is_none() {
+        metadata.pdf_sha256 = crate::markdown::compute_file_sha256(input_path).ok();
     }
 
     // DOM-First Fallback Gating: If author, publication date, organization, journal, volume, DOI, or keywords are missing, extract from document header slice
@@ -301,12 +329,36 @@ pub fn process_pdf_with_pipeline_options(
     let final_markdown = format!("{}{}", metadata.to_yaml_frontmatter(), structured_body);
     let final_output = normalize_latex_delimiters(&final_markdown);
 
-    fs::write(output_path, final_output).with_context(|| {
+    fs::write(output_path, &final_output).with_context(|| {
         format!(
             "failed to write finalized markdown output to {}",
             output_path.display()
         )
     })?;
+
+    if embed {
+        if let Some(engine) = crate::embeddings::get_embedding_engine(None) {
+            match crate::embeddings::generate_and_save_sidecar(
+                &final_output,
+                &short_slug,
+                output_path,
+                &engine,
+            ) {
+                Ok(count) => {
+                    println!(
+                        "Generated embedding sidecar ({} chunks) -> {}",
+                        count,
+                        crate::embeddings::sidecar_path_for_markdown(output_path).display()
+                    );
+                }
+                Err(err) => {
+                    eprintln!("Warning: Failed to generate embedding sidecar: {err:#}");
+                }
+            }
+        } else {
+            eprintln!("Warning: Embedding generation requested but embedding model is not loaded. Run 'pdfmd-lite --download-models'.");
+        }
+    }
 
     println!(
         "Completed conversion: {} -> {}",

@@ -1,13 +1,12 @@
 //! Command-line interface parser and handler for pdfmd-lite.
 
+use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::batch::process_pdf_directory_with_image_options;
 use crate::config::AppConfig;
 use crate::figure::{ImageFormat, ImageOptions};
-use crate::pipeline::process_pdf_with_pipeline_options;
 
 pub fn print_usage() {
     eprintln!(
@@ -29,9 +28,19 @@ USAGE:
     pdfmd-lite --convert-images-to-jpeg <vault-or-dir> [--image-quality <1-100>] [--dry-run]
     pdfmd-lite --png-to-jpeg <vault-or-dir> [--image-quality <1-100>] [--dry-run]
 
+    # In-process semantic embeddings & Obsidian RAG sidecars:
+    pdfmd-lite <input> <output> --embed
+    pdfmd-lite --embed <vault-or-dir> [--force]
+    pdfmd-lite --download-models
+
 OPTIONS:
     -i, --input <PATH>          Input PDF file or directory
     -o, --output <PATH>         Output Markdown file or destination directory
+    --embed, --embeddings       Generate semantic vector sidecars (<slug>.embeddings.jsonl)
+                                or retroactively embed an existing Markdown vault
+    --download-models           Download official INT8 all-MiniLM-L6-v2 ONNX model (~22MB)
+                                and tokenizer into models/embeddings/
+    --force                     Force re-embedding of existing Markdown notes
     --convert-images-to-jpeg, --png-to-jpeg <PATH>
                                 Convert all PNG images in vault/folder to JPEG in place
                                 and rewrite all Obsidian wiki-links (![[...png]] -> ![[...jpg]])
@@ -323,6 +332,124 @@ pub fn convert_vault_png_to_jpeg(
     Ok(summary)
 }
 
+/// Summary statistics for retroactive vault embedding operations.
+#[derive(Debug, Default, Clone)]
+pub struct EmbedVaultSummary {
+    pub notes_scanned: usize,
+    pub notes_embedded: usize,
+    pub notes_skipped: usize,
+    pub chunks_embedded: usize,
+}
+
+/// Retroactively generates `.embeddings.jsonl` sidecars across an existing Markdown vault or folder.
+pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> anyhow::Result<EmbedVaultSummary> {
+    let mut collected = Vec::new();
+    if path.is_file() {
+        collected.push(path.to_path_buf());
+    } else if path.is_dir() {
+        collect_md_files(path, &mut collected);
+    } else {
+        anyhow::bail!("Path does not exist: {}", path.display());
+    }
+
+    let engine = crate::embeddings::get_embedding_engine(None)
+        .context("Embedding model not loaded. Run 'pdfmd-lite --download-models' to download official weights.")?;
+
+    let mut summary = EmbedVaultSummary::default();
+    summary.notes_scanned = collected.len();
+
+    for md_path in &collected {
+        let sidecar_path = crate::embeddings::sidecar_path_for_markdown(md_path);
+        if !force && !crate::embeddings::should_update_embeddings(md_path, &sidecar_path) {
+            summary.notes_skipped += 1;
+            continue;
+        }
+
+        let content = fs::read_to_string(md_path)?;
+        let stem = md_path.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
+        let slug = crate::batch::sanitize_short_slug(stem);
+
+        match crate::embeddings::generate_and_save_sidecar(&content, &slug, md_path, &engine) {
+            Ok(count) => {
+                summary.notes_embedded += 1;
+                summary.chunks_embedded += count;
+                if !quiet {
+                    println!(
+                        "[{}/{}] Embedded {} ({} chunks) -> {}",
+                        summary.notes_embedded + summary.notes_skipped,
+                        summary.notes_scanned,
+                        md_path.display(),
+                        count,
+                        sidecar_path.display()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to embed {}: {e}", md_path.display());
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+/// Provisions official INT8 all-MiniLM-L6-v2 ONNX model and tokenizer.json into models/embeddings/.
+pub fn download_embedding_models_cli() -> anyhow::Result<()> {
+    let target_dir = Path::new("models/embeddings");
+    fs::create_dir_all(target_dir)?;
+
+    let model_target = target_dir.join("model.onnx");
+    let tokenizer_target = target_dir.join("tokenizer.json");
+
+    println!("Checking embedding model assets in '{}'...", target_dir.display());
+
+    let model_url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
+    let tokenizer_url = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/main/tokenizer.json";
+
+    if !model_target.exists() {
+        println!("Downloading quantized all-MiniLM-L6-v2 ONNX model (~22 MB)...");
+        let status = std::process::Command::new("curl.exe")
+            .args(["-L", "-o", model_target.to_str().unwrap(), model_url])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => println!("Downloaded {}", model_target.display()),
+            _ => {
+                anyhow::bail!(
+                    "Failed to download model via curl.\nPlease manually download:\n  {}\nand save to:\n  {}",
+                    model_url,
+                    model_target.display()
+                );
+            }
+        }
+    } else {
+        println!("Model already exists: {}", model_target.display());
+    }
+
+    if !tokenizer_target.exists() {
+        println!("Downloading tokenizer.json...");
+        let status = std::process::Command::new("curl.exe")
+            .args(["-L", "-o", tokenizer_target.to_str().unwrap(), tokenizer_url])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => println!("Downloaded {}", tokenizer_target.display()),
+            _ => {
+                anyhow::bail!(
+                    "Failed to download tokenizer via curl.\nPlease manually download:\n  {}\nand save to:\n  {}",
+                    tokenizer_url,
+                    tokenizer_target.display()
+                );
+            }
+        }
+    } else {
+        println!("Tokenizer already exists: {}", tokenizer_target.display());
+    }
+
+    println!("\nEmbedding model provisioning complete!");
+    Ok(())
+}
+
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -348,6 +475,15 @@ pub fn run() {
             || a == "--convert-to-jpeg"
     });
     let dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n");
+
+    let download_models_mode = args.iter().any(|a| a == "--download-models" || a == "--fetch-models");
+    if download_models_mode {
+        if let Err(e) = download_embedding_models_cli() {
+            eprintln!("Error provisioning models: {e:#}");
+            process::exit(1);
+        }
+        process::exit(0);
+    }
 
     if convert_images_mode {
         let mut target_path: Option<PathBuf> = None;
@@ -520,6 +656,8 @@ pub fn run() {
     let mut save_table_images: Option<bool> = None;
     let mut quiet = false;
     let mut resume = false;
+    let mut embed = false;
+    let mut force = false;
 
     let mut positional = Vec::new();
     let mut i = 0;
@@ -585,6 +723,10 @@ pub fn run() {
             quiet = true;
         } else if arg == "-r" || arg == "--resume" {
             resume = true;
+        } else if arg == "--embed" || arg == "--embeddings" {
+            embed = true;
+        } else if arg == "--force" {
+            force = true;
         } else if arg == "--english" || arg == "-en" {
             language = Some(crate::backends::indra::IndraScript::English);
         } else if arg == "--telugu" || arg == "-te" {
@@ -621,6 +763,28 @@ pub fn run() {
     }
     if end_page.is_none() && positional.len() > 3 {
         end_page = positional[3].parse().ok();
+    }
+
+    // Standalone vault embedding mode: `pdfmd-lite --embed <vault-dir-or-file> [--force]`
+    if embed && output_path.is_none() && input_path.is_some() {
+        let target = input_path.clone().unwrap();
+        if target.is_file() || target.is_dir() {
+            println!("Retroactively embedding vault notes in '{}'...", target.display());
+            match embed_vault_in_path(&target, force, quiet) {
+                Ok(summary) => {
+                    println!("\nVault embedding complete:");
+                    println!("  - Markdown notes scanned:     {}", summary.notes_scanned);
+                    println!("  - Markdown notes embedded:    {}", summary.notes_embedded);
+                    println!("  - Notes skipped (up to date): {}", summary.notes_skipped);
+                    println!("  - Total chunks indexed:       {}", summary.chunks_embedded);
+                    process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Error embedding vault: {e:#}");
+                    process::exit(1);
+                }
+            }
+        }
     }
 
     let input = match input_path {
@@ -683,7 +847,7 @@ pub fn run() {
             _ => None,
         };
 
-        match process_pdf_directory_with_image_options(
+        match crate::batch::process_pdf_directory_all(
             &input,
             &output,
             page_range,
@@ -693,6 +857,7 @@ pub fn run() {
             quiet,
             resume,
             image_opts,
+            embed,
         ) {
             Ok(summary) => {
                 println!(
@@ -735,7 +900,7 @@ pub fn run() {
             final_image_format.extension(),
             final_image_quality
         );
-        if let Err(err) = process_pdf_with_pipeline_options(
+        if let Err(err) = crate::pipeline::process_pdf_full(
             &input,
             &target_md,
             begin,
@@ -744,6 +909,7 @@ pub fn run() {
             None,
             final_script,
             image_opts,
+            embed,
         ) {
             eprintln!("Error converting PDF: {err:#}");
             process::exit(1);

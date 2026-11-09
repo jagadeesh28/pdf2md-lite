@@ -81,10 +81,10 @@ pdfmd-lite/
 
 ---
 
-### Phase 2 — In-Process Sentence Embeddings & Semantic Obsidian RAG 🎯
+### Phase 2 — In-Process Sentence Embeddings & Semantic Obsidian RAG ✅
 
 > **Architectural Decisions**: [ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md) & [ADR 0010](./docs/adr/0010-inprocess-minilm-sentence-embeddings.md)  
-> **Status**: Ready for Implementation  
+> **Status**: Completed & Verified ✅  
 > **Primary Goal**: Deliver lightweight, 100% offline semantic retrieval and vector sidecars for Obsidian RAG plugins without cloud APIs or centralized vector databases.
 
 ```mermaid

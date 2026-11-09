@@ -110,11 +110,11 @@ The improvements below target the largest measured bottlenecks first.
 
 **Expected benefit:** Faster page raster flattening (used on every page before OCR/layout).
 
-## Phase 2 — AI / Embedding Models (Specified & Planned)
+## Phase 2 — AI / Embedding Models
 
-**Status:** Specification Complete (ADRs Recorded: [ADR 0009](docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md), [ADR 0010](docs/adr/0010-inprocess-minilm-sentence-embeddings.md))
+**Status:** Implemented & Verified ✅ (ADRs: [ADR 0009](docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md), [ADR 0010](docs/adr/0010-inprocess-minilm-sentence-embeddings.md))
 
-The `Cargo.toml` reserves the `embed-models` feature flag. The architecture, models, and schemas were rigorously stress-tested and finalized:
+The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-process `all-MiniLM-L6-v2` ONNX inference:
 
 | Finalized Specification | Decision & Technical Details |
 |-------------------------|------------------------------|

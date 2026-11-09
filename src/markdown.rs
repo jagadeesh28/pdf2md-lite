@@ -16,6 +16,7 @@ pub struct DocumentMetadata {
     pub keywords: Option<String>,
     pub creation_date: Option<String>,
     pub doi: Option<String>,
+    pub pdf_sha256: Option<String>,
     pub total_pages: Option<usize>,
     pub pages_processed: Option<String>,
     pub tags: Vec<String>,
@@ -64,6 +65,9 @@ impl DocumentMetadata {
         if let Some(ref doi) = self.doi {
             yaml.push_str(&format!("doi: \"{}\"\n", escape_yaml(doi)));
         }
+        if let Some(ref sha) = self.pdf_sha256 {
+            yaml.push_str(&format!("pdf_sha256: \"{}\"\n", escape_yaml(sha)));
+        }
         if let Some(total) = self.total_pages {
             yaml.push_str(&format!("total_pages: {}\n", total));
         }
@@ -101,6 +105,15 @@ fn escape_yaml(s: &str) -> String {
         .replace('"', "\\\"")
         .replace('\r', "")
         .replace('\n', " ")
+}
+
+/// Computes the cryptographic SHA-256 digest of a file on disk.
+pub fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Results of a document conversion or text extraction run.
@@ -415,6 +428,7 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
                     "volume" => meta.volume = Some(val_clean),
                     "issue" => meta.issue = Some(val_clean),
                     "doi" => meta.doi = Some(val_clean),
+                    "pdf_sha256" | "sha256" => meta.pdf_sha256 = Some(val_clean),
                     "keywords" => meta.keywords = Some(val_clean),
                     "subject" => meta.subject = Some(val_clean),
                     "total_pages" => meta.total_pages = val_clean.parse().ok(),
@@ -2416,5 +2430,25 @@ Refer to the system schematic below.
         // Code spans and fenced blocks preserved
         assert!(output.contains("`![[code_span.png]]`"));
         assert!(output.contains("![[fenced_block.png]]"));
+    }
+
+    #[test]
+    fn test_compute_file_sha256_and_frontmatter() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dummy_path = temp_dir.path().join("dummy.pdf");
+        std::fs::write(&dummy_path, b"hello world pdf content").unwrap();
+
+        let sha = compute_file_sha256(&dummy_path).unwrap();
+        assert_eq!(sha.len(), 64);
+
+        let mut meta = DocumentMetadata::default();
+        meta.title = Some("Test Title".to_string());
+        meta.pdf_sha256 = Some(sha.clone());
+
+        let yaml = meta.to_yaml_frontmatter();
+        assert!(yaml.contains(&format!("pdf_sha256: \"{sha}\"")));
+
+        let (parsed_meta, _) = parse_existing_frontmatter(&yaml);
+        assert_eq!(parsed_meta.unwrap().pdf_sha256.as_deref(), Some(sha.as_str()));
     }
 }
