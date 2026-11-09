@@ -92,6 +92,7 @@ pub fn process_pdf_with_options(
 }
 
 /// Converts a single PDF file with full pipeline and image configuration options.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pdf_with_pipeline_options(
     input_path: &Path,
     output_path: &Path,
@@ -116,6 +117,7 @@ pub fn process_pdf_with_pipeline_options(
 }
 
 /// Converts a single PDF file with full pipeline, image options, and optional embedding generation.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pdf_full(
     input_path: &Path,
     output_path: &Path,
@@ -172,8 +174,8 @@ pub fn process_pdf_full(
 
         if !header_slice.trim().is_empty() {
             #[cfg(feature = "gliner-ort")]
-            if let Some(gliner) = crate::metadata::get_gliner_engine() {
-                if let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
+            if let Some(gliner) = crate::metadata::get_gliner_engine()
+                && let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
                     if metadata.author.is_none() && !res.authors.is_empty() {
                         metadata.author = Some(res.authors.join(", "));
                     }
@@ -199,7 +201,6 @@ pub fn process_pdf_full(
                         metadata.keywords = Some(res.keywords.join(", "));
                     }
                 }
-            }
 
             // Fallback pattern extractor if neural weights are not present
             if metadata.author.is_none()
@@ -395,6 +396,7 @@ where
 }
 
 /// Concurrent page processing worker engine with explicit ImageOptions.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pages_stream_with_options<F>(
     input_path: &Path,
     image_output_dir: &Path,
@@ -429,7 +431,7 @@ where
     let total_pages = end_page.saturating_sub(begin_page) + 1;
 
     // Zero-disk Pipelined Streaming: Dedicated rendering thread streams DynamicImages into a bounded channel
-    let channel_bound = concurrency.min(4).max(2);
+    let channel_bound = concurrency.clamp(2, 4);
     let (raster_tx, raster_rx) = mpsc::sync_channel::<Result<(usize, image::DynamicImage)>>(channel_bound);
     let pdf_path_for_render = input_path.to_path_buf();
 
@@ -576,13 +578,12 @@ pub fn safe_process_single_page(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
                  > Failed to open image for OCR: {err:#}\n\n"
             );
-            if let Some(txt) = raw_page_text {
-                if !txt.trim().is_empty() {
+            if let Some(txt) = raw_page_text
+                && !txt.trim().is_empty() {
                     warning_block.push_str("### Recovered Stream Text\n\n");
                     warning_block.push_str(txt.trim());
                     warning_block.push_str("\n\n");
                 }
-            }
             return warning_block;
         }
     };
@@ -642,6 +643,7 @@ pub fn safe_process_single_page_image_with_doc(
 
 /// Executes single-page processing on an in-memory DynamicImage directly with a shared pre-parsed PDF DOM document
 /// and explicit ImageOptions.
+#[allow(clippy::too_many_arguments)]
 pub fn safe_process_single_page_image_with_doc_and_options(
     lopdf_doc: Option<&lopdf::Document>,
     pdf_path: Option<&Path>,
@@ -674,13 +676,12 @@ pub fn safe_process_single_page_image_with_doc_and_options(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
                  > An error occurred during page transcription: {err:#}\n\n"
             );
-            if let Some(txt) = raw_page_text {
-                if !txt.trim().is_empty() {
+            if let Some(txt) = raw_page_text
+                && !txt.trim().is_empty() {
                     warning_block.push_str("### Recovered Stream Text\n\n");
                     warning_block.push_str(txt.trim());
                     warning_block.push_str("\n\n");
                 }
-            }
             warning_block
         }
         Err(_) => {
@@ -690,18 +691,18 @@ pub fn safe_process_single_page_image_with_doc_and_options(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
                  > An unexpected panic occurred while decoding or processing page {page_num}.\n\n"
             );
-            if let Some(txt) = raw_page_text {
-                if !txt.trim().is_empty() {
+            if let Some(txt) = raw_page_text
+                && !txt.trim().is_empty() {
                     warning_block.push_str("### Recovered Stream Text\n\n");
                     warning_block.push_str(txt.trim());
                     warning_block.push_str("\n\n");
                 }
-            }
             warning_block
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_single_page_image_with_doc(
     lopdf_doc: Option<&lopdf::Document>,
     pdf_path: Option<&Path>,
@@ -828,11 +829,10 @@ fn process_single_page_image_with_doc(
                 let crop_h = formula_rect.height.min(ph.saturating_sub(formula_rect.y));
                 if crop_w > 15 && crop_h > 15 {
                     let crop = page_img.crop_imm(formula_rect.x, formula_rect.y, crop_w, crop_h);
-                    if let Ok(pred) = latex_engine.predict_latex(&crop) {
-                        if !pred.trim().is_empty() {
+                    if let Ok(pred) = latex_engine.predict_latex(&crop)
+                        && !pred.trim().is_empty() {
                             recognized_latex = Some(pred);
                         }
-                    }
                 }
             }
         }
@@ -958,8 +958,8 @@ fn process_single_page_image_with_doc(
         #[cfg(feature = "slanet-ort")]
         if let Some(slanet) = figure::slanet::get_slanet_engine() {
             let crop = page_img.crop_imm(table_rect.x, table_rect.y, table_rect.width, table_rect.height);
-            if let Ok(md) = slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y) {
-                if !md.trim().is_empty() {
+            if let Ok(md) = slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y)
+                && !md.trim().is_empty() {
                     table_md_opt = Some(md);
                     raw_lines = text_lines
                         .iter()
@@ -974,18 +974,16 @@ fn process_single_page_image_with_doc(
                         .map(|l| l.text.clone())
                         .collect();
                 }
-            }
         }
 
         // Fall back to pure geometric table grid extraction if SLANet not used or yields empty/degenerate output
-        if table_md_opt.is_none() {
-            if let Some((geom_md, geom_lines)) =
+        if table_md_opt.is_none()
+            && let Some((geom_md, geom_lines)) =
                 figure::table::extract_table_with_lines(table_rect, &table_input_lines)
             {
                 table_md_opt = Some(geom_md);
                 raw_lines = geom_lines;
             }
-        }
 
         if let Some(table_md) = table_md_opt {
             let callout = if image_opts.save_table_images {

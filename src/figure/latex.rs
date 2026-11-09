@@ -136,7 +136,7 @@ impl RapidLatexEngine {
         // Target height clamped to [32, 192], width clamped to [32, 672]
         let target_h = (((ch as f32).clamp(32.0, 192.0) / 32.0).round() as u32 * 32).clamp(32, 192);
         let scale = target_h as f32 / ch.max(1) as f32;
-        let target_w = (((cw as f32 * scale / 32.0).round() as u32 * 32)).clamp(32, 672);
+        let target_w = ((cw as f32 * scale / 32.0).round() as u32 * 32).clamp(32, 672);
 
         let resized = cropped.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
         let resized_gray = resized.to_luma8();
@@ -291,8 +291,8 @@ pub fn clean_stray_dollars(s: &str) -> String {
 /// Extracts trailing equation tags like `(6a)`, `(9)`, `7 (6a)` from candidate formula string.
 pub fn extract_equation_tag(s: &str) -> (String, Option<String>) {
     let trimmed = s.trim();
-    if let Some(open_paren) = trimmed.rfind('(') {
-        if let Some(close_paren) = trimmed[open_paren..].find(')') {
+    if let Some(open_paren) = trimmed.rfind('(')
+        && let Some(close_paren) = trimmed[open_paren..].find(')') {
             let tag_candidate = trimmed[open_paren + 1..open_paren + close_paren].trim();
             let after_tag = trimmed[open_paren + close_paren + 1..].trim();
             let is_valid_tag = !tag_candidate.is_empty()
@@ -325,7 +325,6 @@ pub fn extract_equation_tag(s: &str) -> (String, Option<String>) {
                 }
             }
         }
-    }
     (trimmed.to_string(), None)
 }
 
@@ -439,7 +438,7 @@ pub fn balance_delimiters(s: &str) -> String {
                 } else {
                     left_stack.push('.');
                     out.push_str(r"\left.");
-                    i = i + 5;
+                    i += 5;
                     continue;
                 }
             } else {
@@ -468,7 +467,7 @@ pub fn balance_delimiters(s: &str) -> String {
                     i = delim_idx + 1;
                     continue;
                 } else {
-                    i = i + 6;
+                    i += 6;
                     continue;
                 }
             } else {

@@ -147,14 +147,13 @@ pub fn format_notes_in_path(
                     fs::write(path, fixed)?;
                 }
             }
-        } else if let Some(out_p) = output {
-            if !dry_run {
+        } else if let Some(out_p) = output
+            && !dry_run {
                 if let Some(parent) = out_p.parent() {
                     fs::create_dir_all(parent)?;
                 }
                 fs::write(out_p, fixed)?;
             }
-        }
     } else if path.is_dir() {
         let mut md_files = Vec::new();
         collect_md_files(path, &mut md_files);
@@ -183,11 +182,10 @@ pub fn format_notes_in_path(
                 summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
                 summary.figure_links_converted += report.figure_links_converted;
 
-                if !dry_run {
-                    if let Err(err) = fs::write(&p, fixed) {
+                if !dry_run
+                    && let Err(err) = fs::write(&p, fixed) {
                         eprintln!("Warning: could not write {}: {err}", p.display());
                     }
-                }
             }
         }
     } else {
@@ -321,11 +319,10 @@ pub fn convert_vault_png_to_jpeg(
             summary.notes_updated += 1;
             summary.links_updated += links_changed;
 
-            if !dry_run {
-                if let Err(e) = fs::write(md_path, updated) {
+            if !dry_run
+                && let Err(e) = fs::write(md_path, updated) {
                     eprintln!("Warning: could not write {}: {e}", md_path.display());
                 }
-            }
         }
     }
 
@@ -355,8 +352,10 @@ pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> anyhow::Res
     let engine = crate::embeddings::get_embedding_engine(None)
         .context("Embedding model not loaded. Run 'pdfmd-lite --download-models' to download official weights.")?;
 
-    let mut summary = EmbedVaultSummary::default();
-    summary.notes_scanned = collected.len();
+    let mut summary = EmbedVaultSummary {
+        notes_scanned: collected.len(),
+        ..Default::default()
+    };
 
     for md_path in &collected {
         let sidecar_path = crate::embeddings::sidecar_path_for_markdown(md_path);
@@ -497,13 +496,12 @@ pub fn run() {
                 || a == "--convert-images"
                 || a == "--convert-to-jpeg"
             {
-                if idx + 1 < args.len() && !args[idx + 1].starts_with('-') {
-                    if target_path.is_none() {
+                if idx + 1 < args.len() && !args[idx + 1].starts_with('-')
+                    && target_path.is_none() {
                         target_path = Some(PathBuf::from(&args[idx + 1]));
                         idx += 2;
                         continue;
                     }
-                }
             } else if a == "--image-quality" || a == "--quality" {
                 if idx + 1 < args.len() {
                     if let Ok(q) = args[idx + 1].parse::<u8>() {
@@ -577,13 +575,12 @@ pub fn run() {
                 || a == "--fix-math"
                 || a == "-f"
             {
-                if idx + 1 < args.len() && !args[idx + 1].starts_with('-') {
-                    if target_path.is_none() {
+                if idx + 1 < args.len() && !args[idx + 1].starts_with('-')
+                    && target_path.is_none() {
                         target_path = Some(PathBuf::from(&args[idx + 1]));
                         idx += 2;
                         continue;
                     }
-                }
             } else if a == "--dry-run" || a == "-n" {
                 idx += 1;
                 continue;

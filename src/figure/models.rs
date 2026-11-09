@@ -62,12 +62,11 @@ impl LayoutModelSource {
     /// Loads the YOLO layout detector model bytes from custom path, workspace directory, or embedded binary.
     pub fn load_layout_model(&self) -> Result<Vec<u8>> {
         // 1. Check custom override path if specified
-        if let Some(ref path) = self.custom_path {
-            if path.exists() {
+        if let Some(ref path) = self.custom_path
+            && path.exists() {
                 return fs::read(path)
                     .with_context(|| format!("Failed to read custom layout model at {:?}", path));
             }
-        }
 
         // 2. Check local workspace models/layout/ directory
         let local_path = Path::new("models/layout/yolov8n-doclaynet.onnx");
@@ -79,7 +78,7 @@ impl LayoutModelSource {
         // 3. Fallback to embedded static binary slice if feature = "embed-models" is active
         #[cfg(feature = "embed-models")]
         {
-            return Ok(EMBEDDED_LAYOUT.to_vec());
+            Ok(EMBEDDED_LAYOUT.to_vec())
         }
 
         #[cfg(not(feature = "embed-models"))]

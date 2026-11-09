@@ -180,7 +180,7 @@ impl IndraRecognizer {
             }
         }
         let dark = if total > 0 {
-            let median_idx = (total / 2) as u32;
+            let median_idx = total / 2;
             let mut cum = 0u32;
             let mut median = 128u8;
             for (i, &count) in hist.iter().enumerate() {
@@ -196,13 +196,13 @@ impl IndraRecognizer {
         };
         let mut crop = GrayImage::new(cw, ch);
         for y in y0..y1 {
-            let dst_y = (y - y0) as u32;
+            let dst_y = y - y0;
             for x in x0..x1 {
-                let dst_x = (x - x0) as u32;
-                crop.put_pixel(dst_x, dst_y, *gray.get_pixel(x as u32, y as u32));
+                let dst_x = x - x0;
+                crop.put_pixel(dst_x, dst_y, *gray.get_pixel(x, y));
             }
         }
-        let target_h = self.target_height as u32;
+        let target_h = self.target_height;
         let out_w = ((cw as f32 * target_h as f32 / ch as f32).round() as u32).clamp(8, 4096);
         let resized = image::imageops::resize(&crop, out_w, target_h, image::imageops::FilterType::Triangle);
         let mut ink_map = Vec::with_capacity((out_w as usize) * (target_h as usize));
@@ -332,14 +332,12 @@ impl IndraRecognizer {
         let mut prev = self.vocab.blank_idx as i64;
 
         for (i, &tok) in final_tokens.iter().enumerate() {
-            if tok != self.vocab.blank_idx as i64 && tok != prev {
-                if let Some(c) = confs {
-                    if let Some(&conf) = c.get(i) {
+            if tok != self.vocab.blank_idx as i64 && tok != prev
+                && let Some(c) = confs
+                    && let Some(&conf) = c.get(i) {
                         sum_conf += conf;
                         count_conf += 1;
                     }
-                }
-            }
             prev = tok;
         }
 
@@ -385,7 +383,7 @@ impl IndraRecognizer {
         boxes: &[TextBoundingBox],
         mask: Option<&[bool]>,
         groups: Vec<(usize, Vec<usize>)>,
-        results: &mut Vec<Option<(String, f32)>>,
+        results: &mut [Option<(String, f32)>],
     ) -> Result<()> {
         for (bucket_w, indices) in groups {
             let n = indices.len();
@@ -408,9 +406,7 @@ impl IndraRecognizer {
                 for y in 0..line_h.min(target_h) {
                     let src_base = y * line_w;
                     let dst_base = row * target_h * bucket_w + y * bucket_w;
-                    for x in 0..copy_w {
-                        tensor_data[dst_base + x] = ink_map[src_base + x];
-                    }
+                    tensor_data[dst_base..(dst_base + copy_w)].copy_from_slice(&ink_map[src_base..(src_base + copy_w)]);
                 }
             }
 
@@ -446,6 +442,7 @@ impl IndraRecognizer {
     }
 
     /// Decodes batched SVTR outputs into per-line results, applying constrained CTC masking.
+    #[allow(clippy::too_many_arguments)]
     fn decode_batch_results(
         &self,
         _gray: &GrayImage,
@@ -457,7 +454,7 @@ impl IndraRecognizer {
         _target_h: usize,
         outputs: &[TValue],
         actual_widths: &[i64],
-        results: &mut Vec<Option<(String, f32)>>,
+        results: &mut [Option<(String, f32)>],
     ) -> Result<()> {
         let token_view = outputs[0].to_plain_array_view::<i64>()?;
         let tokens = token_view.as_slice().context("Tokens not contiguous")?;
@@ -538,19 +535,17 @@ impl IndraRecognizer {
             let mut sum_conf = 0.0f32;
             let mut count_conf = 0usize;
             let mut prev = self.vocab.blank_idx as i64;
-            if let Some(confs) = &conf_views {
-                if let Some(row_conf) = confs.get(row) {
+            if let Some(confs) = &conf_views
+                && let Some(row_conf) = confs.get(row) {
                     for (i, &tok) in final_tokens.iter().enumerate() {
-                        if tok != self.vocab.blank_idx as i64 && tok != prev {
-                            if let Some(&c) = row_conf.get(i) {
+                        if tok != self.vocab.blank_idx as i64 && tok != prev
+                            && let Some(&c) = row_conf.get(i) {
                                 sum_conf += c;
                                 count_conf += 1;
                             }
-                        }
                         prev = tok;
                     }
                 }
-            }
             let mean_conf = if count_conf > 0 {
                 sum_conf / count_conf as f32
             } else {

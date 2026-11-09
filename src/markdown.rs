@@ -171,7 +171,7 @@ pub fn render_markdown(result: &PdfExtractionResult) -> String {
             output.push('\n');
         }
         output.push_str("## Embedded images\n\n");
-        for (_index, path) in result.images.iter().enumerate() {
+        for path in result.images.iter() {
             let path_str = path.to_string_lossy().replace('\\', "/");
             output.push_str(&format!("![[{}]]\n\n", path_str));
         }
@@ -283,10 +283,10 @@ pub fn unwrap_spurious_codeblocks(text: &str) -> (String, usize) {
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("```") {
+        if let Some(stripped) = trimmed.strip_prefix("```") {
             if !in_code {
                 in_code = true;
-                current_tag = trimmed[3..].trim().to_lowercase();
+                current_tag = stripped.trim().to_lowercase();
                 block_lines.clear();
             } else {
                 in_code = false;
@@ -400,8 +400,8 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
             }
 
             if in_tags {
-                if line_trimmed.starts_with("- ") {
-                    let tag_val = line_trimmed[2..].trim().trim_matches('"').trim_matches('\'');
+                if let Some(stripped) = line_trimmed.strip_prefix("- ") {
+                    let tag_val = stripped.trim().trim_matches('"').trim_matches('\'');
                     if !tag_val.is_empty() && !meta.tags.contains(&tag_val.to_string()) {
                         meta.tags.push(tag_val.to_string());
                     }
@@ -495,22 +495,18 @@ pub fn format_note_document(content: &str, file_hint: Option<&std::path::Path>) 
                 }
             }
         }
-        if metadata.title.is_none() {
-            if let Some(hint) = file_hint {
-                if let Some(stem) = hint.file_stem() {
+        if metadata.title.is_none()
+            && let Some(hint) = file_hint
+                && let Some(stem) = hint.file_stem() {
                     metadata.title = Some(stem.to_string_lossy().to_string());
                 }
-            }
-        }
     }
 
-    if metadata.source.is_none() {
-        if let Some(hint) = file_hint {
-            if let Some(name) = hint.file_name() {
+    if metadata.source.is_none()
+        && let Some(hint) = file_hint
+            && let Some(name) = hint.file_name() {
                 metadata.source = Some(name.to_string_lossy().to_string());
             }
-        }
-    }
 
     let added_fields = crate::metadata::populate_metadata_from_text(raw_body, &mut metadata);
     enrich_document_metadata(&mut metadata, &converted_body);
@@ -617,9 +613,9 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
         }
 
         // 2. Detect and convert `![alt](url)`
-        if ch == '!' {
-            if let Some(&(_, next_c)) = chars.peek() {
-                if next_c == '[' {
+        if ch == '!'
+            && let Some(&(_, next_c)) = chars.peek()
+                && next_c == '[' {
                     // Check if already an obsidian embed: `![[`
                     let after_bracket = &line[i + 2..];
                     if after_bracket.starts_with('[') {
@@ -634,7 +630,7 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
                     let mut escaped = false;
                     let mut alt_end = None;
 
-                    while let Some((alt_idx, alt_c)) = chars.next() {
+                    for (alt_idx, alt_c) in chars.by_ref() {
                         if escaped {
                             escaped = false;
                             continue;
@@ -656,15 +652,15 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
 
                     if alt_end.is_some() {
                         // Check if immediate next character is '('
-                        if let Some(&(_, paren_c)) = chars.peek() {
-                            if paren_c == '(' {
+                        if let Some(&(_, paren_c)) = chars.peek()
+                            && paren_c == '(' {
                                 chars.next(); // Consume '('
                                 let mut paren_depth = 1;
                                 let mut paren_escaped = false;
                                 let paren_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
                                 let mut paren_end = None;
 
-                                while let Some((p_idx, p_c)) = chars.next() {
+                                for (p_idx, p_c) in chars.by_ref() {
                                     if paren_escaped {
                                         paren_escaped = false;
                                         continue;
@@ -710,7 +706,6 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
                                     }
                                 }
                             }
-                        }
                     }
 
                     // Fallback: parsing did not yield an image link, re-emit consumed text
@@ -718,8 +713,6 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
                     out.push_str(&line[i..current_idx]);
                     continue;
                 }
-            }
-        }
 
         out.push(ch);
     }
@@ -811,8 +804,8 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
         // 2. Obsidian embed: ![[...]]
         if ch == '!' {
             let rest = &line[i..];
-            if rest.starts_with("![[") {
-                if let Some(close_pos) = rest.find("]]") {
+            if rest.starts_with("![[")
+                && let Some(close_pos) = rest.find("]]") {
                     let inner = &rest[3..close_pos];
                     let (target, extra) = match inner.split_once('|') {
                         Some((t, e)) => (t, Some(e)),
@@ -842,17 +835,16 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
                         continue;
                     }
                 }
-            }
         }
 
         // 3. Standard markdown: ![alt](url)
         if ch == '!' {
             let rest = &line[i..];
-            if rest.starts_with("![") && !rest.starts_with("![[") {
-                if let Some(bracket_end) = rest.find(']') {
+            if rest.starts_with("![") && !rest.starts_with("![[")
+                && let Some(bracket_end) = rest.find(']') {
                     let after_bracket = &rest[bracket_end + 1..];
-                    if after_bracket.starts_with('(') {
-                        if let Some(paren_end) = after_bracket.find(')') {
+                    if after_bracket.starts_with('(')
+                        && let Some(paren_end) = after_bracket.find(')') {
                             let alt = &rest[2..bracket_end];
                             let raw_url = &after_bracket[1..paren_end];
                             let trimmed_url = raw_url.trim();
@@ -896,9 +888,7 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
                                 continue;
                             }
                         }
-                    }
                 }
-            }
         }
 
         out.push(ch);
@@ -1138,9 +1128,9 @@ pub fn dehyphenate_text(text: &str) -> String {
                 newline_found = true;
             }
 
-            if newline_found {
-                if let Some(&next_c) = ahead.peek() {
-                    if next_c.is_ascii_lowercase() {
+            if newline_found
+                && let Some(&next_c) = ahead.peek()
+                    && next_c.is_ascii_lowercase() {
                         // Check previous word in result
                         let prev_word: String = result
                             .chars()
@@ -1177,8 +1167,6 @@ pub fn dehyphenate_text(text: &str) -> String {
                             continue;
                         }
                     }
-                }
-            }
         }
         result.push(c);
     }
@@ -1191,7 +1179,7 @@ pub fn strip_running_headers_and_footers(text: &str) -> String {
     for line in text.lines() {
         let trimmed = line.trim();
         let upper = trimmed.to_uppercase();
-        let clean = upper.replace('$', "").replace('#', "").trim().to_string();
+        let clean = upper.replace(['$', '#'], "").trim().to_string();
 
         let is_running_hdr = (clean.starts_with("VOL. ") && clean.contains("NO. "))
             || (clean.contains("J. PROPULSION") && (clean.contains("VOL.") || clean.contains("198") || clean.contains("199")))
@@ -1278,13 +1266,12 @@ pub fn promote_headings(text: &str) -> String {
         }
 
         // 3. Promote primary title on first page if not already promoted
-        if !title_promoted && trimmed.len() > 10 && trimmed.len() < 120 && !trimmed.ends_with('.') && !upper.starts_with("VOL") {
-            if !trimmed.contains("University") && !trimmed.contains("Company") && !trimmed.contains("Institute") && !trimmed.contains("Laboratory") && !trimmed.contains('@') {
+        if !title_promoted && trimmed.len() > 10 && trimmed.len() < 120 && !trimmed.ends_with('.') && !upper.starts_with("VOL")
+            && !trimmed.contains("University") && !trimmed.contains("Company") && !trimmed.contains("Institute") && !trimmed.contains("Laboratory") && !trimmed.contains('@') {
                 out.push_str(&format!("# {}\n", trimmed));
                 title_promoted = true;
                 continue;
             }
-        }
 
         out.push_str(line);
         out.push('\n');
@@ -1317,8 +1304,8 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
     if metadata.author.is_none() {
         let lines: Vec<&str> = full_doc_text.lines().take(30).map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
         for (i, line) in lines.iter().enumerate() {
-            if line.contains("University") || line.contains("Company") || line.contains("Institute") || line.contains("Laboratory") {
-                if i > 0 {
+            if (line.contains("University") || line.contains("Company") || line.contains("Institute") || line.contains("Laboratory"))
+                && i > 0 {
                     let prev = lines[i - 1];
                     let clean: String = prev.chars().filter(|c| c.is_alphabetic() || *c == ' ' || *c == ',' || *c == '&' || *c == '.').collect();
                     let trimmed = clean.trim();
@@ -1327,7 +1314,6 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
                         break;
                     }
                 }
-            }
         }
     }
 
@@ -1409,8 +1395,8 @@ fn wrap_inline_math(line: &str) -> String {
         let after_start = &rem[start_d + 1..];
         if let Some(end_d) = after_start.find('$') {
             let formula = &after_start[..end_d];
-            if !formula.contains('\n') && !formula.trim().is_empty() {
-                if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(formula) {
+            if !formula.contains('\n') && !formula.trim().is_empty()
+                && let Some(repaired) = crate::figure::latex::validate_and_repair_latex(formula) {
                     intermediate.push('$');
                     intermediate.push_str(&repaired);
                     intermediate.push('$');
@@ -1418,7 +1404,6 @@ fn wrap_inline_math(line: &str) -> String {
                     rem = &after_start[end_d + 1..];
                     continue;
                 }
-            }
             intermediate.push('$');
             intermediate.push_str(formula);
             intermediate.push('$');
@@ -1466,11 +1451,10 @@ fn wrap_inline_math(line: &str) -> String {
                     let mut cur_offset = 0;
 
                     // Capture argument in braces e.g. \dot{m}
-                    if rem_str.starts_with('{') {
-                        if let Some(close_brace) = rem_str.find('}') {
+                    if rem_str.starts_with('{')
+                        && let Some(close_brace) = rem_str.find('}') {
                             cur_offset = close_brace + 1;
                         }
-                    }
 
                     // Capture chained subscripts/superscripts e.g. \dot{m}_{nn} or \rho_{i0}
                     let rest_after_arg = &rem_str[cur_offset..];
@@ -1622,13 +1606,12 @@ fn split_table_row(row: &str) -> Vec<String> {
 
     while let Some(c) = chars.next() {
         if c == '\\' {
-            if let Some(&next) = chars.peek() {
-                if next == '|' {
+            if let Some(&next) = chars.peek()
+                && next == '|' {
                     current.push('|');
                     chars.next();
                     continue;
                 }
-            }
             current.push(c);
         } else if c == '|' {
             cells.push(current.trim().to_string());
@@ -2441,9 +2424,11 @@ Refer to the system schematic below.
         let sha = compute_file_sha256(&dummy_path).unwrap();
         assert_eq!(sha.len(), 64);
 
-        let mut meta = DocumentMetadata::default();
-        meta.title = Some("Test Title".to_string());
-        meta.pdf_sha256 = Some(sha.clone());
+        let meta = DocumentMetadata {
+            title: Some("Test Title".to_string()),
+            pdf_sha256: Some(sha.clone()),
+            ..Default::default()
+        };
 
         let yaml = meta.to_yaml_frontmatter();
         assert!(yaml.contains(&format!("pdf_sha256: \"{sha}\"")));

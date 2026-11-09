@@ -102,15 +102,14 @@ pub fn extract_page_stream_figures(
                 let current = *ctm_stack.last().unwrap_or(&Matrix2D::default());
                 ctm_stack.push(current);
             }
-            "Q" => {
+            "Q"
                 // Restore graphics state
-                if ctm_stack.len() > 1 {
+                if ctm_stack.len() > 1 => {
                     ctm_stack.pop();
                 }
-            }
-            "cm" => {
+            "cm"
                 // Concat matrix: cm a b c d e f
-                if op.operands.len() >= 6 {
+                if op.operands.len() >= 6 => {
                     let a = to_f32(&op.operands[0]).unwrap_or(1.0);
                     let b = to_f32(&op.operands[1]).unwrap_or(0.0);
                     let c = to_f32(&op.operands[2]).unwrap_or(0.0);
@@ -123,7 +122,6 @@ pub fn extract_page_stream_figures(
                         *top = cm.multiply(top);
                     }
                 }
-            }
             "Do" => {
                 // Invoke named XObject
                 if let Some(Object::Name(name_bytes)) = op.operands.first() {
@@ -157,6 +155,7 @@ pub fn extract_page_stream_figures(
     Ok(figures)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_image_xobject(
     doc: &Document,
     obj_id: ObjectId,
@@ -207,7 +206,7 @@ fn process_image_xobject(
 
     // Filter extreme aspect ratios (lines, borders)
     let aspect = norm_w / norm_h.max(0.001);
-    if aspect > 15.0 || aspect < 0.06 {
+    if !(0.06..=15.0).contains(&aspect) {
         return None;
     }
 
@@ -252,18 +251,16 @@ fn decode_xobject_image(stream: &lopdf::Stream) -> Option<DynamicImage> {
             .unwrap_or(b"DeviceRGB");
 
         match color_space {
-            b"DeviceRGB" => {
-                if decompressed.len() >= width * height * 3 {
+            b"DeviceRGB"
+                if decompressed.len() >= width * height * 3 => {
                     let rgb = image::RgbImage::from_raw(width as u32, height as u32, decompressed[..width * height * 3].to_vec())?;
                     return Some(DynamicImage::ImageRgb8(rgb));
                 }
-            }
-            b"DeviceGray" => {
-                if decompressed.len() >= width * height {
+            b"DeviceGray"
+                if decompressed.len() >= width * height => {
                     let gray = image::GrayImage::from_raw(width as u32, height as u32, decompressed[..width * height].to_vec())?;
                     return Some(DynamicImage::ImageLuma8(gray));
                 }
-            }
             _ => {}
         }
     }
@@ -312,8 +309,8 @@ fn get_page_dimensions(doc: &Document, page_dict: &lopdf::Dictionary) -> (f32, f
             _ => None,
         };
 
-        if let Some(a) = arr {
-            if a.len() >= 4 {
+        if let Some(a) = arr
+            && a.len() >= 4 {
                 let x1 = to_f32(&a[0]).unwrap_or(0.0);
                 let y1 = to_f32(&a[1]).unwrap_or(0.0);
                 let x2 = to_f32(&a[2]).unwrap_or(612.0);
@@ -325,7 +322,6 @@ fn get_page_dimensions(doc: &Document, page_dict: &lopdf::Dictionary) -> (f32, f
                 let h = (y2 - y1).abs();
                 return (x_min, y_min, w, h);
             }
-        }
     }
 
     // Default US Letter (612 x 792 points)
@@ -334,7 +330,7 @@ fn get_page_dimensions(doc: &Document, page_dict: &lopdf::Dictionary) -> (f32, f
 
 fn to_f32(obj: &Object) -> Option<f32> {
     match obj {
-        Object::Real(r) => Some(*r as f32),
+        Object::Real(r) => Some(*r),
         Object::Integer(i) => Some(*i as f32),
         _ => None,
     }

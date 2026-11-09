@@ -12,11 +12,10 @@ use sysinfo::System;
 
 /// Resolves page worker concurrency based on machine resources or an explicit user override.
 pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
-    if let Some(val) = explicit_override {
-        if val > 0 {
+    if let Some(val) = explicit_override
+        && val > 0 {
             return val;
         }
-    }
 
     let logical_cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -64,11 +63,10 @@ pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
 /// Prevents nested concurrency (batch threads × page workers) from oversubscribing
 /// the host. Use this in `src/batch.rs` to cap total in-flight pages.
 pub fn batch_page_worker_limit(explicit_override: Option<usize>, global_workers: usize) -> usize {
-    if let Some(val) = explicit_override {
-        if val > 0 {
+    if let Some(val) = explicit_override
+        && val > 0 {
             return val.min(global_workers);
         }
-    }
     // In batch mode, each document could spawn its own page workers.
     // Cap at global_workers so total in-flight pages ≤ resolved concurrency.
     global_workers.max(1)

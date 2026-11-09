@@ -117,13 +117,12 @@ pub fn format_table_cell_with_latex(cell: &str) -> String {
 }
 
 fn strip_tag_from_inline_latex(s: &str) -> String {
-    if let Some(pos) = s.rfind(r"\tag{") {
-        if let Some(end) = s[pos..].find('}') {
+    if let Some(pos) = s.rfind(r"\tag{")
+        && let Some(end) = s[pos..].find('}') {
             let tag_content = &s[pos + 5..pos + end];
             let before = s[..pos].trim_end();
             return format!("{before} ({tag_content})");
         }
-    }
     s.to_string()
 }
 

@@ -93,8 +93,8 @@ impl IndraDetector {
         let bot_dists = &raw_slice[2 * channel_size..3 * channel_size];
 
         // 4. Decode text line bounding boxes using distance regression (upstream det_post.py)
-        let valid_h = ((scaled_h + 1) / 2) as usize;
-        let valid_w = ((scaled_w + 1) / 2) as usize;
+        let valid_h = scaled_h.div_ceil(2) as usize;
+        let valid_w = scaled_w.div_ceil(2) as usize;
         let s = 2.0f32; // OUT_STRIDE
 
         let mut visited = vec![false; valid_h * valid_w];

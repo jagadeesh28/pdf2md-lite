@@ -133,11 +133,10 @@ impl IndraVocab {
         let mut prev = self.blank_idx as i64;
 
         for &tok in tokens {
-            if tok != self.blank_idx as i64 && tok != prev {
-                if tok > 0 && (tok as usize - 1) < self.chars.len() {
+            if tok != self.blank_idx as i64 && tok != prev
+                && tok > 0 && (tok as usize - 1) < self.chars.len() {
                     result.push_str(&self.chars[tok as usize - 1]);
                 }
-            }
             prev = tok;
         }
 

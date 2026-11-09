@@ -18,18 +18,15 @@ use yolo::{LayoutClass, get_yolo_detector};
 /// Supported output image formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ImageFormat {
     #[serde(alias = "jpg")]
+    #[default]
     Jpeg,
     Png,
     Webp,
 }
 
-impl Default for ImageFormat {
-    fn default() -> Self {
-        Self::Jpeg
-    }
-}
 
 impl ImageFormat {
     pub fn extension(&self) -> &'static str {
@@ -320,7 +317,7 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                         let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
                     }
 
-                    result.picture_masks.push(rect.clone());
+                    result.picture_masks.push(rect);
                     result.pictures.push(CroppedFigure {
                         file_path,
                         filename,
@@ -341,11 +338,10 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                 let file_path = image_output_dir.join(&filename);
 
                 // Save companion raw table crop only if configured
-                if image_opts.save_table_images {
-                    if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                if image_opts.save_table_images
+                    && let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
                         let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
                     }
-                }
 
                 let fig = CroppedFigure {
                     file_path,

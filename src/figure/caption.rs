@@ -160,14 +160,14 @@ pub fn parse_caption_anchor(line: &str) -> Option<CaptionAnchor> {
     }
 
     let raw_identifier = &after_prefix[..id_end];
-    let identifier = raw_identifier.trim_end_matches(|c: char| c == '.' || c == ':' || c == '-');
+    let identifier = raw_identifier.trim_end_matches(['.', ':', '-']);
     if identifier.is_empty() {
         return None;
     }
 
     // Must contain a digit, roman numeral, or alphanumeric section key (e.g. 1, 4.2, II-A, A)
     let has_valid_id = identifier
-        .split(|c: char| c == '-' || c == '.' || c == '(' || c == ')')
+        .split(['-', '.', '(', ')'])
         .any(|part| {
             let p = part.trim();
             if p.is_empty() {

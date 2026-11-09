@@ -266,7 +266,7 @@ impl YoloLayoutDetector {
 
         for i in 0..anchors {
             let cx = raw_slice[i];
-            let cy = raw_slice[1 * anchors + i];
+            let cy = raw_slice[anchors + i];
             let w = raw_slice[2 * anchors + i];
             let h = raw_slice[3 * anchors + i];
 

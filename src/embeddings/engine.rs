@@ -142,16 +142,16 @@ impl EmbeddingEngine {
                 }
 
                 if mask_sum > 0.0 {
-                    for d in 0..hidden_dim {
-                        pooled[d] /= mask_sum;
+                    for val in &mut pooled {
+                        *val /= mask_sum;
                     }
                 }
 
                 // L2 normalization
                 let norm = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
                 let scale = if norm > 1e-12 { 1.0 / norm } else { 1.0 };
-                for d in 0..hidden_dim {
-                    pooled[d] *= scale;
+                for val in &mut pooled {
+                    *val *= scale;
                 }
 
                 all_embeddings.push(pooled);

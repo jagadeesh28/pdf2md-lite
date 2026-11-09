@@ -75,8 +75,8 @@ fn xy_cut_recursive(lines: &[TextLine], indices: &mut [usize]) -> Vec<usize> {
     // 2. In XY-Cut++, first check if a clean column gutter exists that vertically
     // separates the entire block into two or more distinct columns (no spanning boxes).
     let min_v_gap = (avg_height * 3 / 2).max(20);
-    if let Some(partitions) = find_vertical_cuts(lines, indices, min_x, max_x, min_v_gap) {
-        if partitions.len() > 1 {
+    if let Some(partitions) = find_vertical_cuts(lines, indices, min_x, max_x, min_v_gap)
+        && partitions.len() > 1 {
             let mut result = Vec::with_capacity(indices.len());
             for mut part in partitions {
                 let sub = xy_cut_recursive(lines, &mut part);
@@ -84,14 +84,13 @@ fn xy_cut_recursive(lines: &[TextLine], indices: &mut [usize]) -> Vec<usize> {
             }
             return result;
         }
-    }
 
     // 3. If no vertical column gutter splits the block (e.g. a title/banner spans across
     // columns or it is a single-column block), look for horizontal cuts (paragraphs / banners).
     // Section/banner gaps are substantially larger than inter-line gaps (>= 1.75 * avg_height).
     let min_h_gap = (avg_height * 7 / 4).max(28);
-    if let Some(partitions) = find_horizontal_cuts(lines, indices, min_y, max_y, min_h_gap) {
-        if partitions.len() > 1 {
+    if let Some(partitions) = find_horizontal_cuts(lines, indices, min_y, max_y, min_h_gap)
+        && partitions.len() > 1 {
             let mut result = Vec::with_capacity(indices.len());
             for mut part in partitions {
                 let sub = xy_cut_recursive(lines, &mut part);
@@ -99,7 +98,6 @@ fn xy_cut_recursive(lines: &[TextLine], indices: &mut [usize]) -> Vec<usize> {
             }
             return result;
         }
-    }
 
     // 4. Base case: Atomic cohesive block. Sort top-to-bottom, left-to-right.
     // Quantize vertical midpoints into row bands based on line height to ensure

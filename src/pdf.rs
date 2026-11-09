@@ -245,31 +245,26 @@ pub fn extract_pdf_metadata(pdf_path: &Path) -> DocumentMetadata {
         };
 
         if let Some(dict) = info_dict {
-            if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string) {
-                if !val.trim().is_empty() {
+            if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string)
+                && !val.trim().is_empty() {
                     meta.title = Some(val);
                 }
-            }
-            if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string) {
-                if !val.trim().is_empty() {
+            if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string)
+                && !val.trim().is_empty() {
                     meta.author = Some(val);
                 }
-            }
-            if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string) {
-                if !val.trim().is_empty() {
+            if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string)
+                && !val.trim().is_empty() {
                     meta.subject = Some(val);
                 }
-            }
-            if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string) {
-                if !val.trim().is_empty() {
+            if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string)
+                && !val.trim().is_empty() {
                     meta.keywords = Some(val);
                 }
-            }
-            if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string) {
-                if !val.trim().is_empty() {
+            if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string)
+                && !val.trim().is_empty() {
                     meta.creation_date = Some(clean_pdf_date(&val));
                 }
-            }
         }
     }
 

@@ -148,6 +148,7 @@ pub fn process_pdf_directory_with_options(
 }
 
 /// Converts a directory of PDF files with configurable quiet mode and optional resume support.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pdf_directory_full(
     input_dir: &Path,
     output_base_dir: &Path,
@@ -172,6 +173,7 @@ pub fn process_pdf_directory_full(
 }
 
 /// Converts a directory of PDF files with explicit ImageOptions, quiet mode, and resume support.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pdf_directory_with_image_options(
     input_dir: &Path,
     output_base_dir: &Path,
@@ -198,6 +200,7 @@ pub fn process_pdf_directory_with_image_options(
 }
 
 /// Converts a directory of PDF files with all configuration options including embedding generation.
+#[allow(clippy::too_many_arguments)]
 pub fn process_pdf_directory_all(
     input_dir: &Path,
     output_base_dir: &Path,
@@ -296,19 +299,17 @@ pub fn process_pdf_directory_all(
 
         // Incremental Batch Resume: If the target markdown file already exists and contains
         // valid converted content (at least 100 bytes), verify content-hash or length before skipping.
-        if resume && target_md_path.is_file() {
-            if let Ok(meta) = fs::metadata(&target_md_path) {
-                if meta.len() > 100 {
+        if resume && target_md_path.is_file()
+            && let Ok(meta) = fs::metadata(&target_md_path)
+                && meta.len() > 100 {
                     let mut should_skip = true;
                     if let Ok(existing_content) = fs::read_to_string(&target_md_path) {
                         let (existing_meta, _) = crate::markdown::parse_existing_frontmatter(&existing_content);
-                        if let Some(em) = existing_meta {
-                            if let Some(existing_sha) = em.pdf_sha256 {
-                                if let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path) {
+                        if let Some(em) = existing_meta
+                            && let Some(existing_sha) = em.pdf_sha256
+                                && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path) {
                                     should_skip = existing_sha == source_sha;
                                 }
-                            }
-                        }
                     }
 
                     if should_skip {
@@ -324,8 +325,6 @@ pub fn process_pdf_directory_all(
                         continue;
                     }
                 }
-            }
-        }
 
         let total_pages = match get_pdf_page_count(&pdf_path) {
             Ok(count) => count,

@@ -88,11 +88,10 @@ impl GlinerEngine {
         if result.date.is_none() {
             result.date = extract_publication_date(header_text);
         }
-        if result.authors.is_empty() {
-            if let Some(author) = extract_authors(header_text) {
+        if result.authors.is_empty()
+            && let Some(author) = extract_authors(header_text) {
                 result.authors.push(author);
             }
-        }
         if result.organization.is_none() {
             result.organization = extract_organization(header_text);
         }
@@ -115,15 +114,14 @@ impl GlinerEngine {
         for line in text.lines().take(30) {
             let trimmed = line.trim();
             // Check for DOI pattern
-            if result.doi.is_none() && (trimmed.contains("10.") || trimmed.to_lowercase().contains("doi:")) {
-                if let Some(pos) = trimmed.find("10.") {
+            if result.doi.is_none() && (trimmed.contains("10.") || trimmed.to_lowercase().contains("doi:"))
+                && let Some(pos) = trimmed.find("10.") {
                     let candidate = &trimmed[pos..];
                     let doi_clean = candidate.split_whitespace().next().unwrap_or("").trim_matches(&[',', ';', ')', ']'][..]);
                     if doi_clean.len() > 7 {
                         result.doi = Some(doi_clean.to_string());
                     }
                 }
-            }
 
             // Check for keywords
             if trimmed.to_lowercase().starts_with("keywords:") || trimmed.to_lowercase().starts_with("key words:") {
@@ -170,15 +168,14 @@ pub fn extract_header_metadata_fallback(header_text: &str) -> GlinerExtractionRe
     // 5. Scan lines for DOI and Keywords
     for line in header_text.lines().take(40) {
         let trimmed = line.trim();
-        if result.doi.is_none() && (trimmed.contains("10.") || trimmed.to_lowercase().contains("doi:")) {
-            if let Some(pos) = trimmed.find("10.") {
+        if result.doi.is_none() && (trimmed.contains("10.") || trimmed.to_lowercase().contains("doi:"))
+            && let Some(pos) = trimmed.find("10.") {
                 let candidate = &trimmed[pos..];
                 let doi_clean = candidate.split_whitespace().next().unwrap_or("").trim_matches(&[',', ';', ')', ']'][..]);
                 if doi_clean.len() > 7 {
                     result.doi = Some(doi_clean.to_string());
                 }
             }
-        }
         if trimmed.to_lowercase().starts_with("keywords:") || trimmed.to_lowercase().starts_with("key words:") {
             let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
             if parts.len() == 2 {
@@ -213,8 +210,8 @@ pub fn populate_metadata_from_text(text: &str, metadata: &mut crate::markdown::D
     }
 
     #[cfg(feature = "gliner-ort")]
-    if let Some(gliner) = get_gliner_engine() {
-        if let Ok(res) = gliner.extract_metadata(header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
+    if let Some(gliner) = get_gliner_engine()
+        && let Ok(res) = gliner.extract_metadata(header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
             if metadata.author.is_none() && !res.authors.is_empty() {
                 metadata.author = Some(res.authors.join(", "));
                 fields_added += 1;
@@ -248,7 +245,6 @@ pub fn populate_metadata_from_text(text: &str, metadata: &mut crate::markdown::D
                 fields_added += 1;
             }
         }
-    }
 
     // Pattern fallback
     let res = extract_header_metadata_fallback(header_slice);
@@ -305,15 +301,14 @@ pub fn extract_publication_date(text: &str) -> Option<String> {
                 let after = &upper[m_idx..];
                 for part in after.split_whitespace() {
                     let clean: String = part.chars().filter(|c| c.is_ascii_digit()).collect();
-                    if clean.len() == 4 && (clean.starts_with("19") || clean.starts_with("20")) {
-                        if let Some(y_pos) = after.find(&clean) {
+                    if clean.len() == 4 && (clean.starts_with("19") || clean.starts_with("20"))
+                        && let Some(y_pos) = after.find(&clean) {
                             let raw_date = &line[m_idx..m_idx + y_pos + clean.len()];
                             let trimmed = raw_date.trim_matches(&[' ', ',', ';', '.'][..]);
                             if !trimmed.is_empty() {
                                 return Some(trimmed.to_string());
                             }
                         }
-                    }
                 }
             }
         }
@@ -360,22 +355,21 @@ pub fn extract_authors(text: &str) -> Option<String> {
 
     // 2. Look for lines signed before Editor-in-Chief or Editor
     for (i, line) in lines.iter().enumerate().take(30) {
-        if line.eq_ignore_ascii_case("Editor-in-Chief") || line.eq_ignore_ascii_case("Editor") {
-            if i > 0 {
+        if (line.eq_ignore_ascii_case("Editor-in-Chief") || line.eq_ignore_ascii_case("Editor"))
+            && i > 0 {
                 let candidate = lines[i - 1];
                 let words: Vec<&str> = candidate.split_whitespace().collect();
                 if words.len() >= 2 && words.len() <= 4 && words.iter().all(|w| w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)) {
                     return Some(candidate.to_string());
                 }
             }
-        }
     }
 
     // 3. Look for author line immediately preceding institutional affiliation:
     let aff_keywords = ["University", "Institute", "Department", "Laboratory", "College", "Center"];
     for (i, line) in lines.iter().enumerate().take(20) {
-        if aff_keywords.iter().any(|k| line.contains(k)) {
-            if i > 0 {
+        if aff_keywords.iter().any(|k| line.contains(k))
+            && i > 0 {
                 let prev = lines[i - 1];
                 // Clean footnote marker symbols like *, †, ‡, !, digits while preserving names (e.g. John, Faeth)
                 let clean_words: Vec<String> = prev
@@ -398,7 +392,6 @@ pub fn extract_authors(text: &str) -> Option<String> {
                     }
                 }
             }
-        }
     }
 
     None
@@ -410,8 +403,8 @@ pub fn extract_organization(text: &str) -> Option<String> {
     let aff_keywords = ["University", "Institute", "Department", "Laboratory", "College", "Center", "Corporation", "Inc.", "LLC", "NASA"];
 
     for line in lines.iter().take(25) {
-        if aff_keywords.iter().any(|k| line.contains(k)) {
-            if !line.starts_with("It is") && !line.starts_with("This") && !line.starts_with("We ") {
+        if aff_keywords.iter().any(|k| line.contains(k))
+            && !line.starts_with("It is") && !line.starts_with("This") && !line.starts_with("We ") {
                 if let Some(pos) = line.find("at the ") {
                     let org = &line[pos + 7..];
                     let clean = org.split(&[',', ';', '.'][..]).next().unwrap_or(org).trim();
@@ -424,7 +417,6 @@ pub fn extract_organization(text: &str) -> Option<String> {
                     return Some(clean.to_string());
                 }
             }
-        }
     }
     None
 }

@@ -97,7 +97,7 @@ impl SlaNetEngine {
         let mean = [0.485f32, 0.456, 0.406];
         let std = [0.229f32, 0.224, 0.225];
 
-        let mut input_tensor = vec![0.0f32; 1 * 3 * 488 * 488];
+        let mut input_tensor = vec![0.0f32; 3 * 488 * 488];
         for y in 0..488 {
             for x in 0..488 {
                 let p = rgb.get_pixel(x, y);
@@ -158,7 +158,7 @@ impl SlaNetEngine {
             }
 
             if token == "<td>" || token.starts_with("<td") {
-                let x1 = loc_slice[t * 4 + 0] * orig_w as f32;
+                let x1 = loc_slice[t * 4] * orig_w as f32;
                 let y1 = loc_slice[t * 4 + 1] * orig_h as f32;
                 let x2 = loc_slice[t * 4 + 2] * orig_w as f32;
                 let y2 = loc_slice[t * 4 + 3] * orig_h as f32;
