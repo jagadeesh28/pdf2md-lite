@@ -7,7 +7,7 @@ This document summarizes all performance, AI-model, and workflow improvements im
 1. [Scope & Method](#scope--method)
 2. [Phase 0 — Measurement & Baselines](#phase-0--measurement--baselines)
 3. [Phase 1 — Performance Fixes](#phase-1--performance-fixes)
-4. [Phase 2 — AI / Embedding Models (Planned)](#phase-2--ai--embedding-models-planned)
+4. [Phase 2 — AI / Embedding Models (Specified & Planned)](#phase-2--ai--embedding-models-specified--planned)
 5. [Phase 3 — Workflow / UX (Planned)](#phase-3--workflow--ux-planned)
 6. [Verification](#verification)
 7. [Reproduction Steps](#reproduction-steps)
@@ -110,24 +110,24 @@ The improvements below target the largest measured bottlenecks first.
 
 **Expected benefit:** Faster page raster flattening (used on every page before OCR/layout).
 
-## Phase 2 — AI / Embedding Models (Planned)
+## Phase 2 — AI / Embedding Models (Specified & Planned)
 
-**Status:** Not yet started
+**Status:** Specification Complete (ADRs Recorded: [ADR 0009](docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md), [ADR 0010](docs/adr/0010-inprocess-minilm-sentence-embeddings.md))
 
-The Cargo.toml already reserves an empty `embed-models = []` feature flag for this work.
+The `Cargo.toml` reserves the `embed-models` feature flag. The architecture, models, and schemas were rigorously stress-tested and finalized:
 
-| Planned item | Rationale |
-|--------------|-----------|
-| Activate `embed-models` feature; add sentence-transformer ONNX (MiniLM-L6-v2 or bge-small-en-v1.5, INT8) | Enables semantic operations on converted notes |
-| Semantic chunking of long technical papers into note-sized chunks | Split at semantically coherent boundaries, not arbitrary character counts |
-| Duplicate / near-duplicate detection across the vault | Flag redundant conversions via cosine similarity on embeddings |
-| Topic/tag suggestion complementing GLiNER NER | Suggest `#cfd`, `#quantum-mechanics` tags from content |
-| Embedding sidecars (`*.embeddings.jsonl`) per Markdown note | RAG-ready vault for Obsidian RAG plugins |
-| Multilingual variant (bge-m3 / multilingual-e5-small) if Telugu/non-English papers are in scope | Cross-lingual alignment |
+| Finalized Specification | Decision & Technical Details |
+|-------------------------|------------------------------|
+| **Model & Runtime** | `all-MiniLM-L6-v2` (INT8 quantized, ~22 MB footprint, 384-dim dense vectors) evaluated via pure-Rust `tract-onnx` by default; optional `ort` feature acceleration. |
+| **Tokenizer** | Pure-Rust `tokenizers` crate parsing Hugging Face `tokenizer.json` for faithful WordPiece encoding and attention masks. |
+| **Semantic Chunking** | Section-Aware Chunking keyed to Markdown headings (`#`, `##`, `###`) and physical page anchors (`<!-- Page N -->`), targeting 256–512 tokens (~1200 chars) with paragraph preservation. |
+| **Vector Persistence** | Per-document `<slug>/<slug>.embeddings.jsonl` sidecars adhering to the standard RAG schema: `{"chunk_id", "page_num", "heading", "text", "embedding"}`. |
+| **Execution Trigger** | Opt-in via `--embed` during PDF conversion, plus retroactive vault pass (`pdfmd-lite --embed <vault>`) to index existing notes without PDF rasterization. |
+| **Model Provisioning** | Automatic resolution in `models/embeddings/` backed by a `--download-models` CLI provisioning command fetching INT8 weights and tokenizers from Hugging Face. |
 
 ## Phase 3 — Workflow / UX (Planned)
 
-**Status:** Not yet started
+**Status:** Planned
 
 | Planned item | Rationale |
 |--------------|-----------|
@@ -135,9 +135,8 @@ The Cargo.toml already reserves an empty `embed-models = []` feature flag for th
 | `--watch` mode for directory conversion | Re-convert on file change instead of re-running batch |
 | `--dry-run` for conversion (estimate time without writing) | Preview cost before committing to a large batch |
 | Structured logging (`tracing`) with log file option | Better observability in headless/CI runs |
-| Single-file mode (embed images as base64 into one `.md`) | Portable Obsidian notes without `_images/` sidecar folders |
-| Content-hash based idempotency (beyond `--resume` size check) | Skip re-conversion of unchanged PDFs |
-| `--download-models` provisioning command | Models are gitignored; users must manually source them today |
+| Single-file mode (`--embed-images-base64`) | Opt-in portable Obsidian notes without `_images/` sidecar folders (ADR 0009) |
+| Content-hash based idempotency (`pdf_sha256`) | Frontmatter hash verification to skip re-conversion of unchanged PDFs (ADR 0009) |
 | CI: clippy, rustfmt, MSRV check, `cargo deny` | Code quality and license compliance |
 
 ## Verification

@@ -4,7 +4,8 @@ output/
 temp/
 *.log
 .cargo/
-docs/
+docs/*
+!docs/adr/
 models
 completed/
 *.zip

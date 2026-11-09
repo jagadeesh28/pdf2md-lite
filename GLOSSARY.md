@@ -100,3 +100,27 @@ _Avoid_: Naive codeblock deletion, universal backtick stripping
 **Post-Extraction Note Formatter**:
 A unified offline document sanitization routine that unwraps spurious codeblocks, cleans legacy extraction banners, normalizes LaTeX equations/tables, and synthesizes missing YAML frontmatter properties using GLiNER neural entity extraction and transcript heuristics.
 _Avoid_: Separate cleaning scripts, external linter, blind overwriting
+
+**Embedding Sidecar**:
+A per-document JSON Lines metadata file (`<slug>.embeddings.jsonl`) placed alongside the converted Markdown note containing semantically chunked text segments, physical page coordinates, and dense vector embeddings for offline vector search and Obsidian RAG plugins.
+_Avoid_: Central vector database, frontmatter vector dump, embedded vector block
+
+**Document Content-Hash Idempotency**:
+An incremental batch skip mechanism that records the cryptographic SHA-256 hash of the input PDF directly into the output Markdown YAML frontmatter (`pdf_sha256`), bypassing re-conversion only when the source hash matches without relying on external cache databases.
+_Avoid_: External cache SQLite, mtime heuristic, filesize-only check
+
+**Embedded Base64 Image Mode**:
+An opt-in single-file output serialization mode (`--embed-images-base64`) that inlines visual figure and table raster assets directly into Markdown image tags as base64 data URIs instead of creating `<slug>_images/` asset subdirectories.
+_Avoid_: Default inline base64, raw data URL spam
+
+**Section-Aware Semantic Chunking**:
+A text partitioning strategy that segments Markdown documents along heading boundaries (`#`, `##`, `###`) and physical page demarcation anchors into coherent 256–512 token chunks while preserving paragraph integrity.
+_Avoid_: Fixed-length sliding window, arbitrary character cut, blind page chunking
+
+**Dual-Backend Embedding Engine**:
+An in-process neural sentence transformer pipeline evaluating `all-MiniLM-L6-v2` (384-dimensional dense vectors) using pure-Rust `tract-onnx` by default, with optional acceleration via `ort` (ONNX Runtime) feature gating.
+_Avoid_: External embedding service, API vector generator, cloud embedding endpoint
+
+**Retroactive Vault Embedding Pass**:
+An offline CLI execution mode (`pdfmd-lite --embed <path>`) that traverses an existing Obsidian Markdown vault, parses structural headers, generates semantic chunks, and creates or updates `<slug>.embeddings.jsonl` sidecars without re-rasterizing source PDFs.
+_Avoid_: PDF-coupled re-embedding, full conversion re-run
