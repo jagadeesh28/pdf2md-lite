@@ -249,6 +249,123 @@ flowchart TD
 
 ---
 
+### Phase 5 — Unified Desktop (Tauri v2 + MSI) & Web Application (Axum Daemon) 🖥️🌐
+
+> **Architectural Decisions**: [ADR 0013](./docs/adr/0013-tauri-axum-unified-desktop-web-architecture.md)  
+> **Status**: Planned / Specified 📋  
+> **Primary Goal**: Deliver a lightweight, high-performance native Windows desktop application with MSI installer and an embedded local web application, exposing 100% of CLI features through an intuitive multi-menu interface, split-pane inspector, and real-time streaming telemetry without cloud dependencies or Electron bloat.
+
+```mermaid
+flowchart TD
+    subgraph Frontend ["Shared UI (ui/ - React + Vite + Tailwind + KaTeX)"]
+        MenuBar["In-Window Menu Bar<br/>(File | Edit | Convert | Settings | View | Help)"]
+        Views["Dual-Mode Workspace<br/>(Batch Queue + Split-Pane Inspector)"]
+        Hook["useConversionProgress()<br/>(Unified Event Bridge)"]
+    end
+
+    subgraph Desktop ["Desktop Shell (crates/desktop - Tauri v2)"]
+        Tauri["Tauri v2 Application (WebView2)"]
+        MSI["WiX MSI Installer (Full & Slim Flavors)<br/>Program Files + Context Menu"]
+        IPC["In-Process Rust Command Invocation"]
+    end
+
+    subgraph Server ["Web Server Daemon (crates/server - Axum)"]
+        Axum["Axum Localhost HTTP Daemon (pdfmd-lite --serve)"]
+        WS["WebSocket Stream (/api/events)"]
+        REST["REST API (/api/convert, /api/dry-run)"]
+    end
+
+    subgraph Engine ["Core Engine & Storage (crates/engine & crates/cli)"]
+        Pipeline["pdfmd-lite Pipeline Orchestrator"]
+        Config["pdfmd-lite.toml (Zero Env-Vars)"]
+        Models["models/ (ONNX SIMD / ort)"]
+    end
+
+    MenuBar --> Views
+    Views --> Hook
+
+    Hook -- "Desktop Mode" --> IPC
+    IPC --> Tauri
+    Tauri --> Pipeline
+
+    Hook -- "Web Mode" --> WS
+    Hook -- "Web Mode" --> REST
+    REST --> Axum
+    WS --> Axum
+    Axum --> Pipeline
+
+    Pipeline --> Config
+    Pipeline --> Models
+    Tauri -.-> MSI
+```
+
+#### Milestone 5.1: Workspace Monorepo Restructuring & Headless Engine API
+- **Objective**: Decouple core pipeline logic into a dedicated library crate within a Cargo workspace.
+- **Tasks**:
+  1. Restructure repository into Cargo workspace:
+     - `crates/engine` (lib crate containing `pdfmd-lite` pipeline, backends, layout, OCR, embeddings).
+     - `crates/cli` (binary crate with CLI argument parser `pdfmd-lite`).
+     - `crates/server` (embedded Axum web server daemon).
+     - `crates/desktop` (Tauri v2 desktop application shell).
+  2. Implement `ProgressEmitter` trait in `crates/engine` allowing decoupled event emission (progress bars, logs, page events).
+  3. Wire CLI to consume the headless `crates/engine` crate without functional regressions.
+- **Verification**: `cargo check --all-targets` and `cargo test --all-targets` pass across the workspace.
+
+#### Milestone 5.2: Shared Single-Page Application (SPA) Frontend
+- **Objective**: Build the responsive React + Vite + Tailwind CSS interface in `ui/` with full menu bar hierarchy.
+- **Tasks**:
+  1. Initialize `ui/` with Vite, React 18/19, TypeScript, Tailwind CSS, Lucide Icons, and KaTeX.
+  2. Implement in-window menu bar with keyboard shortcuts:
+     - **File**: Open PDF(s), Open Directory (Batch), Watch Directory, Open Vault, Export Markdown, Exit.
+     - **Edit**: Format Notes (`--format-notes`), Fix LaTeX Delimiters (`--fix-latex`), Convert PNG to JPEG (`--convert-images-to-jpeg`), Clear Completed.
+     - **Convert**: Start Conversion, Dry-Run Preview (`--dry-run`), Resume Batch (`-r`), Stop/Cancel, Generate Embeddings (`--embed`), Retroactively Embed Vault.
+     - **Settings**: Language/Script (`-l`), DOM Extraction Mode (`--dom-extraction`), Figure/Image format & quality, Table crops, Inline Base64, Concurrency limit (`-j`), Logging (`--log-level`, `--log-file`).
+     - **View**: Toggle Split-Pane Inspector, Batch Queue Dashboard, Live Log Console, Theme Selector (Dark/Light/Obsidian).
+     - **Help**: Model Provisioning Manager (`--download-models`), About `pdfmd-lite`.
+  3. Implement Dual-Mode Views:
+     - **Batch Queue Dashboard**: Interactive job queue, drag-and-drop zone, ETA counter, memory budget projection.
+     - **Split-Pane Inspector**: Side-by-side view showing source rendered PDF page canvas adjacent to generated Markdown with live KaTeX math and table grids.
+  4. Create `useConversionProgress` hook abstracting Tauri IPC vs WebSocket telemetry.
+- **Verification**: Frontend builds cleanly to `ui/dist` via `npm run build`.
+
+#### Milestone 5.3: Embedded Axum Web Server Daemon (`pdfmd-lite --serve`)
+- **Objective**: Deliver in-process local web server daemon for browser execution.
+- **Tasks**:
+  1. Implement `crates/server` using `axum`, `tokio`, and `tower-http`:
+     - Embed or serve static assets from `ui/dist` via `ServeDir`.
+     - `POST /api/convert`: Initiates single or batch conversion.
+     - `POST /api/dry-run`: Returns execution plan, page counts, and memory budgets.
+     - `GET /api/events`: WebSocket stream broadcasting real-time progress, worker states, and `tracing` logs.
+     - `GET /api/config` and `PUT /api/config`: Reads and updates `pdfmd-lite.toml`.
+     - `POST /api/upload`: Handles multipart drag-and-drop file upload for browser-based ad-hoc conversion.
+  2. Add `pdfmd-lite --serve [PORT]` CLI command in `crates/cli` (default: `127.0.0.1:3000`).
+- **Verification**: End-to-end browser conversion run on `localhost:3000` via Chrome/Edge.
+
+#### Milestone 5.4: Tauri v2 Desktop Shell & Native IPC Commands
+- **Objective**: Package the desktop application with native WebView2 integration and direct Rust IPC.
+- **Tasks**:
+  1. Configure `crates/desktop` with Tauri v2 (`src-tauri` / `tauri.conf.json`).
+  2. Implement Tauri commands bridging frontend calls directly to `crates/engine`:
+     - `convert_pdf`, `dry_run`, `watch_directory`, `format_notes`, `fix_latex`.
+     - File/Folder dialog integration (`tauri-plugin-dialog`) for native Windows folder and file pickers.
+  3. Stream progress events directly to the desktop window via `app_handle.emit("conversion-progress", payload)`.
+  4. Sync settings directly to `pdfmd-lite.toml` in the application data directory.
+- **Verification**: `cargo tauri dev` launches the desktop window, opens native file dialogs, and executes conversions.
+
+#### Milestone 5.5: Windows MSI Packaging & Dual-Flavor Distribution
+- **Objective**: Generate official Windows `.msi` installers via WiX Toolset.
+- **Tasks**:
+  1. Configure WiX installer in `tauri.conf.json` under `bundle.windows.wix`:
+     - Install location: `C:\Program Files\pdfmd-lite`.
+     - Add Start Menu shortcut and Desktop icon.
+     - Register Windows Explorer right-click context menu (*"Convert with pdfmd-lite"*).
+  2. Implement Dual-Flavor packaging scripts in `scripts/package-msi.ps1`:
+     - **Full Offline MSI** (~180MB): Pre-packages `models/indra/`, `models/layout/`, and `models/embeddings/`.
+     - **Slim MSI** (~15MB): Installs binaries and triggers on-demand model download via the in-app provisioning dialog.
+- **Verification**: MSI installs cleanly on a Windows test environment, creates shortcuts, and runs offline conversions.
+
+---
+
 ---
 
 ## 4. Verification & Testing Standards for Agents

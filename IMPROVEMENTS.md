@@ -149,6 +149,18 @@ The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-pr
 | **4.3: Structured Tracing & Telemetry** | Integrate `tracing` and `tracing-subscriber` with non-flicker `indicatif` bridge, `--log-file <PATH>`, and `--log-level <LEVEL>`. |
 | **4.4: Baseline-Aware Hybrid DOM Extraction** | Analyze glyph vertical offset baseline shifts ($\Delta y$) for sub/superscripts on pristine vector PDFs with YOLO formula/picture exclusion, CMap validation, and reading-order anchor insertion. |
 
+## Phase 5 — Unified Desktop (Tauri v2 + MSI) & Web Application (Axum Daemon) (Planned)
+
+**Status:** Planned / Specified 📋 ([ADR 0013](docs/adr/0013-tauri-axum-unified-desktop-web-architecture.md))
+
+| Milestone | Key Capability & Technical Approach |
+|-----------|-------------------------------------|
+| **5.1: Workspace Monorepo Restructuring** | Decouple core pipeline into `crates/engine` library with headless `ProgressEmitter` trait, `crates/cli`, `crates/desktop`, and `crates/server`. |
+| **5.2: Shared SPA Frontend (`ui/`)** | Build responsive React + Vite + Tailwind + KaTeX UI with full in-window menu bar (`File`, `Edit`, `Convert`, `Settings`, `View`, `Help`), Batch Queue, and Split-Pane Inspector. |
+| **5.3: Embedded Axum Web Server Daemon** | In-process local daemon (`pdfmd-lite --serve [PORT]`) serving static assets, REST APIs, and WebSocket telemetry streams (`/api/events`) on `localhost`. |
+| **5.4: Tauri v2 Desktop Shell** | Native Windows WebView2 container executing engine commands in-process with OS file/folder dialogs and window event telemetry. |
+| **5.5: Windows MSI Packaging** | WiX Toolset integration generating both a Full Offline MSI (~180MB with models) and Slim MSI (~15MB with in-app provisioning) for Program Files. |
+
 ## Verification
 
 All changes compile cleanly:

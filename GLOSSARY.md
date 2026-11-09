@@ -136,3 +136,27 @@ _Avoid_: Naive stream dump, uncalibrated text extraction, blind layout OCR
 **Concurrent Neural Session Dispatch**:
 An in-process neural model execution architecture utilizing session pooling or thread-isolated model arenas to evaluate neural vision models across parallel page workers without serializing the pipeline behind a single global mutex.
 _Avoid_: Global session lock, coarse-grained mutex lock, multi-worker pipeline serialization
+
+**Tauri Application Shell**:
+A lightweight native desktop container executing Tauri v2 over the Windows WebView2 runtime that invokes the core document pipeline via in-process Rust commands with zero Node.js runtime footprint.
+_Avoid_: Electron wrapper, webview container, desktop browser bridge
+
+**Unified Web/Desktop Shell**:
+A single responsive user interface frontend built with modern web technologies that executes interchangeably inside the Tauri desktop shell (via direct IPC) or inside standard web browsers (via local Axum WebSocket and REST endpoints).
+_Avoid_: Split frontend, dual UI codebases, web-only client
+
+**Embedded Web Server Daemon**:
+A lightweight in-process HTTP and WebSocket server powered by `axum` (`pdfmd-lite --serve`) that exposes document conversion, file monitoring, and streaming progress telemetry to browser clients on `localhost`.
+_Avoid_: Cloud API backend, external microservice, node proxy server
+
+**Dual-Flavor MSI Packaging**:
+A Windows installer generation strategy utilizing WiX via Tauri to produce both a fully offline bundle (pre-packaging all ONNX model weights) and a slim installer (provisioning model weights on initial launch).
+_Avoid_: Monolithic MSI only, web-dependent installer only
+
+**Split-Pane Inspector**:
+A side-by-side interactive preview interface displaying the source rendered PDF page canvas adjacent to synthesized Obsidian Markdown with live KaTeX mathematics and structured tables.
+_Avoid_: Markdown-only preview, external PDF reader, detached viewer
+
+**Unified Event Bridge**:
+A polymorphic frontend communication layer that consumes native Tauri IPC window events on the desktop and Axum WebSocket event streams in the browser through a unified reactive telemetry hook.
+_Avoid_: Polling status checker, fragmented event handler, dual telemetry clients
