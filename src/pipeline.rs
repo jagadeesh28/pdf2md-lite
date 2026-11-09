@@ -14,7 +14,7 @@ use std::thread;
 use crate::backends::indra::{IndraEngine, IndraScript, TextLine};
 use crate::batch::sanitize_short_slug;
 use crate::concurrency::resolve_concurrency;
-use crate::figure::{self, mask_page_regions};
+use crate::figure::{self, mask_gray_regions_mut};
 use crate::markdown::{
     attach_figures_to_page_text, format_page_demarcation, normalize_latex_delimiters,
 };
@@ -744,17 +744,16 @@ fn process_single_page_image_with_doc(
         image_opts,
     )?;
 
-    // Phase 2: Canvas Masking for Pictures (eliminates hallucinated text from drawings)
-    let ocr_canvas = if !layout.picture_masks.is_empty() {
-        mask_page_regions(page_img, &layout.picture_masks)
-    } else {
-        page_img.clone()
-    };
+    // Phase 2: Convert to grayscale directly (eliminates 30 MB RGBA clone) and mask in-place (ADR 0011)
+    let mut gray_canvas = page_img.to_luma8();
+    if !layout.picture_masks.is_empty() {
+        mask_gray_regions_mut(&mut gray_canvas, &layout.picture_masks);
+    }
 
-    // Phase 3: Text OCR on the clean canvas
+    // Phase 3: Text OCR on the clean grayscale canvas
     let engine = get_indra_engine()?;
     let (ocr_text, text_lines) = engine
-        .transcribe_image_with_script(&ocr_canvas, script)
+        .transcribe_gray_with_script(&gray_canvas, script)
         .with_context(|| format!("Indra OCR failed for page {page_num}"))?;
 
     // Phase 3.1: Proximity Caption Matching for Figures

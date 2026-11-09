@@ -7,7 +7,7 @@ pub mod table;
 pub mod yolo;
 
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImage, GenericImageView, Rgba};
+use image::{DynamicImage, GenericImage, GenericImageView, GrayImage, Luma, Rgba};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -204,7 +204,33 @@ impl CroppedFigure {
     }
 }
 
+/// Masks out (whites out) rectangular regions directly on an 8-bit grayscale page canvas in-place,
+/// eliminating intermediate 32-bit RGBA buffer clones (ADR 0011).
+pub fn mask_gray_regions_mut(gray: &mut GrayImage, regions: &[FigureRect]) {
+    if regions.is_empty() {
+        return;
+    }
+
+    let (orig_w, orig_h) = gray.dimensions();
+    let margin = 4u32;
+    let white_pixel = Luma([255u8]);
+
+    for r in regions {
+        let min_x = r.x.saturating_sub(margin);
+        let min_y = r.y.saturating_sub(margin);
+        let max_x = (r.x + r.width + margin).min(orig_w);
+        let max_y = (r.y + r.height + margin).min(orig_h);
+
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                gray.put_pixel(x, y, white_pixel);
+            }
+        }
+    }
+}
+
 /// Masks out (whites out) rectangular regions on the page image with a small margin padding.
+/// Preserved for backward compatibility; prefer [`mask_gray_regions_mut`] for zero-copy in-place operations.
 pub fn mask_page_regions(page_img: &DynamicImage, regions: &[FigureRect]) -> DynamicImage {
     if regions.is_empty() {
         return page_img.clone();
@@ -562,5 +588,33 @@ mod tests {
 
         let uri_webp = encode_image_to_base64_data_uri(&dummy, ImageFormat::Webp, 80).unwrap();
         assert!(uri_webp.starts_with("data:image/webp;base64,"));
+    }
+
+    #[test]
+    fn test_mask_gray_regions_mut() {
+        // Create 20x20 black grayscale canvas
+        let mut gray = GrayImage::new(20, 20);
+        assert_eq!(gray.get_pixel(5, 5), &Luma([0u8]));
+
+        let regions = vec![FigureRect {
+            x: 5,
+            y: 5,
+            width: 5,
+            height: 5,
+        }];
+
+        // In-place mask with 4px padding
+        mask_gray_regions_mut(&mut gray, &regions);
+
+        // Center pixel should be white (255)
+        assert_eq!(gray.get_pixel(5, 5), &Luma([255u8]));
+        assert_eq!(gray.get_pixel(7, 7), &Luma([255u8]));
+
+        // Margins around (5 - 4 = 1..=13) should be white due to margin=4
+        assert_eq!(gray.get_pixel(1, 1), &Luma([255u8]));
+
+        // Pixels far outside (0, 0) or (19, 19) should remain black (0)
+        assert_eq!(gray.get_pixel(0, 0), &Luma([0u8]));
+        assert_eq!(gray.get_pixel(19, 19), &Luma([0u8]));
     }
 }

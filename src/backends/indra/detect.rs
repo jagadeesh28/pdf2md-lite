@@ -1,7 +1,7 @@
 //! Text detection model (DBNet) for Indra OCR.
 
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, GrayImage};
 use std::io::Cursor;
 use std::sync::Arc;
 use tract_onnx::prelude::*;
@@ -46,7 +46,13 @@ impl IndraDetector {
 
     /// Detects text line bounding boxes from an input page image.
     pub fn detect(&self, img: &DynamicImage) -> Result<Vec<TextBoundingBox>> {
-        let (orig_w, orig_h) = img.dimensions();
+        self.detect_gray(&img.to_luma8())
+    }
+
+    /// Detects text line bounding boxes directly from an 8-bit grayscale canvas,
+    /// avoiding redundant luma conversions and buffer copies (ADR 0011).
+    pub fn detect_gray(&self, gray: &GrayImage) -> Result<Vec<TextBoundingBox>> {
+        let (orig_w, orig_h) = gray.dimensions();
         if orig_w == 0 || orig_h == 0 {
             return Ok(Vec::new());
         }
@@ -56,9 +62,8 @@ impl IndraDetector {
         let scaled_w = ((orig_w as f32 * scale).round() as u32).clamp(1, self.target_side as u32);
         let scaled_h = ((orig_h as f32 * scale).round() as u32).clamp(1, self.target_side as u32);
 
-        let gray = img.to_luma8();
         let resized = image::imageops::resize(
-            &gray,
+            gray,
             scaled_w,
             scaled_h,
             image::imageops::FilterType::Triangle,

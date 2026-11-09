@@ -208,16 +208,16 @@ flowchart TD
 ### Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction 🚀
 
 > **Architectural Decisions**: [ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md) & [ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md)  
-> **Status**: Planned / Ready for Implementation  
+> **Status**: In Progress  
 > **Primary Goal**: Deliver maximum multi-core CPU throughput, zero memory duplication churn, production observability, and 5×–10× faster digital text extraction without compromising mathematical fidelity.
 
-#### Milestone 4.1: In-Place Grayscale Canvas Masking ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md))
+#### Milestone 4.1: In-Place Grayscale Canvas Masking ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md)) ✅
 - **Objective**: Eliminate intermediate 30 MB RGBA deep clones per page.
 - **Tasks**:
-  1. Replace `mask_page_regions(page_img: &DynamicImage, ...)` with `pub fn mask_gray_regions_mut(gray: &mut GrayImage, regions: &[FigureRect])` in `src/figure/mod.rs`.
-  2. In `src/pipeline.rs`, render or convert the page to `GrayImage` once, and apply visual masking in-place directly on grayscale bytes.
-  3. Ensure zero unnecessary buffer clones during page preprocessing.
-- **Verification**: Unit tests verifying in-place masking preserves padding margins and passes all pipeline tests without regressions.
+  1. Implemented `pub fn mask_gray_regions_mut(gray: &mut GrayImage, regions: &[FigureRect])` in `src/figure/mod.rs` with unit tests for bounds padding and clamping.
+  2. Implemented `detect_gray` in `src/backends/indra/detect.rs` and `transcribe_gray_with_script` in `src/backends/indra/engine.rs` to process grayscale canvases directly.
+  3. In `src/pipeline.rs`, convert `page_img.to_luma8()` directly once and apply in-place visual masking, eliminating ~50 MB of transient buffer clones per page.
+- **Verification**: Verified via `test_mask_gray_regions_mut` and the entire 89-test suite.
 
 #### Milestone 4.2: Fine-Grained RapidLaTeXOCR Session Mutexing ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md))
 - **Objective**: Eliminate cross-worker thread freezes during autoregressive equation decoding.
