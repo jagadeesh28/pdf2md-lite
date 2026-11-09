@@ -162,18 +162,19 @@ flowchart TD
 
 ### Phase 3 — Workflow, Operational Hardening & UX 🛠️
 
-> **Status**: Planned (Dependencies: Phase 2 completed)  
+> **Status**: In Progress  
 > **Primary Goal**: Enhance operational reliability, developer ergonomics, and vault synchronization.
 
-#### Milestone 3.1: Cryptographic Content-Hash Idempotency ([ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md))
+#### Milestone 3.1: Cryptographic Content-Hash Idempotency ([ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md)) ✅
 - Compute SHA-256 hash of source PDF during batch traversal.
 - Store `pdf_sha256: "<hash>"` in note YAML frontmatter.
 - Batch resume checks `pdf_sha256` in existing `.md` before reading or rasterizing pages, achieving 100% deterministic, stateless idempotency.
 
-#### Milestone 3.2: Opt-In Single-File Base64 Mode ([ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md))
-- Add `--embed-images-base64` CLI flag.
-- When enabled, encode image crops into `data:image/jpeg;base64,...` data URIs directly within Markdown image links, skipping the creation of `<slug>_images/` asset directories.
-- Keep `<slug>_images/` disk directory layout as the default per [ADR 0004](./docs/adr/0004-short-slug-batch-directory-layout.md).
+#### Milestone 3.2: Opt-In Single-File Base64 Mode ([ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md)) ✅
+- Added `--embed-images-base64` / `--base64-images` CLI flag and `AppConfig.embed_images_base64`.
+- When enabled, encodes image crops into `data:image/jpeg;base64,...` data URIs directly within Markdown image links, skipping the creation of `<slug>_images/` asset directories.
+- Preserves standard Markdown links and shields base64 data URIs from wiki-link rewriting during note formatting passes.
+- Kept `<slug>/<slug>_images/` disk directory layout as the default per [ADR 0004](./docs/adr/0004-short-slug-batch-directory-layout.md).
 
 #### Milestone 3.3: Rich Batch Progress & ETA Indicators
 - Integrate `indicatif` progress bar for multi-document batch runs:

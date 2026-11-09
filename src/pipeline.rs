@@ -412,12 +412,14 @@ where
 {
     validate_page_range(begin_page, end_page)?;
 
-    fs::create_dir_all(image_output_dir).with_context(|| {
-        format!(
-            "failed to create image output directory {}",
-            image_output_dir.display()
-        )
-    })?;
+    if !image_opts.embed_base64 {
+        fs::create_dir_all(image_output_dir).with_context(|| {
+            format!(
+                "failed to create image output directory {}",
+                image_output_dir.display()
+            )
+        })?;
+    }
 
     let pdf_bytes = fs::read(input_path).ok();
     let pdf_pages = pdf_bytes
@@ -987,11 +989,16 @@ fn process_single_page_image_with_doc(
 
         if let Some(table_md) = table_md_opt {
             let callout = if image_opts.save_table_images {
-                let dir_name = fig.images_dir_name();
+                let img_tag = if let Some(ref data_uri) = fig.data_uri {
+                    let alt = fig.caption.as_deref().unwrap_or(&fig.figure_label);
+                    format!("![{}]({data_uri})", alt.replace('\n', " "))
+                } else {
+                    let dir_name = fig.images_dir_name();
+                    format!("![[{dir_name}/{}]]", fig.filename)
+                };
                 Some(format!(
-                    "> [!table]- Original Crop: {}\n> ![[{dir_name}/{}]]\n> *{}*",
+                    "> [!table]- Original Crop: {}\n> {img_tag}\n> *{}*",
                     fig.figure_label,
-                    fig.filename,
                     fig.caption.as_deref().unwrap_or(&fig.figure_label)
                 ))
             } else {
@@ -1034,5 +1041,26 @@ mod tests {
         assert!(md.contains("> [!WARNING] Page 7 Processing Incomplete"));
         assert!(md.contains("### Recovered Stream Text"));
         assert!(md.contains("Fallback extracted stream text on page 7."));
+    }
+
+    #[test]
+    fn test_pipeline_image_options_embed_base64_skips_image_dir_creation() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let image_dir = temp_dir.path().join("sub_images");
+        let dummy_page = image::DynamicImage::new_rgb8(100, 100);
+
+        let image_opts = crate::figure::ImageOptions::default().with_embed_base64(true);
+        let res = crate::figure::analyze_page_layout_image_with_doc_and_options(
+            None,
+            None,
+            &dummy_page,
+            &image_dir,
+            1,
+            image_opts,
+        );
+
+        assert!(res.is_ok());
+        // Since embed_base64 is active, image_dir should NOT have been created on disk
+        assert!(!image_dir.exists());
     }
 }

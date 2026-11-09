@@ -53,6 +53,7 @@ pub struct ImageOptions {
     pub format: ImageFormat,
     pub quality: u8,
     pub save_table_images: bool,
+    pub embed_base64: bool,
 }
 
 impl Default for ImageOptions {
@@ -61,6 +62,7 @@ impl Default for ImageOptions {
             format: ImageFormat::Jpeg,
             quality: 80,
             save_table_images: false,
+            embed_base64: false,
         }
     }
 }
@@ -71,7 +73,13 @@ impl ImageOptions {
             format,
             quality: quality.clamp(1, 100),
             save_table_images,
+            embed_base64: false,
         }
+    }
+
+    pub fn with_embed_base64(mut self, embed_base64: bool) -> Self {
+        self.embed_base64 = embed_base64;
+        self
     }
 }
 
@@ -131,6 +139,37 @@ pub fn save_image_with_format(
     Ok(())
 }
 
+/// Encodes a DynamicImage into a standard base64 data URI (e.g., `data:image/jpeg;base64,...`).
+pub fn encode_image_to_base64_data_uri(
+    img: &DynamicImage,
+    format: ImageFormat,
+    quality: u8,
+) -> Result<String> {
+    use base64::Engine;
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    let mime = match format {
+        ImageFormat::Jpeg => {
+            let rgb = flatten_to_rgb(img);
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+            encoder.encode_image(&rgb)
+                .context("Failed to encode JPEG for base64 data URI")?;
+            "image/jpeg"
+        }
+        ImageFormat::Png => {
+            img.write_to(&mut buffer, image::ImageFormat::Png)
+                .context("Failed to encode PNG for base64 data URI")?;
+            "image/png"
+        }
+        ImageFormat::Webp => {
+            img.write_to(&mut buffer, image::ImageFormat::WebP)
+                .context("Failed to encode WebP for base64 data URI")?;
+            "image/webp"
+        }
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
 /// A visual figure or table crop extracted from a document page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CroppedFigure {
@@ -144,6 +183,8 @@ pub struct CroppedFigure {
     pub width: u32,
     pub height: u32,
     pub is_table: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_uri: Option<String>,
 }
 
 impl CroppedFigure {
@@ -236,12 +277,14 @@ pub fn analyze_page_layout_image_with_doc_and_options(
     page_num: usize,
     image_opts: ImageOptions,
 ) -> Result<PageLayoutResult> {
-    fs::create_dir_all(image_output_dir).with_context(|| {
-        format!(
-            "Failed to create image output directory {:?}",
-            image_output_dir
-        )
-    })?;
+    if !image_opts.embed_base64 {
+        fs::create_dir_all(image_output_dir).with_context(|| {
+            format!(
+                "Failed to create image output directory {:?}",
+                image_output_dir
+            )
+        })?;
+    }
 
     let (page_w, page_h) = page_img.dimensions();
     let mut result = PageLayoutResult::default();
@@ -263,7 +306,13 @@ pub fn analyze_page_layout_image_with_doc_and_options(
             let rect = caption::FigureRect::from_stream_figure(&sf);
             let filename = format!("page_{page_num}_stream_{}.{ext}", idx + 1);
             let file_path = image_output_dir.join(&filename);
-            let _ = save_image_with_format(&sf.image, &file_path, image_opts.format, image_opts.quality);
+
+            let data_uri = if image_opts.embed_base64 {
+                encode_image_to_base64_data_uri(&sf.image, image_opts.format, image_opts.quality).ok()
+            } else {
+                let _ = save_image_with_format(&sf.image, &file_path, image_opts.format, image_opts.quality);
+                None
+            };
 
             result.picture_masks.push(rect);
             result.pictures.push(CroppedFigure {
@@ -277,6 +326,7 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                 width: rect.width,
                 height: rect.height,
                 is_table: false,
+                data_uri,
             });
         }
     }
@@ -313,9 +363,16 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                     let file_path = image_output_dir.join(&filename);
 
                     // Crop raw unenhanced image directly from page canvas
-                    if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
-                        let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
-                    }
+                    let data_uri = if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                        if image_opts.embed_base64 {
+                            encode_image_to_base64_data_uri(&cropped, image_opts.format, image_opts.quality).ok()
+                        } else {
+                            let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                     result.picture_masks.push(rect);
                     result.pictures.push(CroppedFigure {
@@ -329,6 +386,7 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                         width: b.width,
                         height: b.height,
                         is_table: false,
+                        data_uri,
                     });
                 }
             }
@@ -338,10 +396,17 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                 let file_path = image_output_dir.join(&filename);
 
                 // Save companion raw table crop only if configured
-                if image_opts.save_table_images
+                let data_uri = if image_opts.save_table_images
                     && let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
-                        let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
-                    }
+                        if image_opts.embed_base64 {
+                            encode_image_to_base64_data_uri(&cropped, image_opts.format, image_opts.quality).ok()
+                        } else {
+                            let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                 let fig = CroppedFigure {
                     file_path,
@@ -354,6 +419,7 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                     width: b.width,
                     height: b.height,
                     is_table: true,
+                    data_uri,
                 };
                 result.tables.push((rect, fig));
             }
@@ -438,6 +504,20 @@ mod tests {
         save_image_with_format(&dummy, &target, ImageFormat::Jpeg, 80).unwrap();
         assert!(target.exists());
         assert!(fs::metadata(&target).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_encode_image_to_base64_data_uri() {
+        let dummy = DynamicImage::new_rgba8(10, 10);
+        let uri_jpeg = encode_image_to_base64_data_uri(&dummy, ImageFormat::Jpeg, 80).unwrap();
+        assert!(uri_jpeg.starts_with("data:image/jpeg;base64,"));
+        assert!(uri_jpeg.len() > 30);
+
+        let uri_png = encode_image_to_base64_data_uri(&dummy, ImageFormat::Png, 80).unwrap();
+        assert!(uri_png.starts_with("data:image/png;base64,"));
+
+        let uri_webp = encode_image_to_base64_data_uri(&dummy, ImageFormat::Webp, 80).unwrap();
+        assert!(uri_webp.starts_with("data:image/webp;base64,"));
     }
 }
 

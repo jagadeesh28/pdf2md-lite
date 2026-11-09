@@ -46,6 +46,8 @@ OPTIONS:
                                 and rewrite all Obsidian wiki-links (![[...png]] -> ![[...jpg]])
     --image-format <FMT>        Extracted image format: jpeg (default), png, webp
     --image-quality <1-100>     Image compression quality for JPEG/WebP (default: 80)
+    --embed-images-base64       Inline extracted figures directly as base64 data URIs
+                                inside Markdown without creating an images folder
     --save-table-images         Save companion crop images for tables (default: false)
     --no-table-images           Skip saving companion crop images for tables
     --format-notes, --fix-notes, --clean-notes <PATH>
@@ -651,6 +653,7 @@ pub fn run() {
     let mut image_format: Option<ImageFormat> = None;
     let mut image_quality: Option<u8> = None;
     let mut save_table_images: Option<bool> = None;
+    let mut embed_images_base64 = false;
     let mut quiet = false;
     let mut resume = false;
     let mut embed = false;
@@ -716,6 +719,8 @@ pub fn run() {
             save_table_images = Some(true);
         } else if arg == "--no-table-images" || arg == "--skip-table-images" {
             save_table_images = Some(false);
+        } else if arg == "--embed-images-base64" || arg == "--base64-images" {
+            embed_images_base64 = true;
         } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
             quiet = true;
         } else if arg == "-r" || arg == "--resume" {
@@ -832,11 +837,14 @@ pub fn run() {
         .or(config.save_table_images)
         .unwrap_or(false);
 
+    let final_embed_base64 = embed_images_base64
+        || config.embed_images_base64.unwrap_or(false);
+
     let image_opts = ImageOptions::new(
         final_image_format,
         final_image_quality,
         final_save_table_images,
-    );
+    ).with_embed_base64(final_embed_base64);
 
     if input.is_dir() {
         let page_range = match (begin_page, end_page) {

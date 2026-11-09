@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub image_format: Option<String>,
     pub image_quality: Option<u8>,
     pub save_table_images: Option<bool>,
+    pub embed_images_base64: Option<bool>,
 }
 
 impl AppConfig {

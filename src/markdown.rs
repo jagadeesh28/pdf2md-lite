@@ -160,10 +160,15 @@ pub fn render_markdown(result: &PdfExtractionResult) -> String {
                 }
                 _ => fig.figure_label.clone(),
             };
-            let dir_name = fig.images_dir_name();
+            let image_link = if let Some(ref data_uri) = fig.data_uri {
+                let alt = fig.caption.as_deref().unwrap_or(&fig.figure_label);
+                format!("![{}]({data_uri})", alt.replace('\n', " "))
+            } else {
+                let dir_name = fig.images_dir_name();
+                format!("![[{dir_name}/{}]]", fig.filename)
+            };
             output.push_str(&format!(
-                "![[{}/{}]]\n*{}*\n\n",
-                dir_name, fig.filename, caption_text
+                "{image_link}\n*{caption_text}*\n\n"
             ));
         }
     } else if !result.images.is_empty() {
@@ -189,9 +194,14 @@ pub fn attach_figures_to_page_text(page_text: &str, figures: &[CroppedFigure]) -
     let mut result = page_text.to_string();
 
     for fig in figures {
-        let dir_name = fig.images_dir_name();
-        let image_link = format!("![[{dir_name}/{}]]", fig.filename);
-        if result.contains(&image_link) || result.contains(&fig.filename) {
+        let image_link = if let Some(ref data_uri) = fig.data_uri {
+            let alt = fig.caption.as_deref().unwrap_or(&fig.figure_label);
+            format!("![{}]({data_uri})", alt.replace('\n', " "))
+        } else {
+            let dir_name = fig.images_dir_name();
+            format!("![[{dir_name}/{}]]", fig.filename)
+        };
+        if result.contains(&image_link) || (!fig.filename.is_empty() && result.contains(&fig.filename)) {
             continue;
         }
 
@@ -696,6 +706,15 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
                                     };
 
                                     if !location.is_empty() {
+                                        if location.starts_with("data:")
+                                            || location.starts_with("http://")
+                                            || location.starts_with("https://")
+                                        {
+                                            let current_idx = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+                                            out.push_str(&line[i..current_idx]);
+                                            continue;
+                                        }
+
                                         let clean_location = location.replace('\\', "/");
                                         let final_location = clean_location.strip_prefix("./").unwrap_or(&clean_location);
                                         out.push_str("![[");
@@ -861,7 +880,7 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
                                 (trimmed_url, "")
                             };
 
-                            if url_part.to_ascii_lowercase().ends_with(".png") {
+                            if !url_part.starts_with("data:") && url_part.to_ascii_lowercase().ends_with(".png") {
                                 let new_url = format!("{}.jpg", &url_part[..url_part.len() - 4]);
                                 out.push_str("![");
                                 out.push_str(alt);
@@ -1931,6 +1950,7 @@ mod tests {
                 width: 100,
                 height: 100,
                 is_table: false,
+                data_uri: None,
             }],
         };
 
@@ -1956,6 +1976,7 @@ mod tests {
                 width: 100,
                 height: 100,
                 is_table: false,
+                data_uri: None,
             }],
         };
 
@@ -1980,6 +2001,7 @@ mod tests {
             width: 100,
             height: 100,
             is_table: false,
+            data_uri: None,
         }];
 
         // Case 1: Figure label is present in page text
@@ -2014,6 +2036,7 @@ mod tests {
             width: 100,
             height: 100,
             is_table: false,
+            data_uri: None,
         }];
 
         assert_eq!(figures[0].images_dir_name(), "propulsion_report_images");
@@ -2029,6 +2052,37 @@ mod tests {
         };
         let rendered = render_markdown(&result);
         assert!(rendered.contains("![[propulsion_report_images/Figure-2-3.png]]"));
+    }
+
+    #[test]
+    fn test_attach_figures_with_base64_data_uri() {
+        let dummy_data_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD";
+        let figures = vec![CroppedFigure {
+            figure_label: "Figure 1.1".to_string(),
+            caption: Some("Combustor Cross Section".to_string()),
+            filename: "page_1_fig_1.jpg".to_string(),
+            file_path: PathBuf::from("output/doc_images/page_1_fig_1.jpg"),
+            page_num: 1,
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            is_table: false,
+            data_uri: Some(dummy_data_uri.to_string()),
+        }];
+
+        let page_text = "See Figure 1.1 for internal architecture.";
+        let attached = attach_figures_to_page_text(page_text, &figures);
+        assert!(attached.contains(&format!("![Combustor Cross Section]({dummy_data_uri})")));
+        assert!(!attached.contains("![["));
+
+        let result = PdfExtractionResult {
+            text: String::new(),
+            images: vec![],
+            figures,
+        };
+        let rendered = render_markdown(&result);
+        assert!(rendered.contains(&format!("![Combustor Cross Section]({dummy_data_uri})")));
     }
 
     #[test]
@@ -2366,6 +2420,15 @@ Inline code: `![Ignore](images/code.png)`
         let (output, count) = convert_figure_links_to_obsidian(input);
         assert_eq!(count, 0);
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_convert_figure_links_preserves_base64_data_uris() {
+        let input = "Base64 image: ![Figure 1](data:image/jpeg;base64,/9j/4AAQSkZJRg==)\n*Figure 1*";
+        let (output, count) = convert_figure_links_to_obsidian(input);
+        assert_eq!(count, 0);
+        assert_eq!(output, input);
+        assert!(!output.contains("![[data:"));
     }
 
     #[test]
