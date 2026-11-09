@@ -1,0 +1,56 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="pdfmd-lite"
+           Manufacturer="pdfmd-lite Contributors"
+           Version="0.1.0"
+           UpgradeCode="5B7316B7-4DE3-4EFA-9CF7-512E4A7D0D8F">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of pdfmd-lite is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="pdfmd-lite">
+        <!-- CLI Executable & PATH -->
+        <Component Id="CliExecutable" Guid="3635ACEE-91C5-4309-8C9B-60C9F0635489">
+          <File Id="PdfmdLiteCli" Source="$(var.SourceDir)\pdfmd-lite.exe" KeyPath="yes" />
+          <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+        </Component>
+
+        <!-- Desktop GUI Executable & Shortcuts -->
+        <Component Id="DesktopExecutable" Guid="6F01103A-F0A6-4FA8-AE5A-34BE8B51E281">
+          <File Id="PdfmdLiteDesktop" Source="$(var.SourceDir)\pdfmd-lite-desktop.exe" KeyPath="yes">
+            <Shortcut Id="DesktopShortcut"
+                      Directory="DesktopFolder"
+                      Name="pdfmd-lite"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Advertise="yes" />
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="pdfmd-lite"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Advertise="yes" />
+          </File>
+        </Component>
+
+        <!-- Windows File Explorer Right-Click Context Menu for PDFs -->
+        <Component Id="ContextMenuRegistration" Guid="7293E3FE-49AC-4A2D-A144-C3FF7F27CE23">
+          <RegistryKey Root="HKCR" Key="SystemFileAssociations\.pdf\shell\pdfmdlite">
+            <RegistryValue Type="string" Value="Convert to Markdown with pdfmd-lite" KeyPath="yes" />
+            <RegistryValue Type="string" Name="Icon" Value="[INSTALLFOLDER]pdfmd-lite-desktop.exe" />
+            <RegistryKey Key="command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]pdfmd-lite.exe&quot; -i &quot;%1&quot;" />
+            </RegistryKey>
+          </RegistryKey>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="MainApplication" Title="pdfmd-lite Application" Level="1">
+      <ComponentRef Id="CliExecutable" />
+      <ComponentRef Id="DesktopExecutable" />
+      <ComponentRef Id="ContextMenuRegistration" />
+    </Feature>
+  </Package>
+</Wix>

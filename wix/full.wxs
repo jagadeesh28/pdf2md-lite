@@ -1,0 +1,92 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="pdfmd-lite (Full Offline Edition)"
+           Manufacturer="pdfmd-lite Contributors"
+           Version="0.1.0"
+           UpgradeCode="7E92A028-118E-4543-A780-32770D6C635B">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of pdfmd-lite is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="pdfmd-lite">
+        <!-- CLI Executable & PATH -->
+        <Component Id="CliExecutable" Guid="8419F30C-527E-4F39-A173-19541F7F4810">
+          <File Id="PdfmdLiteCli" Source="$(var.SourceDir)\pdfmd-lite.exe" KeyPath="yes" />
+          <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+        </Component>
+
+        <!-- Desktop GUI Executable & Shortcuts -->
+        <Component Id="DesktopExecutable" Guid="3E46C15D-1752-4F15-AE82-FAAA31A3E629">
+          <File Id="PdfmdLiteDesktop" Source="$(var.SourceDir)\pdfmd-lite-desktop.exe" KeyPath="yes">
+            <Shortcut Id="DesktopShortcut"
+                      Directory="DesktopFolder"
+                      Name="pdfmd-lite"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Advertise="yes" />
+            <Shortcut Id="StartMenuShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="pdfmd-lite"
+                      WorkingDirectory="INSTALLFOLDER"
+                      Advertise="yes" />
+          </File>
+        </Component>
+
+        <!-- Windows File Explorer Right-Click Context Menu for PDFs -->
+        <Component Id="ContextMenuRegistration" Guid="8C53C588-EEA5-4767-8F19-C0BFF523BF94">
+          <RegistryKey Root="HKCR" Key="SystemFileAssociations\.pdf\shell\pdfmdlite">
+            <RegistryValue Type="string" Value="Convert to Markdown with pdfmd-lite" KeyPath="yes" />
+            <RegistryValue Type="string" Name="Icon" Value="[INSTALLFOLDER]pdfmd-lite-desktop.exe" />
+            <RegistryKey Key="command">
+              <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]pdfmd-lite.exe&quot; -i &quot;%1&quot;" />
+            </RegistryKey>
+          </RegistryKey>
+        </Component>
+
+        <!-- Models Directory -->
+        <Directory Id="ModelsDir" Name="models">
+          <!-- models/indra -->
+          <Directory Id="ModelsIndraDir" Name="indra">
+            <Component Id="IndraModels" Guid="6E04A462-5205-4DE8-9DC0-977FBC625A99">
+              <File Id="IndraDet" Source="$(var.ModelsDir)\indra\det.onnx" KeyPath="yes" />
+              <File Id="IndraRec" Source="$(var.ModelsDir)\indra\rec.onnx" />
+              <File Id="IndraRecWorld" Source="$(var.ModelsDir)\indra\rec_world.onnx" />
+              <File Id="IndraOrder" Source="$(var.ModelsDir)\indra\order.onnx" />
+              <File Id="IndraMeta" Source="$(var.ModelsDir)\indra\meta.json" />
+              <File Id="IndraConfig" Source="$(var.ModelsDir)\indra\config.json" />
+            </Component>
+          </Directory>
+
+          <!-- models/latex -->
+          <Directory Id="ModelsLatexDir" Name="latex">
+            <Component Id="LatexModels" Guid="4FD5E973-22B2-4A7B-BDCF-C7915B1E51E2">
+              <File Id="LatexEncoder" Source="$(var.ModelsDir)\latex\encoder.onnx" KeyPath="yes" />
+              <File Id="LatexDecoder" Source="$(var.ModelsDir)\latex\decoder.onnx" />
+              <File Id="LatexTokenizer" Source="$(var.ModelsDir)\latex\tokenizer.json" />
+            </Component>
+          </Directory>
+
+          <!-- models/layout -->
+          <Directory Id="ModelsLayoutDir" Name="layout">
+            <Component Id="LayoutModels" Guid="89E043B7-F580-4D56-8A5E-49FF815469AA">
+              <File Id="LayoutYolo" Source="$(var.ModelsDir)\layout\yolov8n-doclaynet.onnx" KeyPath="yes" />
+              <File Id="LayoutSlanet" Source="$(var.ModelsDir)\layout\slanet.onnx" />
+              <File Id="LayoutTableDict" Source="$(var.ModelsDir)\layout\table_structure_dict.txt" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="MainApplication" Title="pdfmd-lite Application" Level="1">
+      <ComponentRef Id="CliExecutable" />
+      <ComponentRef Id="DesktopExecutable" />
+      <ComponentRef Id="ContextMenuRegistration" />
+      <ComponentRef Id="IndraModels" />
+      <ComponentRef Id="LatexModels" />
+      <ComponentRef Id="LayoutModels" />
+    </Feature>
+  </Package>
+</Wix>

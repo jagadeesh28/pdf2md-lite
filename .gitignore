@@ -8,6 +8,8 @@ docs/*
 !docs/adr/
 models
 completed/
+dist/
+*.msi
 *.zip
 check_output.txt
 outputlog.txt
