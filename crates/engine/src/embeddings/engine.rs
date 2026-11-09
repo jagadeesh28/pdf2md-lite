@@ -205,6 +205,8 @@ pub fn resolve_embedding_paths(custom_dir: Option<&Path>) -> Result<(PathBuf, Pa
         custom_dir.map(PathBuf::from),
         Some(PathBuf::from("models/embeddings")),
         Some(PathBuf::from("models")),
+        Some(PathBuf::from("../../models/embeddings")),
+        Some(PathBuf::from("../../models")),
     ];
 
     for dir_opt in candidate_dirs.into_iter().flatten() {

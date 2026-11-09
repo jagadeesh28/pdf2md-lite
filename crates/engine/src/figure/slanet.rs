@@ -31,15 +31,8 @@ static SLANET_ENGINE: std::sync::OnceLock<Option<Arc<SlaNetEngine>>> = std::sync
 #[cfg(feature = "slanet-ort")]
 pub fn get_slanet_engine() -> Option<Arc<SlaNetEngine>> {
     let engine = SLANET_ENGINE.get_or_init(|| {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("layout")
-            .join("slanet.onnx");
-        let dict_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("layout")
-            .join("table_structure_dict.txt");
+        let model_path = crate::resolve_model_path("models/layout/slanet.onnx");
+        let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
         if model_path.exists() && dict_path.exists() {
             SlaNetEngine::new(&model_path, &dict_path)
                 .ok()
@@ -282,15 +275,8 @@ mod tests {
     #[test]
     #[cfg(feature = "slanet-ort")]
     fn test_slanet_load_and_dummy_predict() -> anyhow::Result<()> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("layout")
-            .join("slanet.onnx");
-        let dict_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("layout")
-            .join("table_structure_dict.txt");
+        let model_path = crate::resolve_model_path("models/layout/slanet.onnx");
+        let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
 
         if !model_path.exists() || !dict_path.exists() {
             println!("SLANet models not found, skipping");

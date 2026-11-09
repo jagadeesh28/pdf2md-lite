@@ -5,11 +5,7 @@ mod tests {
 
     #[test]
     fn test_det_with_concrete_shape() -> anyhow::Result<()> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("det.onnx");
+        let path = crate::resolve_model_path("models/indra/det.onnx");
         let mut file = File::open(&path)?;
 
         let _model = tract_onnx::onnx()
@@ -27,11 +23,7 @@ mod tests {
 
     #[test]
     fn test_rec_with_concrete_shape() -> anyhow::Result<()> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("rec.onnx");
+        let path = crate::resolve_model_path("models/indra/rec.onnx");
         let mut file = File::open(&path)?;
 
         let _model = tract_onnx::onnx()
@@ -50,11 +42,7 @@ mod tests {
 
     #[test]
     fn test_rec_world_with_concrete_shape() -> anyhow::Result<()> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("rec_world.onnx");
+        let path = crate::resolve_model_path("models/indra/rec_world.onnx");
         if !path.exists() {
             return Ok(());
         }

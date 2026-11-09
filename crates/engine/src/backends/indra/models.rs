@@ -7,27 +7,27 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "embed-models")]
 const EMBEDDED_DET: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/indra/det.onnx"
+    "/../../models/indra/det.onnx"
 ));
 #[cfg(feature = "embed-models")]
 const EMBEDDED_REC: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/indra/rec.onnx"
+    "/../../models/indra/rec.onnx"
 ));
 #[cfg(feature = "embed-models")]
 const EMBEDDED_REC_WORLD: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/indra/rec_world.onnx"
+    "/../../models/indra/rec_world.onnx"
 ));
 #[cfg(feature = "embed-models")]
 const EMBEDDED_ORDER: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/indra/order.onnx"
+    "/../../models/indra/order.onnx"
 ));
 #[cfg(feature = "embed-models")]
 const EMBEDDED_META: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/indra/meta.json"
+    "/../../models/indra/meta.json"
 ));
 
 /// Provides raw ONNX bytes and metadata for the Indra OCR pipeline.
@@ -57,6 +57,15 @@ impl IndraModelSource {
         if local_path.exists() {
             return fs::read(&local_path)
                 .with_context(|| format!("Failed to read local weight file at {:?}", local_path));
+        }
+        let workspace_path = Path::new("../../models").join("indra").join(file_name);
+        if workspace_path.exists() {
+            return fs::read(&workspace_path).with_context(|| {
+                format!(
+                    "Failed to read workspace weight file at {:?}",
+                    workspace_path
+                )
+            });
         }
 
         // 3. Check embedded models if enabled

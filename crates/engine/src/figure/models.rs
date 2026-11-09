@@ -55,7 +55,7 @@ pub fn get_custom_layout_path() -> Option<PathBuf> {
 #[cfg(feature = "embed-models")]
 const EMBEDDED_LAYOUT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/models/layout/yolov8n-doclaynet.onnx"
+    "/../../models/layout/yolov8n-doclaynet.onnx"
 ));
 
 /// Provides raw ONNX bytes for the YOLO Document Layout Engine.
@@ -85,6 +85,11 @@ impl LayoutModelSource {
         if local_path.exists() {
             return fs::read(local_path)
                 .with_context(|| format!("Failed to read layout model at {:?}", local_path));
+        }
+        let workspace_path = Path::new("../../models/layout/yolov8n-doclaynet.onnx");
+        if workspace_path.exists() {
+            return fs::read(workspace_path)
+                .with_context(|| format!("Failed to read layout model at {:?}", workspace_path));
         }
 
         // 3. Fallback to embedded static binary slice if feature = "embed-models" is active

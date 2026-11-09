@@ -201,11 +201,7 @@ mod tests {
 
     #[test]
     fn parses_meta_json_vocab() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("meta.json");
+        let meta_path = crate::resolve_model_path("models/indra/meta.json");
         let bytes = std::fs::read(meta_path).unwrap();
         let vocab = IndraVocab::from_json_bytes(&bytes).unwrap();
         assert_eq!(vocab.blank_idx, 0);
@@ -216,11 +212,7 @@ mod tests {
 
     #[test]
     fn parses_meta_json_world_vocab_and_telugu() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("meta.json");
+        let meta_path = crate::resolve_model_path("models/indra/meta.json");
         let bytes = std::fs::read(meta_path).unwrap();
         let world_vocab = IndraVocab::from_world_json_bytes(&bytes).unwrap();
         assert_eq!(world_vocab.blank_idx, 0);

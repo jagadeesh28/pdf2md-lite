@@ -1,6 +1,5 @@
 pub mod backends;
 pub mod batch;
-pub mod cli;
 pub mod concurrency;
 pub mod config;
 pub mod embeddings;
@@ -11,6 +10,7 @@ pub mod pdf;
 pub mod pipeline;
 pub mod progress;
 pub mod telemetry;
+pub mod vault;
 pub mod watch;
 pub mod xycut;
 
@@ -19,9 +19,6 @@ pub use batch::{
     BatchConversionResult, ConversionPlan, DryRunReport, dry_run_pdf_directory, dry_run_single_pdf,
     process_pdf_directory, process_pdf_directory_all, process_pdf_directory_full,
     process_pdf_directory_with_image_options, sanitize_short_slug,
-};
-pub use cli::{
-    ConvertImagesSummary, EmbedVaultSummary, convert_vault_png_to_jpeg, embed_vault_in_path,
 };
 pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
@@ -42,6 +39,35 @@ pub use pipeline::{
     process_pdf_full, process_pdf_with_options, process_pdf_with_pipeline_options,
     process_pdf_with_source, safe_process_single_page,
 };
-pub use progress::{BatchProgressTracker, format_eta};
+pub use progress::{
+    BatchProgressTracker, NullProgressEmitter, ProgressEmitter, TrackerProgressEmitter, format_eta,
+};
 pub use telemetry::{init_telemetry, parse_log_level};
+pub use vault::{
+    ConvertImagesSummary, EmbedVaultSummary, FormatNotesSummary, convert_vault_png_to_jpeg,
+    download_embedding_models, embed_vault_in_path, format_notes_in_path,
+};
 pub use watch::{WatchOptions, watch_directory};
+
+/// Helper to resolve paths to model files relative to the workspace or manifest directory.
+pub fn resolve_model_path(subpath: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let sub = subpath.as_ref();
+    if sub.exists() {
+        return sub.to_path_buf();
+    }
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let p = std::path::Path::new(&manifest).join(sub);
+        if p.exists() {
+            return p;
+        }
+        let p_up = std::path::Path::new(&manifest).join("../../").join(sub);
+        if p_up.exists() {
+            return p_up;
+        }
+    }
+    let p_root = std::path::Path::new("../../").join(sub);
+    if p_root.exists() {
+        return p_root;
+    }
+    sub.to_path_buf()
+}

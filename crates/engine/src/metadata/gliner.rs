@@ -37,11 +37,7 @@ static GLINER_ENGINE: std::sync::OnceLock<Option<Arc<GlinerEngine>>> = std::sync
 #[cfg(feature = "gliner-ort")]
 pub fn get_gliner_engine() -> Option<Arc<GlinerEngine>> {
     let engine = GLINER_ENGINE.get_or_init(|| {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("metadata")
-            .join("gliner_small.onnx");
+        let model_path = crate::resolve_model_path("models/metadata/gliner_small.onnx");
 
         if model_path.exists() {
             GlinerEngine::new(&model_path).ok().map(Arc::new)

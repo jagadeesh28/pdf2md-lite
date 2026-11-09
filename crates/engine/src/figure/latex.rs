@@ -26,19 +26,9 @@ static LATEX_ENGINE: std::sync::OnceLock<Option<Arc<RapidLatexEngine>>> =
 #[cfg(feature = "latex-ort")]
 pub fn get_latex_engine() -> Option<Arc<RapidLatexEngine>> {
     let engine = LATEX_ENGINE.get_or_init(|| {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let enc_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("latex")
-            .join("encoder.onnx");
-        let dec_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("latex")
-            .join("decoder.onnx");
-        let tok_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("latex")
-            .join("tokenizer.json");
+        let enc_path = crate::resolve_model_path("models/latex/encoder.onnx");
+        let dec_path = crate::resolve_model_path("models/latex/decoder.onnx");
+        let tok_path = crate::resolve_model_path("models/latex/tokenizer.json");
 
         if enc_path.exists() && dec_path.exists() && tok_path.exists() {
             RapidLatexEngine::new(&enc_path, &dec_path, &tok_path)

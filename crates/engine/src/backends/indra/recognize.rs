@@ -710,11 +710,7 @@ mod tests {
 
     #[test]
     fn test_load_rec_world_tract() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("rec_world.onnx");
+        let model_path = crate::resolve_model_path("models/indra/rec_world.onnx");
         if !model_path.exists() {
             return;
         }
@@ -748,15 +744,8 @@ mod tests {
 
     #[test]
     fn test_indra_recognizer_world_initialization() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("meta.json");
-        let model_path = std::path::Path::new(&manifest_dir)
-            .join("models")
-            .join("indra")
-            .join("rec_world.onnx");
+        let meta_path = crate::resolve_model_path("models/indra/meta.json");
+        let model_path = crate::resolve_model_path("models/indra/rec_world.onnx");
         if !model_path.exists() {
             return;
         }

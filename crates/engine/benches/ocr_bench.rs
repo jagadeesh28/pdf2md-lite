@@ -12,15 +12,8 @@ use std::path::Path;
 const BUCKET_WIDTHS: [usize; 7] = [160, 320, 480, 640, 800, 1024, 1536];
 
 fn load_base_recognizer() -> Option<IndraRecognizer> {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let meta_path = Path::new(&manifest_dir)
-        .join("models")
-        .join("indra")
-        .join("meta.json");
-    let rec_path = Path::new(&manifest_dir)
-        .join("models")
-        .join("indra")
-        .join("rec.onnx");
+    let meta_path = pdfmd_lite::resolve_model_path("models/indra/meta.json");
+    let rec_path = pdfmd_lite::resolve_model_path("models/indra/rec.onnx");
     if !meta_path.exists() || !rec_path.exists() {
         return None;
     }
@@ -130,8 +123,7 @@ fn recognize_lines_batched(
 }
 
 fn bench_page_transcription(c: &mut Criterion) {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    let img_path = Path::new(&manifest_dir).join("images").join("page-1.png");
+    let img_path = pdfmd_lite::resolve_model_path("images/page-1.png");
     if !img_path.exists() {
         return;
     }

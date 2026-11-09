@@ -25,6 +25,54 @@ pub fn format_eta(secs: f32) -> String {
     }
 }
 
+/// Decoupled progress and telemetry emission trait (Milestone 5.1).
+pub trait ProgressEmitter: Send + Sync {
+    /// Emitted when conversion of a document begins.
+    fn on_document_start(&self, doc_slug: &str, total_pages: usize);
+    /// Emitted when a single page has finished processing.
+    fn on_page_complete(&self, doc_slug: &str, page_num: usize, total_pages: usize);
+    /// Emitted when a document has completed processing.
+    fn on_document_complete(&self, doc_slug: &str, status: &str);
+    /// Emitted for general diagnostic log messages.
+    fn on_message(&self, level: &str, message: &str);
+}
+
+/// A no-op progress emitter for quiet/silent execution or tests.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullProgressEmitter;
+
+impl ProgressEmitter for NullProgressEmitter {
+    fn on_document_start(&self, _doc_slug: &str, _total_pages: usize) {}
+    fn on_page_complete(&self, _doc_slug: &str, _page_num: usize, _total_pages: usize) {}
+    fn on_document_complete(&self, _doc_slug: &str, _status: &str) {}
+    fn on_message(&self, _level: &str, _message: &str) {}
+}
+
+/// Progress emitter bridging into an active `BatchProgressTracker`.
+pub struct TrackerProgressEmitter<'a> {
+    pub tracker: &'a BatchProgressTracker,
+    pub worker_id: usize,
+}
+
+impl<'a> ProgressEmitter for TrackerProgressEmitter<'a> {
+    fn on_document_start(&self, doc_slug: &str, _total_pages: usize) {
+        self.tracker.on_doc_start(self.worker_id, doc_slug, 1);
+    }
+    fn on_page_complete(&self, _doc_slug: &str, _page_num: usize, _total_pages: usize) {
+        if let Ok(mut state) = self.tracker.state.lock() {
+            state.completed_pages += 1;
+        }
+    }
+    fn on_document_complete(&self, doc_slug: &str, status: &str) {
+        let is_ok = !status.to_ascii_uppercase().starts_with("ERR");
+        self.tracker
+            .on_doc_complete(self.worker_id, 0, doc_slug, 1, 0.0, is_ok);
+    }
+    fn on_message(&self, _level: &str, message: &str) {
+        self.tracker.pb.println(message);
+    }
+}
+
 /// Internal shared state for calculating rolling throughput and tracking active workers.
 #[derive(Debug)]
 struct TrackerState {
