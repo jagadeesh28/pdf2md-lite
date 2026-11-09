@@ -206,11 +206,6 @@ impl RapidLatexEngine {
         let mut repeat_count = 0;
         let mut prev_token = -1;
 
-        let mut decoder_session = self
-            .decoder
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
-
         for _ in 0..max_seq_len {
             let x_tensor = ort::value::Tensor::from_array((
                 [1usize, tokens.len()],
@@ -231,15 +226,23 @@ impl RapidLatexEngine {
                 "context" => ctx_tensor
             ];
 
-            let dec_outputs = decoder_session.run(dec_inputs)?;
-            let (out_shape, logits_slice) = dec_outputs[0]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| anyhow::anyhow!("Failed to extract logits tensor: {e}"))?;
-
-            let vocab_size = out_shape[2] as usize;
-            let last_pos = tokens.len() - 1;
-            let offset = last_pos * vocab_size;
-            let step_logits = &logits_slice[offset..offset + vocab_size];
+            // Fine-grained mutex lock: scoped strictly to the single ~1-2ms ONNX evaluation step (ADR 0011).
+            // This prevents holding the lock across the full 128-iteration loop, allowing other worker threads
+            // to interleave decoding steps concurrently with zero extra RAM.
+            let step_logits = {
+                let mut decoder_session = self
+                    .decoder
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
+                let dec_outputs = decoder_session.run(dec_inputs)?;
+                let (out_shape, logits_slice) = dec_outputs[0]
+                    .try_extract_tensor::<f32>()
+                    .map_err(|e| anyhow::anyhow!("Failed to extract logits tensor: {e}"))?;
+                let vocab_size = out_shape[2] as usize;
+                let last_pos = tokens.len() - 1;
+                let offset = last_pos * vocab_size;
+                logits_slice[offset..offset + vocab_size].to_vec()
+            };
 
             // Greedy argmax
             let mut best_idx = 0;

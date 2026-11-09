@@ -219,13 +219,13 @@ flowchart TD
   3. In `src/pipeline.rs`, convert `page_img.to_luma8()` directly once and apply in-place visual masking, eliminating ~50 MB of transient buffer clones per page.
 - **Verification**: Verified via `test_mask_gray_regions_mut` and the entire 89-test suite.
 
-#### Milestone 4.2: Fine-Grained RapidLaTeXOCR Session Mutexing ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md))
+#### Milestone 4.2: Fine-Grained RapidLaTeXOCR Session Mutexing ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md)) ✅
 - **Objective**: Eliminate cross-worker thread freezes during autoregressive equation decoding.
 - **Tasks**:
-  1. Refactor `RapidLatexEngine::predict` in `src/figure/latex.rs`.
-  2. Narrow the `decoder` session lock scope to only the single `run(...)` step (~1–2ms), releasing the lock between token iterations.
-  3. Keep the resident session memory footprint strictly within the 350 MB base concurrency budget.
-- **Verification**: Unit tests evaluating simultaneous multi-threaded formula decoding without deadlocks or latency spikes.
+  1. Refactored `RapidLatexEngine::predict` in `src/figure/latex.rs`.
+  2. Narrowed the `decoder` session lock scope strictly to the single `run(...)` step (~1–2ms), extracting `step_logits` and releasing the lock immediately before token projection, greedy argmax, and repetition gating.
+  3. Preserved the resident session memory footprint strictly within the 350 MB base concurrency budget without duplicating session weights.
+- **Verification**: Verified via test suite and criterion benchmark execution with zero compiler warnings.
 
 #### Milestone 4.3: Structured Observability & Tracing Telemetry
 - **Objective**: Integrate industrial-grade structured logging with non-flickering progress bars and file export.
