@@ -124,3 +124,15 @@ _Avoid_: External embedding service, API vector generator, cloud embedding endpo
 **Retroactive Vault Embedding Pass**:
 An offline CLI execution mode (`pdfmd-lite --embed <path>`) that traverses an existing Obsidian Markdown vault, parses structural headers, generates semantic chunks, and creates or updates `<slug>.embeddings.jsonl` sidecars without re-rasterizing source PDFs.
 _Avoid_: PDF-coupled re-embedding, full conversion re-run
+
+**In-Place Grayscale Masking**:
+A zero-copy memory optimization that directly converts a rendered page raster into an 8-bit grayscale canvas once and mutates masked visual regions directly on raw byte slices in-place, eliminating intermediate 32-bit RGBA buffer clones.
+_Avoid_: RGBA clone masking, intermediate canvas copy, multi-pass rasterization
+
+**Baseline-Aware Hybrid DOM Extraction**:
+A selective document text extraction pipeline that extracts digital characters directly from PDF content streams by tracking glyph vertical offset shifts ($\Delta y$) to reconstruct sub/superscripts, while routing YOLO layout regions (formulas, tables, figures) to neural vision models.
+_Avoid_: Naive stream dump, uncalibrated text extraction, blind layout OCR
+
+**Concurrent Neural Session Dispatch**:
+An in-process neural model execution architecture utilizing session pooling or thread-isolated model arenas to evaluate neural vision models across parallel page workers without serializing the pipeline behind a single global mutex.
+_Avoid_: Global session lock, coarse-grained mutex lock, multi-worker pipeline serialization

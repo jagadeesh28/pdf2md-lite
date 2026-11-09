@@ -125,19 +125,29 @@ The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-pr
 | **Execution Trigger** | Opt-in via `--embed` during PDF conversion, plus retroactive vault pass (`pdfmd-lite --embed <vault>`) to index existing notes without PDF rasterization. |
 | **Model Provisioning** | Automatic resolution in `models/embeddings/` backed by a `--download-models` CLI provisioning command fetching INT8 weights and tokenizers from Hugging Face. |
 
-## Phase 3 — Workflow / UX (Planned)
+## Phase 3 — Workflow / UX
 
-**Status:** Planned
+**Status:** Implemented & Verified ✅
 
-| Planned item | Rationale |
-|--------------|-----------|
-| Progress bar + ETA for batch conversion | Current output is `println!` per doc; no visibility into remaining time |
-| `--watch` mode for directory conversion | Re-convert on file change instead of re-running batch |
-| `--dry-run` for conversion (estimate time without writing) | Preview cost before committing to a large batch |
-| Structured logging (`tracing`) with log file option | Better observability in headless/CI runs |
-| Single-file mode (`--embed-images-base64`) | Opt-in portable Obsidian notes without `_images/` sidecar folders (ADR 0009) |
-| Content-hash based idempotency (`pdf_sha256`) | Frontmatter hash verification to skip re-conversion of unchanged PDFs (ADR 0009) |
-| CI: clippy, rustfmt, MSRV check, `cargo deny` | Code quality and license compliance |
+| Item | Rationale & Implementation Details |
+|------|-----------------------------------|
+| **Content-Hash Idempotency (`pdf_sha256`)** | Stores SHA-256 digest in YAML frontmatter; `--resume` checks hash before reading or rasterizing pages ([ADR 0009](docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md)). |
+| **Single-File Base64 Mode** | `--embed-images-base64` inlines crops as `![Alt](data:image/jpeg;base64,...)`, bypassing `_images/` disk creation; shielded from wiki-link rewriting ([ADR 0009](docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md)). |
+| **Rich Batch Progress & ETA (`indicatif`)** | Dynamic terminal progress bar tracking active document slugs, page worker counts, and rolling throughput ETA in `src/progress.rs`. |
+| **Directory Watch Mode (`--watch`)** | Uses `notify` with 800ms debouncing and file unlock checks to auto-convert new/updated PDFs in `src/watch.rs`. |
+| **Conversion Dry-Run (`--dry-run`)** | Read-only plan projection previewing document pages, memory budgets, and skip/convert statuses without modifying disk in `src/batch.rs`. |
+| **CI Quality Gates & Health** | Added `deny.toml` and GitHub Actions quality gate covering `cargo fmt --check`, `clippy -D warnings`, `test --all-targets`, `check --benches`, and `cargo-deny-action`. |
+
+## Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction (Planned)
+
+**Status:** Planned / Specified (ADRs: [ADR 0011](docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md), [ADR 0012](docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
+
+| Milestone | Key Capability & Technical Approach |
+|-----------|-------------------------------------|
+| **4.1: In-Place Grayscale Canvas Masking** | Eliminate 30 MB RGBA deep clones per page; mutate 8-bit `GrayImage` directly in-place (`mask_gray_regions_mut`). |
+| **4.2: Fine-Grained LaTeX Session Mutexing** | Narrow `Mutex<Session>` scope in `RapidLatexEngine` to individual 1–2ms inference steps, unlocking concurrent decoding across page workers. |
+| **4.3: Structured Tracing & Telemetry** | Integrate `tracing` and `tracing-subscriber` with non-flicker `indicatif` bridge, `--log-file <PATH>`, and `--log-level <LEVEL>`. |
+| **4.4: Baseline-Aware Hybrid DOM Extraction** | Analyze glyph vertical offset baseline shifts ($\Delta y$) for sub/superscripts on pristine vector PDFs with YOLO formula/table exclusion and CMap validation. |
 
 ## Verification
 

@@ -205,6 +205,52 @@ flowchart TD
 
 ---
 
+### Phase 4 — Advanced Engine Optimization, Observability & Hybrid Extraction 🚀
+
+> **Architectural Decisions**: [ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md) & [ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md)  
+> **Status**: Planned / Ready for Implementation  
+> **Primary Goal**: Deliver maximum multi-core CPU throughput, zero memory duplication churn, production observability, and 5×–10× faster digital text extraction without compromising mathematical fidelity.
+
+#### Milestone 4.1: In-Place Grayscale Canvas Masking ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md))
+- **Objective**: Eliminate intermediate 30 MB RGBA deep clones per page.
+- **Tasks**:
+  1. Replace `mask_page_regions(page_img: &DynamicImage, ...)` with `pub fn mask_gray_regions_mut(gray: &mut GrayImage, regions: &[FigureRect])` in `src/figure/mod.rs`.
+  2. In `src/pipeline.rs`, render or convert the page to `GrayImage` once, and apply visual masking in-place directly on grayscale bytes.
+  3. Ensure zero unnecessary buffer clones during page preprocessing.
+- **Verification**: Unit tests verifying in-place masking preserves padding margins and passes all pipeline tests without regressions.
+
+#### Milestone 4.2: Fine-Grained RapidLaTeXOCR Session Mutexing ([ADR 0011](./docs/adr/0011-fine-grained-session-mutexes-and-inplace-grayscale-masking.md))
+- **Objective**: Eliminate cross-worker thread freezes during autoregressive equation decoding.
+- **Tasks**:
+  1. Refactor `RapidLatexEngine::predict` in `src/figure/latex.rs`.
+  2. Narrow the `decoder` session lock scope to only the single `run(...)` step (~1–2ms), releasing the lock between token iterations.
+  3. Keep the resident session memory footprint strictly within the 350 MB base concurrency budget.
+- **Verification**: Unit tests evaluating simultaneous multi-threaded formula decoding without deadlocks or latency spikes.
+
+#### Milestone 4.3: Structured Observability & Tracing Telemetry
+- **Objective**: Integrate industrial-grade structured logging with non-flickering progress bars and file export.
+- **Tasks**:
+  1. Add `tracing` and `tracing-subscriber` to `Cargo.toml`.
+  2. Implement unified logging initialization in `src/lib.rs` / `src/main.rs`:
+     - CLI flags: `--log-file <PATH>` and `--log-level <trace|debug|info|warn|error>` (default: `info`).
+     - Support non-interfering output when `indicatif` progress bars are active.
+     - Respect `-q` / `--quiet` flags by muting stdout traces while keeping `--log-file` writes intact.
+  3. Replace scattered `eprintln!` and `println!` warnings with structured `tracing::warn!`, `tracing::info!`, and `tracing::debug!` events.
+- **Verification**: CLI tests verifying log file generation, log level filtering, and quiet mode compliance.
+
+#### Milestone 4.4: Baseline-Aware Hybrid DOM Extraction ([ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md))
+- **Objective**: Accelerate digital PDF text processing by 5×–10× while preserving subscripts, superscripts, and equations.
+- **Tasks**:
+  1. Add `--dom-extraction <auto|always|never>` CLI parameter and config option.
+  2. Implement baseline vertical offset tracking ($\Delta y$) in `src/pdf.rs` to detect and format sub/superscripts (`_i`, `^2`).
+  3. Implement font CMap `/ToUnicode` validation; fall back to Indra OCR automatically if CMaps are missing or corrupt.
+  4. Exclude YOLOv8n formula (Class 2) and table (Class 1) regions from DOM text streams, routing them exclusively to neural vision extractors.
+- **Verification**: Tests validating that academic PDFs with vector text extract mathematical sub/superscripts cleanly while isolating equations to display math blocks.
+
+---
+
+---
+
 ## 4. Verification & Testing Standards for Agents
 
 Before completing any implementation step, agents **must** execute and pass the following quality gates:
