@@ -77,7 +77,11 @@ impl DocumentMetadata {
 
         for (key, values) in &self.custom_properties {
             if values.len() == 1 {
-                yaml.push_str(&format!("{}: \"{}\"\n", escape_yaml(key), escape_yaml(&values[0])));
+                yaml.push_str(&format!(
+                    "{}: \"{}\"\n",
+                    escape_yaml(key),
+                    escape_yaml(&values[0])
+                ));
             } else if !values.is_empty() {
                 yaml.push_str(&format!("{}:\n", escape_yaml(key)));
                 for val in values {
@@ -167,9 +171,7 @@ pub fn render_markdown(result: &PdfExtractionResult) -> String {
                 let dir_name = fig.images_dir_name();
                 format!("![[{dir_name}/{}]]", fig.filename)
             };
-            output.push_str(&format!(
-                "{image_link}\n*{caption_text}*\n\n"
-            ));
+            output.push_str(&format!("{image_link}\n*{caption_text}*\n\n"));
         }
     } else if !result.images.is_empty() {
         if !output.is_empty() {
@@ -201,7 +203,9 @@ pub fn attach_figures_to_page_text(page_text: &str, figures: &[CroppedFigure]) -
             let dir_name = fig.images_dir_name();
             format!("![[{dir_name}/{}]]", fig.filename)
         };
-        if result.contains(&image_link) || (!fig.filename.is_empty() && result.contains(&fig.filename)) {
+        if result.contains(&image_link)
+            || (!fig.filename.is_empty() && result.contains(&fig.filename))
+        {
             continue;
         }
 
@@ -277,9 +281,39 @@ impl NoteFormatReport {
 }
 
 const PRESERVED_CODEBLOCK_TAGS: &[&str] = &[
-    "mermaid", "python", "py", "rust", "rs", "bash", "sh", "zsh", "c", "cpp", "c++", "csharp",
-    "cs", "java", "javascript", "js", "typescript", "ts", "json", "yaml", "yml", "toml", "sql",
-    "html", "css", "xml", "diff", "dockerfile", "go", "matlab", "fortran", "r", "julia",
+    "mermaid",
+    "python",
+    "py",
+    "rust",
+    "rs",
+    "bash",
+    "sh",
+    "zsh",
+    "c",
+    "cpp",
+    "c++",
+    "csharp",
+    "cs",
+    "java",
+    "javascript",
+    "js",
+    "typescript",
+    "ts",
+    "json",
+    "yaml",
+    "yml",
+    "toml",
+    "sql",
+    "html",
+    "css",
+    "xml",
+    "diff",
+    "dockerfile",
+    "go",
+    "matlab",
+    "fortran",
+    "r",
+    "julia",
 ];
 
 /// Unwraps spurious codeblocks (such as ```markdown or generic ```) that contain Markdown elements,
@@ -305,10 +339,18 @@ pub fn unwrap_spurious_codeblocks(text: &str) -> (String, usize) {
 
                 let is_spurious = if is_protected {
                     false
-                } else if tag == "markdown" || tag == "md" || tag == "text" || tag == "txt" || tag.is_empty() {
+                } else if tag == "markdown"
+                    || tag == "md"
+                    || tag == "text"
+                    || tag == "txt"
+                    || tag.is_empty()
+                {
                     let has_markdown_heading = block_lines.iter().any(|l| {
                         let t = l.trim();
-                        t.starts_with("# ") || t.starts_with("## ") || t.starts_with("### ") || t.starts_with("#### ")
+                        t.starts_with("# ")
+                            || t.starts_with("## ")
+                            || t.starts_with("### ")
+                            || t.starts_with("#### ")
                     });
                     let has_table_pipe = block_lines.iter().any(|l| {
                         let t = l.trim();
@@ -316,19 +358,32 @@ pub fn unwrap_spurious_codeblocks(text: &str) -> (String, usize) {
                     });
                     let has_callout = block_lines.iter().any(|l| l.trim().starts_with("> [!"));
                     let has_image = block_lines.iter().any(|l| {
-                        (l.contains("![") && l.contains("](")) || (l.contains("![[") && l.contains("]]"))
+                        (l.contains("![") && l.contains("]("))
+                            || (l.contains("![[") && l.contains("]]"))
                     });
-                    let has_math_block = block_lines.iter().any(|l| l.trim().starts_with("$$") || l.contains(r"\begin{"));
-                    let has_list_items = block_lines.iter().filter(|l| {
-                        let t = l.trim();
-                        t.starts_with("* ") || t.starts_with("- ")
-                    }).count() >= 2;
+                    let has_math_block = block_lines
+                        .iter()
+                        .any(|l| l.trim().starts_with("$$") || l.contains(r"\begin{"));
+                    let has_list_items = block_lines
+                        .iter()
+                        .filter(|l| {
+                            let t = l.trim();
+                            t.starts_with("* ") || t.starts_with("- ")
+                        })
+                        .count()
+                        >= 2;
                     let has_prose = block_lines.iter().any(|l| {
                         let t = l.trim();
                         t.len() > 60 && is_likely_prose_sentence(t)
                     });
 
-                    has_markdown_heading || has_table_pipe || has_callout || has_image || has_math_block || has_list_items || has_prose
+                    has_markdown_heading
+                        || has_table_pipe
+                        || has_callout
+                        || has_image
+                        || has_math_block
+                        || has_list_items
+                        || has_prose
                 } else {
                     false
                 };
@@ -393,7 +448,9 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
     if let Some(close_idx) = after_dashes.find("\n---") {
         let yaml_text = &after_dashes[..close_idx];
         let after_close = &after_dashes[close_idx + 4..];
-        let body = after_close.trim_start_matches('\r').trim_start_matches('\n');
+        let body = after_close
+            .trim_start_matches('\r')
+            .trim_start_matches('\n');
 
         let mut meta = DocumentMetadata::default();
         let mut in_tags = false;
@@ -423,7 +480,12 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
 
             if let Some((key, val)) = line_trimmed.split_once(':') {
                 let key_clean = key.trim().to_lowercase();
-                let val_clean = val.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+                let val_clean = val
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim()
+                    .to_string();
                 if val_clean.is_empty() {
                     continue;
                 }
@@ -459,7 +521,10 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
 /// 2. Purges legacy extraction banners and headers.
 /// 3. Normalizes LaTeX math equations and table cells.
 /// 4. Non-destructively synthesizes/backfills Obsidian YAML frontmatter with GLiNER and heuristics.
-pub fn format_note_document(content: &str, file_hint: Option<&std::path::Path>) -> (String, NoteFormatReport) {
+pub fn format_note_document(
+    content: &str,
+    file_hint: Option<&std::path::Path>,
+) -> (String, NoteFormatReport) {
     let mut report = NoteFormatReport::default();
 
     let (metadata_opt, raw_body) = parse_existing_frontmatter(content);
@@ -507,16 +572,18 @@ pub fn format_note_document(content: &str, file_hint: Option<&std::path::Path>) 
         }
         if metadata.title.is_none()
             && let Some(hint) = file_hint
-                && let Some(stem) = hint.file_stem() {
-                    metadata.title = Some(stem.to_string_lossy().to_string());
-                }
+            && let Some(stem) = hint.file_stem()
+        {
+            metadata.title = Some(stem.to_string_lossy().to_string());
+        }
     }
 
     if metadata.source.is_none()
         && let Some(hint) = file_hint
-            && let Some(name) = hint.file_name() {
-                metadata.source = Some(name.to_string_lossy().to_string());
-            }
+        && let Some(name) = hint.file_name()
+    {
+        metadata.source = Some(name.to_string_lossy().to_string());
+    }
 
     let added_fields = crate::metadata::populate_metadata_from_text(raw_body, &mut metadata);
     enrich_document_metadata(&mut metadata, &converted_body);
@@ -625,113 +692,121 @@ fn convert_figure_links_in_line(line: &str, count: &mut usize) -> String {
         // 2. Detect and convert `![alt](url)`
         if ch == '!'
             && let Some(&(_, next_c)) = chars.peek()
-                && next_c == '[' {
-                    // Check if already an obsidian embed: `![[`
-                    let after_bracket = &line[i + 2..];
-                    if after_bracket.starts_with('[') {
-                        out.push('!');
-                        continue;
+            && next_c == '['
+        {
+            // Check if already an obsidian embed: `![[`
+            let after_bracket = &line[i + 2..];
+            if after_bracket.starts_with('[') {
+                out.push('!');
+                continue;
+            }
+
+            // Attempt to parse standard Markdown image link: `![alt](url)`
+            chars.next(); // Consume '['
+
+            let mut bracket_depth = 1;
+            let mut escaped = false;
+            let mut alt_end = None;
+
+            for (alt_idx, alt_c) in chars.by_ref() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if alt_c == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if alt_c == '[' {
+                    bracket_depth += 1;
+                } else if alt_c == ']' {
+                    bracket_depth -= 1;
+                    if bracket_depth == 0 {
+                        alt_end = Some(alt_idx);
+                        break;
                     }
+                }
+            }
 
-                    // Attempt to parse standard Markdown image link: `![alt](url)`
-                    chars.next(); // Consume '['
+            if alt_end.is_some() {
+                // Check if immediate next character is '('
+                if let Some(&(_, paren_c)) = chars.peek()
+                    && paren_c == '('
+                {
+                    chars.next(); // Consume '('
+                    let mut paren_depth = 1;
+                    let mut paren_escaped = false;
+                    let paren_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+                    let mut paren_end = None;
 
-                    let mut bracket_depth = 1;
-                    let mut escaped = false;
-                    let mut alt_end = None;
-
-                    for (alt_idx, alt_c) in chars.by_ref() {
-                        if escaped {
-                            escaped = false;
+                    for (p_idx, p_c) in chars.by_ref() {
+                        if paren_escaped {
+                            paren_escaped = false;
                             continue;
                         }
-                        if alt_c == '\\' {
-                            escaped = true;
+                        if p_c == '\\' {
+                            paren_escaped = true;
                             continue;
                         }
-                        if alt_c == '[' {
-                            bracket_depth += 1;
-                        } else if alt_c == ']' {
-                            bracket_depth -= 1;
-                            if bracket_depth == 0 {
-                                alt_end = Some(alt_idx);
+                        if p_c == '(' {
+                            paren_depth += 1;
+                        } else if p_c == ')' {
+                            paren_depth -= 1;
+                            if paren_depth == 0 {
+                                paren_end = Some(p_idx);
                                 break;
                             }
                         }
                     }
 
-                    if alt_end.is_some() {
-                        // Check if immediate next character is '('
-                        if let Some(&(_, paren_c)) = chars.peek()
-                            && paren_c == '(' {
-                                chars.next(); // Consume '('
-                                let mut paren_depth = 1;
-                                let mut paren_escaped = false;
-                                let paren_start = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
-                                let mut paren_end = None;
+                    if let Some(p_end) = paren_end {
+                        let raw_inner = &line[paren_start..p_end];
+                        let trimmed = raw_inner.trim();
 
-                                for (p_idx, p_c) in chars.by_ref() {
-                                    if paren_escaped {
-                                        paren_escaped = false;
-                                        continue;
-                                    }
-                                    if p_c == '\\' {
-                                        paren_escaped = true;
-                                        continue;
-                                    }
-                                    if p_c == '(' {
-                                        paren_depth += 1;
-                                    } else if p_c == ')' {
-                                        paren_depth -= 1;
-                                        if paren_depth == 0 {
-                                            paren_end = Some(p_idx);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if let Some(p_end) = paren_end {
-                                    let raw_inner = &line[paren_start..p_end];
-                                    let trimmed = raw_inner.trim();
-
-                                    let location = if trimmed.starts_with('<') {
-                                        if let Some(end_angle) = trimmed.find('>') {
-                                            trimmed[1..end_angle].trim()
-                                        } else {
-                                            trimmed.trim_start_matches('<').trim()
-                                        }
-                                    } else {
-                                        let mut parts = trimmed.split_whitespace();
-                                        parts.next().unwrap_or(trimmed).trim_matches('"').trim_matches('\'')
-                                    };
-
-                                    if !location.is_empty() {
-                                        if location.starts_with("data:")
-                                            || location.starts_with("http://")
-                                            || location.starts_with("https://")
-                                        {
-                                            let current_idx = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
-                                            out.push_str(&line[i..current_idx]);
-                                            continue;
-                                        }
-
-                                        let clean_location = location.replace('\\', "/");
-                                        let final_location = clean_location.strip_prefix("./").unwrap_or(&clean_location);
-                                        out.push_str("![[");
-                                        out.push_str(final_location);
-                                        out.push_str("]]");
-                                        *count += 1;
-                                        continue;
-                                    }
-                                }
+                        let location = if trimmed.starts_with('<') {
+                            if let Some(end_angle) = trimmed.find('>') {
+                                trimmed[1..end_angle].trim()
+                            } else {
+                                trimmed.trim_start_matches('<').trim()
                             }
-                    }
+                        } else {
+                            let mut parts = trimmed.split_whitespace();
+                            parts
+                                .next()
+                                .unwrap_or(trimmed)
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                        };
 
-                    // Fallback: parsing did not yield an image link, re-emit consumed text
-                    let current_idx = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
-                    out.push_str(&line[i..current_idx]);
-                    continue;
+                        if !location.is_empty() {
+                            if location.starts_with("data:")
+                                || location.starts_with("http://")
+                                || location.starts_with("https://")
+                            {
+                                let current_idx =
+                                    chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+                                out.push_str(&line[i..current_idx]);
+                                continue;
+                            }
+
+                            let clean_location = location.replace('\\', "/");
+                            let final_location =
+                                clean_location.strip_prefix("./").unwrap_or(&clean_location);
+                            out.push_str("![[");
+                            out.push_str(final_location);
+                            out.push_str("]]");
+                            *count += 1;
+                            continue;
+                        }
+                    }
                 }
+            }
+
+            // Fallback: parsing did not yield an image link, re-emit consumed text
+            let current_idx = chars.peek().map(|(idx, _)| *idx).unwrap_or(line.len());
+            out.push_str(&line[i..current_idx]);
+            continue;
+        }
 
         out.push(ch);
     }
@@ -824,26 +899,85 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
         if ch == '!' {
             let rest = &line[i..];
             if rest.starts_with("![[")
-                && let Some(close_pos) = rest.find("]]") {
-                    let inner = &rest[3..close_pos];
-                    let (target, extra) = match inner.split_once('|') {
-                        Some((t, e)) => (t, Some(e)),
-                        None => (inner, None),
+                && let Some(close_pos) = rest.find("]]")
+            {
+                let inner = &rest[3..close_pos];
+                let (target, extra) = match inner.split_once('|') {
+                    Some((t, e)) => (t, Some(e)),
+                    None => (inner, None),
+                };
+
+                let trimmed_target = target.trim();
+                if trimmed_target.to_ascii_lowercase().ends_with(".png") {
+                    let new_target = format!("{}.jpg", &trimmed_target[..trimmed_target.len() - 4]);
+                    out.push_str("![[");
+                    out.push_str(&new_target);
+                    if let Some(e) = extra {
+                        out.push('|');
+                        out.push_str(e);
+                    }
+                    out.push_str("]]");
+                    *count += 1;
+
+                    let advance_to = i + close_pos + 2;
+                    while let Some(&(idx, _)) = chars.peek() {
+                        if idx < advance_to {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // 3. Standard markdown: ![alt](url)
+        if ch == '!' {
+            let rest = &line[i..];
+            if rest.starts_with("![")
+                && !rest.starts_with("![[")
+                && let Some(bracket_end) = rest.find(']')
+            {
+                let after_bracket = &rest[bracket_end + 1..];
+                if after_bracket.starts_with('(')
+                    && let Some(paren_end) = after_bracket.find(')')
+                {
+                    let alt = &rest[2..bracket_end];
+                    let raw_url = &after_bracket[1..paren_end];
+                    let trimmed_url = raw_url.trim();
+
+                    let (url_part, suffix) = if trimmed_url.starts_with('<') {
+                        if let Some(end_angle) = trimmed_url.find('>') {
+                            (&trimmed_url[1..end_angle], &trimmed_url[end_angle..])
+                        } else {
+                            (trimmed_url, "")
+                        }
+                    } else if let Some(space_idx) = trimmed_url.find(|c: char| c.is_whitespace()) {
+                        (&trimmed_url[..space_idx], &trimmed_url[space_idx..])
+                    } else {
+                        (trimmed_url, "")
                     };
 
-                    let trimmed_target = target.trim();
-                    if trimmed_target.to_ascii_lowercase().ends_with(".png") {
-                        let new_target = format!("{}.jpg", &trimmed_target[..trimmed_target.len() - 4]);
-                        out.push_str("![[");
-                        out.push_str(&new_target);
-                        if let Some(e) = extra {
-                            out.push('|');
-                            out.push_str(e);
+                    if !url_part.starts_with("data:")
+                        && url_part.to_ascii_lowercase().ends_with(".png")
+                    {
+                        let new_url = format!("{}.jpg", &url_part[..url_part.len() - 4]);
+                        out.push_str("![");
+                        out.push_str(alt);
+                        out.push_str("](");
+                        if trimmed_url.starts_with('<') {
+                            out.push('<');
+                            out.push_str(&new_url);
+                            out.push_str(suffix);
+                        } else {
+                            out.push_str(&new_url);
+                            out.push_str(suffix);
                         }
-                        out.push_str("]]");
+                        out.push(')');
                         *count += 1;
 
-                        let advance_to = i + close_pos + 2;
+                        let advance_to = i + bracket_end + 1 + paren_end + 1;
                         while let Some(&(idx, _)) = chars.peek() {
                             if idx < advance_to {
                                 chars.next();
@@ -854,60 +988,7 @@ fn replace_png_links_in_line(line: &str, count: &mut usize) -> String {
                         continue;
                     }
                 }
-        }
-
-        // 3. Standard markdown: ![alt](url)
-        if ch == '!' {
-            let rest = &line[i..];
-            if rest.starts_with("![") && !rest.starts_with("![[")
-                && let Some(bracket_end) = rest.find(']') {
-                    let after_bracket = &rest[bracket_end + 1..];
-                    if after_bracket.starts_with('(')
-                        && let Some(paren_end) = after_bracket.find(')') {
-                            let alt = &rest[2..bracket_end];
-                            let raw_url = &after_bracket[1..paren_end];
-                            let trimmed_url = raw_url.trim();
-
-                            let (url_part, suffix) = if trimmed_url.starts_with('<') {
-                                if let Some(end_angle) = trimmed_url.find('>') {
-                                    (&trimmed_url[1..end_angle], &trimmed_url[end_angle..])
-                                } else {
-                                    (trimmed_url, "")
-                                }
-                            } else if let Some(space_idx) = trimmed_url.find(|c: char| c.is_whitespace()) {
-                                (&trimmed_url[..space_idx], &trimmed_url[space_idx..])
-                            } else {
-                                (trimmed_url, "")
-                            };
-
-                            if !url_part.starts_with("data:") && url_part.to_ascii_lowercase().ends_with(".png") {
-                                let new_url = format!("{}.jpg", &url_part[..url_part.len() - 4]);
-                                out.push_str("![");
-                                out.push_str(alt);
-                                out.push_str("](");
-                                if trimmed_url.starts_with('<') {
-                                    out.push('<');
-                                    out.push_str(&new_url);
-                                    out.push_str(suffix);
-                                } else {
-                                    out.push_str(&new_url);
-                                    out.push_str(suffix);
-                                }
-                                out.push(')');
-                                *count += 1;
-
-                                let advance_to = i + bracket_end + 1 + paren_end + 1;
-                                while let Some(&(idx, _)) = chars.peek() {
-                                    if idx < advance_to {
-                                        chars.next();
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                }
+            }
         }
 
         out.push(ch);
@@ -987,25 +1068,133 @@ fn convert_math_spans(text: &str) -> String {
 }
 
 const LATEX_GREEK_AND_MATH: &[&str] = &[
-    r"\alpha", r"\beta", r"\gamma", r"\delta", r"\epsilon", r"\varepsilon", r"\zeta", r"\eta",
-    r"\theta", r"\vartheta", r"\iota", r"\kappa", r"\lambda", r"\mu", r"\nu", r"\xi",
-    r"\pi", r"\varpi", r"\rho", r"\varrho", r"\sigma", r"\varsigma", r"\tau", r"\upsilon",
-    r"\phi", r"\varphi", r"\chi", r"\psi", r"\omega",
-    r"\Gamma", r"\Delta", r"\Theta", r"\Lambda", r"\Xi", r"\Pi", r"\Sigma", r"\Upsilon",
-    r"\Phi", r"\Psi", r"\Omega",
-    r"\frac", r"\dfrac", r"\tfrac", r"\sqrt", r"\sum", r"\prod", r"\int", r"\iint", r"\oint",
-    r"\partial", r"\nabla", r"\infty", r"\times", r"\pm", r"\mp", r"\cdot", r"\leq", r"\geq",
-    r"\neq", r"\approx", r"\equiv", r"\propto", r"\to", r"\implies",
-    r"\dot", r"\ddot", r"\hat", r"\bar", r"\tilde", r"\vec", r"\left", r"\right", r"\exp", r"\ln", r"\log",
+    r"\alpha",
+    r"\beta",
+    r"\gamma",
+    r"\delta",
+    r"\epsilon",
+    r"\varepsilon",
+    r"\zeta",
+    r"\eta",
+    r"\theta",
+    r"\vartheta",
+    r"\iota",
+    r"\kappa",
+    r"\lambda",
+    r"\mu",
+    r"\nu",
+    r"\xi",
+    r"\pi",
+    r"\varpi",
+    r"\rho",
+    r"\varrho",
+    r"\sigma",
+    r"\varsigma",
+    r"\tau",
+    r"\upsilon",
+    r"\phi",
+    r"\varphi",
+    r"\chi",
+    r"\psi",
+    r"\omega",
+    r"\Gamma",
+    r"\Delta",
+    r"\Theta",
+    r"\Lambda",
+    r"\Xi",
+    r"\Pi",
+    r"\Sigma",
+    r"\Upsilon",
+    r"\Phi",
+    r"\Psi",
+    r"\Omega",
+    r"\frac",
+    r"\dfrac",
+    r"\tfrac",
+    r"\sqrt",
+    r"\sum",
+    r"\prod",
+    r"\int",
+    r"\iint",
+    r"\oint",
+    r"\partial",
+    r"\nabla",
+    r"\infty",
+    r"\times",
+    r"\pm",
+    r"\mp",
+    r"\cdot",
+    r"\leq",
+    r"\geq",
+    r"\neq",
+    r"\approx",
+    r"\equiv",
+    r"\propto",
+    r"\to",
+    r"\implies",
+    r"\dot",
+    r"\ddot",
+    r"\hat",
+    r"\bar",
+    r"\tilde",
+    r"\vec",
+    r"\left",
+    r"\right",
+    r"\exp",
+    r"\ln",
+    r"\log",
 ];
 
 const PROSE_STOP_WORDS: &[&str] = &[
-    "the", "is", "are", "was", "were", "with", "from", "that", "this", "these", "those",
-    "have", "has", "had", "will", "would", "shall", "should", "must", "can", "could",
-    "following", "equations", "calculated", "using", "when", "where", "which", "between",
-    "typical", "coefficient", "friction", "interface", "requirements", "paragraph",
-    "positive", "negative", "thermal", "maximum", "minimum", "preloads", "factor",
-    "method", "experimental", "uncertainty", "avoided", "specific", "testing", "determine",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "with",
+    "from",
+    "that",
+    "this",
+    "these",
+    "those",
+    "have",
+    "has",
+    "had",
+    "will",
+    "would",
+    "shall",
+    "should",
+    "must",
+    "can",
+    "could",
+    "following",
+    "equations",
+    "calculated",
+    "using",
+    "when",
+    "where",
+    "which",
+    "between",
+    "typical",
+    "coefficient",
+    "friction",
+    "interface",
+    "requirements",
+    "paragraph",
+    "positive",
+    "negative",
+    "thermal",
+    "maximum",
+    "minimum",
+    "preloads",
+    "factor",
+    "method",
+    "experimental",
+    "uncertainty",
+    "avoided",
+    "specific",
+    "testing",
+    "determine",
 ];
 
 fn is_display_equation_line(line: &str) -> bool {
@@ -1030,7 +1219,9 @@ fn is_display_equation_line(line: &str) -> bool {
         || trimmed.contains(r"\approx")
         || trimmed.contains(r"\le")
         || trimmed.contains(r"\ge");
-    let has_latex_math = LATEX_GREEK_AND_MATH.iter().any(|&cmd| trimmed.contains(cmd));
+    let has_latex_math = LATEX_GREEK_AND_MATH
+        .iter()
+        .any(|&cmd| trimmed.contains(cmd));
 
     let lower = trimmed.to_lowercase();
     let prose_word_count = lower
@@ -1091,11 +1282,42 @@ pub fn is_likely_prose_sentence(text: &str) -> bool {
 
     // Common scientific prose words that often appear in false-positive formula boxes or table descriptions
     let sentence_markers = [
-        "where", "expressing", "yields", "assuming", "equation", "equations", "gives", "shows",
-        "defined", "denotes", "represents", "substituted", "substituting", "conservation",
-        "balance", "results", "density", "velocity", "temperature", "pressure", "flux",
-        "number", "constant", "ratio", "rate", "factor", "fraction", "diameter", "coefficient",
-        "mass", "volume", "radius", "area", "energy", "enthalpy", "dimensionless",
+        "where",
+        "expressing",
+        "yields",
+        "assuming",
+        "equation",
+        "equations",
+        "gives",
+        "shows",
+        "defined",
+        "denotes",
+        "represents",
+        "substituted",
+        "substituting",
+        "conservation",
+        "balance",
+        "results",
+        "density",
+        "velocity",
+        "temperature",
+        "pressure",
+        "flux",
+        "number",
+        "constant",
+        "ratio",
+        "rate",
+        "factor",
+        "fraction",
+        "diameter",
+        "coefficient",
+        "mass",
+        "volume",
+        "radius",
+        "area",
+        "energy",
+        "enthalpy",
+        "dimensionless",
     ];
     let has_sentence_marker = words.iter().any(|&w| sentence_markers.contains(&w));
     if has_sentence_marker {
@@ -1149,43 +1371,44 @@ pub fn dehyphenate_text(text: &str) -> String {
 
             if newline_found
                 && let Some(&next_c) = ahead.peek()
-                    && next_c.is_ascii_lowercase() {
-                        // Check previous word in result
-                        let prev_word: String = result
-                            .chars()
-                            .rev()
-                            .take_while(|ch| ch.is_ascii_alphabetic())
-                            .collect::<String>()
-                            .chars()
-                            .rev()
-                            .collect();
-                        let lower_prefix = prev_word.to_ascii_lowercase();
-                        let compound_prefixes = [
-                            "three", "two", "one", "non", "quasi", "cross", "self", "multi", "sub",
-                            "half", "all", "well", "high", "low",
-                        ];
+                && next_c.is_ascii_lowercase()
+            {
+                // Check previous word in result
+                let prev_word: String = result
+                    .chars()
+                    .rev()
+                    .take_while(|ch| ch.is_ascii_alphabetic())
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                let lower_prefix = prev_word.to_ascii_lowercase();
+                let compound_prefixes = [
+                    "three", "two", "one", "non", "quasi", "cross", "self", "multi", "sub", "half",
+                    "all", "well", "high", "low",
+                ];
 
-                        if compound_prefixes.contains(&lower_prefix.as_str()) {
-                            // Retain hyphen, skip only the newline
-                            result.push('-');
-                            if chars.peek() == Some(&'\r') {
-                                chars.next();
-                            }
-                            if chars.peek() == Some(&'\n') {
-                                chars.next();
-                            }
-                            continue;
-                        } else if !prev_word.is_empty() {
-                            // Merge split word (drop both hyphen and newline)
-                            if chars.peek() == Some(&'\r') {
-                                chars.next();
-                            }
-                            if chars.peek() == Some(&'\n') {
-                                chars.next();
-                            }
-                            continue;
-                        }
+                if compound_prefixes.contains(&lower_prefix.as_str()) {
+                    // Retain hyphen, skip only the newline
+                    result.push('-');
+                    if chars.peek() == Some(&'\r') {
+                        chars.next();
                     }
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    continue;
+                } else if !prev_word.is_empty() {
+                    // Merge split word (drop both hyphen and newline)
+                    if chars.peek() == Some(&'\r') {
+                        chars.next();
+                    }
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    continue;
+                }
+            }
         }
         result.push(c);
     }
@@ -1201,13 +1424,28 @@ pub fn strip_running_headers_and_footers(text: &str) -> String {
         let clean = upper.replace(['$', '#'], "").trim().to_string();
 
         let is_running_hdr = (clean.starts_with("VOL. ") && clean.contains("NO. "))
-            || (clean.contains("J. PROPULSION") && (clean.contains("VOL.") || clean.contains("198") || clean.contains("199")))
+            || (clean.contains("J. PROPULSION")
+                && (clean.contains("VOL.") || clean.contains("198") || clean.contains("199")))
             || (clean.starts_with("AIAA JOURNAL") && clean.len() < 40)
             || (clean.starts_with("DOWNLOADED BY ") || clean.starts_with("DOWNLOADED ON "))
             || (clean.starts_with("PAGE ") && clean.contains(" OF ") && clean.len() < 25)
             || clean == "EXTRACTED PDF TEXT"
-            || ((clean.starts_with("MARCH") || clean.starts_with("JAN") || clean.starts_with("FEB") || clean.starts_with("APR") || clean.starts_with("MAY") || clean.starts_with("JUNE") || clean.starts_with("JULY") || clean.starts_with("AUG") || clean.starts_with("SEPT") || clean.starts_with("OCT") || clean.starts_with("NOV") || clean.starts_with("DEC"))
-                && (clean.contains("TECHNICAL NOTES") || clean.contains("198") || clean.contains("199") || clean.contains("200"))
+            || ((clean.starts_with("MARCH")
+                || clean.starts_with("JAN")
+                || clean.starts_with("FEB")
+                || clean.starts_with("APR")
+                || clean.starts_with("MAY")
+                || clean.starts_with("JUNE")
+                || clean.starts_with("JULY")
+                || clean.starts_with("AUG")
+                || clean.starts_with("SEPT")
+                || clean.starts_with("OCT")
+                || clean.starts_with("NOV")
+                || clean.starts_with("DEC"))
+                && (clean.contains("TECHNICAL NOTES")
+                    || clean.contains("198")
+                    || clean.contains("199")
+                    || clean.contains("200"))
                 && clean.len() < 80);
 
         if !is_running_hdr {
@@ -1258,7 +1496,13 @@ pub fn promote_headings(text: &str) -> String {
             continue;
         }
 
-        if in_code || trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('>') || trimmed.starts_with('|') || trimmed.starts_with("<!--") {
+        if in_code
+            || trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.starts_with('>')
+            || trimmed.starts_with('|')
+            || trimmed.starts_with("<!--")
+        {
             out.push_str(line);
             out.push('\n');
             continue;
@@ -1267,17 +1511,30 @@ pub fn promote_headings(text: &str) -> String {
         let upper = trimmed.to_uppercase();
 
         // 1. Check for standard academic section names
-        let is_section = standard_sections.iter().any(|&sec| upper == sec || upper == format!("{}:", sec));
+        let is_section = standard_sections
+            .iter()
+            .any(|&sec| upper == sec || upper == format!("{}:", sec));
 
         // 2. Check for numbered section headers: "I. INTRODUCTION", "1.0 INTRODUCTION", "1. Introduction"
-        let is_numbered_section = (trimmed.len() < 60) && (
-            (trimmed.starts_with("I. ") || trimmed.starts_with("II. ") || trimmed.starts_with("III. ")
-                || trimmed.starts_with("IV. ") || trimmed.starts_with("V. ") || trimmed.starts_with("VI. ")
-                || trimmed.starts_with("VII. ") || trimmed.starts_with("VIII. ") || trimmed.starts_with("IX. ")
+        let is_numbered_section = (trimmed.len() < 60)
+            && ((trimmed.starts_with("I. ")
+                || trimmed.starts_with("II. ")
+                || trimmed.starts_with("III. ")
+                || trimmed.starts_with("IV. ")
+                || trimmed.starts_with("V. ")
+                || trimmed.starts_with("VI. ")
+                || trimmed.starts_with("VII. ")
+                || trimmed.starts_with("VIII. ")
+                || trimmed.starts_with("IX. ")
                 || trimmed.starts_with("X. "))
-            || (trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
-                && (trimmed.contains(".0 ") || (trimmed.chars().nth(1) == Some('.') && trimmed.chars().nth(2) == Some(' '))))
-        );
+                || (trimmed
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                    && (trimmed.contains(".0 ")
+                        || (trimmed.chars().nth(1) == Some('.')
+                            && trimmed.chars().nth(2) == Some(' ')))));
 
         if is_section || is_numbered_section {
             out.push_str(&format!("## {}\n", trimmed));
@@ -1285,12 +1542,21 @@ pub fn promote_headings(text: &str) -> String {
         }
 
         // 3. Promote primary title on first page if not already promoted
-        if !title_promoted && trimmed.len() > 10 && trimmed.len() < 120 && !trimmed.ends_with('.') && !upper.starts_with("VOL")
-            && !trimmed.contains("University") && !trimmed.contains("Company") && !trimmed.contains("Institute") && !trimmed.contains("Laboratory") && !trimmed.contains('@') {
-                out.push_str(&format!("# {}\n", trimmed));
-                title_promoted = true;
-                continue;
-            }
+        if !title_promoted
+            && trimmed.len() > 10
+            && trimmed.len() < 120
+            && !trimmed.ends_with('.')
+            && !upper.starts_with("VOL")
+            && !trimmed.contains("University")
+            && !trimmed.contains("Company")
+            && !trimmed.contains("Institute")
+            && !trimmed.contains("Laboratory")
+            && !trimmed.contains('@')
+        {
+            out.push_str(&format!("# {}\n", trimmed));
+            title_promoted = true;
+            continue;
+        }
 
         out.push_str(line);
         out.push('\n');
@@ -1306,7 +1572,12 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
     }
 
     // 1. Recover Document Title if missing or generic
-    if metadata.title.as_ref().map(|t| t.len() < 4 || t.chars().all(|c| c.is_ascii_digit()) || t.contains('_')).unwrap_or(true) {
+    if metadata
+        .title
+        .as_ref()
+        .map(|t| t.len() < 4 || t.chars().all(|c| c.is_ascii_digit()) || t.contains('_'))
+        .unwrap_or(true)
+    {
         for line in full_doc_text.lines().take(40) {
             let trimmed = line.trim();
             if trimmed.starts_with("# ") && !trimmed.starts_with("## ") {
@@ -1321,18 +1592,32 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
 
     // 2. Recover Authors if missing
     if metadata.author.is_none() {
-        let lines: Vec<&str> = full_doc_text.lines().take(30).map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = full_doc_text
+            .lines()
+            .take(30)
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
         for (i, line) in lines.iter().enumerate() {
-            if (line.contains("University") || line.contains("Company") || line.contains("Institute") || line.contains("Laboratory"))
-                && i > 0 {
-                    let prev = lines[i - 1];
-                    let clean: String = prev.chars().filter(|c| c.is_alphabetic() || *c == ' ' || *c == ',' || *c == '&' || *c == '.').collect();
-                    let trimmed = clean.trim();
-                    if trimmed.len() > 5 && trimmed.len() < 80 && !trimmed.starts_with('#') {
-                        metadata.author = Some(trimmed.to_string());
-                        break;
-                    }
+            if (line.contains("University")
+                || line.contains("Company")
+                || line.contains("Institute")
+                || line.contains("Laboratory"))
+                && i > 0
+            {
+                let prev = lines[i - 1];
+                let clean: String = prev
+                    .chars()
+                    .filter(|c| {
+                        c.is_alphabetic() || *c == ' ' || *c == ',' || *c == '&' || *c == '.'
+                    })
+                    .collect();
+                let trimmed = clean.trim();
+                if trimmed.len() > 5 && trimmed.len() < 80 && !trimmed.starts_with('#') {
+                    metadata.author = Some(trimmed.to_string());
+                    break;
                 }
+            }
         }
     }
 
@@ -1341,13 +1626,27 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
     let upper = full_doc_text.to_uppercase();
 
     // A. Document Classification (Type)
-    if upper.contains("JOURNAL OF") || upper.contains("AIAA") || upper.contains("TRANSACTIONS") || (upper.contains("ABSTRACT") && upper.contains("REFERENCES")) {
+    if upper.contains("JOURNAL OF")
+        || upper.contains("AIAA")
+        || upper.contains("TRANSACTIONS")
+        || (upper.contains("ABSTRACT") && upper.contains("REFERENCES"))
+    {
         tags.push("type/journal-article".to_string());
-    } else if upper.contains("REPORT") || upper.contains("NASA CR") || upper.contains("TECHNICAL REPORT") {
+    } else if upper.contains("REPORT")
+        || upper.contains("NASA CR")
+        || upper.contains("TECHNICAL REPORT")
+    {
         tags.push("type/technical-report".to_string());
-    } else if upper.contains("CONFERENCE") || upper.contains("SYMPOSIUM") || upper.contains("PROCEEDINGS") || upper.contains("PAPER 8") {
+    } else if upper.contains("CONFERENCE")
+        || upper.contains("SYMPOSIUM")
+        || upper.contains("PROCEEDINGS")
+        || upper.contains("PAPER 8")
+    {
         tags.push("type/conference-paper".to_string());
-    } else if full_doc_text.contains("పత్రిక") || full_doc_text.contains("వార పత్రిక") || full_doc_text.contains("సంచిక") {
+    } else if full_doc_text.contains("పత్రిక")
+        || full_doc_text.contains("వార పత్రిక")
+        || full_doc_text.contains("సంచిక")
+    {
         tags.push("type/periodical-magazine".to_string());
     } else {
         tags.push("type/document".to_string());
@@ -1355,18 +1654,41 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
 
     // B. Domain Categorization
     let mut domains = Vec::new();
-    if upper.contains("PROPULSION") || upper.contains("COMBUSTOR") || upper.contains("SLURRY") || upper.contains("NOZZLE") || upper.contains("SCRAMJET") || upper.contains("RAMJET") || upper.contains("ROCKET") {
+    if upper.contains("PROPULSION")
+        || upper.contains("COMBUSTOR")
+        || upper.contains("SLURRY")
+        || upper.contains("NOZZLE")
+        || upper.contains("SCRAMJET")
+        || upper.contains("RAMJET")
+        || upper.contains("ROCKET")
+    {
         domains.push("domain/propulsion");
         domains.push("domain/aerospace");
     }
-    if upper.contains("TRANSONIC") || upper.contains("SUPERSONIC") || upper.contains("FLOWFIELD") || upper.contains("AERODYNAMIC") || upper.contains("BOUNDARY-LAYER") || upper.contains("AIRFOIL") || upper.contains("MACH") {
+    if upper.contains("TRANSONIC")
+        || upper.contains("SUPERSONIC")
+        || upper.contains("FLOWFIELD")
+        || upper.contains("AERODYNAMIC")
+        || upper.contains("BOUNDARY-LAYER")
+        || upper.contains("AIRFOIL")
+        || upper.contains("MACH")
+    {
         domains.push("domain/aerodynamics");
         domains.push("domain/fluid-dynamics");
     }
-    if upper.contains("FACTORIZATION") || upper.contains("FINITE-DIFFERENCE") || upper.contains("MULTIGRID") || upper.contains("NAVIER-STOKES") || upper.contains("EULER") {
+    if upper.contains("FACTORIZATION")
+        || upper.contains("FINITE-DIFFERENCE")
+        || upper.contains("MULTIGRID")
+        || upper.contains("NAVIER-STOKES")
+        || upper.contains("EULER")
+    {
         domains.push("domain/computational-methods");
     }
-    if upper.contains("COMBUSTION") || upper.contains("DROPLET") || upper.contains("FLAME") || upper.contains("IGNITION") {
+    if upper.contains("COMBUSTION")
+        || upper.contains("DROPLET")
+        || upper.contains("FLAME")
+        || upper.contains("IGNITION")
+    {
         domains.push("domain/combustion");
     }
     if crate::backends::indra::vocab::has_telugu(full_doc_text) {
@@ -1386,7 +1708,19 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
     // C. Topical entities from title
     if let Some(ref title) = metadata.title {
         let lower_t = title.to_lowercase();
-        for kw in &["scramjet", "combustor", "nacelle", "inlet", "slurry", "droplet", "supersonic", "transonic", "factorization", "turbulent", "nozzle"] {
+        for kw in &[
+            "scramjet",
+            "combustor",
+            "nacelle",
+            "inlet",
+            "slurry",
+            "droplet",
+            "supersonic",
+            "transonic",
+            "factorization",
+            "turbulent",
+            "nozzle",
+        ] {
             if lower_t.contains(kw) {
                 let tag = format!("topic/{}", kw);
                 if !tags.contains(&tag) {
@@ -1414,15 +1748,17 @@ fn wrap_inline_math(line: &str) -> String {
         let after_start = &rem[start_d + 1..];
         if let Some(end_d) = after_start.find('$') {
             let formula = &after_start[..end_d];
-            if !formula.contains('\n') && !formula.trim().is_empty()
-                && let Some(repaired) = crate::figure::latex::validate_and_repair_latex(formula) {
-                    intermediate.push('$');
-                    intermediate.push_str(&repaired);
-                    intermediate.push('$');
-                    has_repaired_dollars = true;
-                    rem = &after_start[end_d + 1..];
-                    continue;
-                }
+            if !formula.contains('\n')
+                && !formula.trim().is_empty()
+                && let Some(repaired) = crate::figure::latex::validate_and_repair_latex(formula)
+            {
+                intermediate.push('$');
+                intermediate.push_str(&repaired);
+                intermediate.push('$');
+                has_repaired_dollars = true;
+                rem = &after_start[end_d + 1..];
+                continue;
+            }
             intermediate.push('$');
             intermediate.push_str(formula);
             intermediate.push('$');
@@ -1444,7 +1780,11 @@ fn wrap_inline_math(line: &str) -> String {
     }
     intermediate.push_str(rem);
 
-    let active_line = if has_repaired_dollars { intermediate } else { line.to_string() };
+    let active_line = if has_repaired_dollars {
+        intermediate
+    } else {
+        line.to_string()
+    };
 
     if !active_line.contains('\\') && !active_line.contains('_') && !active_line.contains('^') {
         return active_line;
@@ -1464,16 +1804,20 @@ fn wrap_inline_math(line: &str) -> String {
         if !inside_dollar {
             if ch == '\\' {
                 let slice = &active_line[idx..];
-                if let Some(&cmd) = LATEX_GREEK_AND_MATH.iter().find(|&&cmd| slice.starts_with(cmd)) {
+                if let Some(&cmd) = LATEX_GREEK_AND_MATH
+                    .iter()
+                    .find(|&&cmd| slice.starts_with(cmd))
+                {
                     let after_cmd_idx = idx + cmd.len();
                     let rem_str = &active_line[after_cmd_idx..];
                     let mut cur_offset = 0;
 
                     // Capture argument in braces e.g. \dot{m}
                     if rem_str.starts_with('{')
-                        && let Some(close_brace) = rem_str.find('}') {
-                            cur_offset = close_brace + 1;
-                        }
+                        && let Some(close_brace) = rem_str.find('}')
+                    {
+                        cur_offset = close_brace + 1;
+                    }
 
                     // Capture chained subscripts/superscripts e.g. \dot{m}_{nn} or \rho_{i0}
                     let rest_after_arg = &rem_str[cur_offset..];
@@ -1491,7 +1835,9 @@ fn wrap_inline_math(line: &str) -> String {
                     let end_idx = after_cmd_idx + cur_offset;
                     let math_token = &active_line[idx..end_idx];
 
-                    if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(math_token) {
+                    if let Some(repaired) =
+                        crate::figure::latex::validate_and_repair_latex(math_token)
+                    {
                         result.push('$');
                         result.push_str(&repaired);
                         result.push('$');
@@ -1516,12 +1862,18 @@ fn wrap_inline_math(line: &str) -> String {
                     true
                 } else {
                     let prev_char = active_line[..idx].chars().last().unwrap();
-                    !prev_char.is_alphanumeric() && prev_char != '_' && prev_char != '^' && prev_char != '$'
+                    !prev_char.is_alphanumeric()
+                        && prev_char != '_'
+                        && prev_char != '^'
+                        && prev_char != '$'
                 };
 
                 if prev_ok {
                     let slice = &active_line[idx..];
-                    let base_len = slice.chars().take_while(|c| c.is_ascii_alphabetic()).count();
+                    let base_len = slice
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphabetic())
+                        .count();
                     if base_len > 0 && base_len <= 3 {
                         let after_base = &slice[base_len..];
                         if after_base.starts_with('_') || after_base.starts_with('^') {
@@ -1535,7 +1887,10 @@ fn wrap_inline_math(line: &str) -> String {
                                 }
                             } else if sub_slice.starts_with('_') || sub_slice.starts_with('^') {
                                 let sub_rem = &sub_slice[1..];
-                                let sub_word_len = sub_rem.chars().take_while(|c| c.is_ascii_alphanumeric()).count();
+                                let sub_word_len = sub_rem
+                                    .chars()
+                                    .take_while(|c| c.is_ascii_alphanumeric())
+                                    .count();
                                 if sub_word_len > 0 {
                                     captured = 1 + sub_word_len;
                                     let rem_after_sub = &sub_rem[sub_word_len..];
@@ -1559,13 +1914,19 @@ fn wrap_inline_math(line: &str) -> String {
                                 if next_ok {
                                     let raw_token = &active_line[idx..end_idx];
                                     let clean_token = raw_token.replace('$', "");
-                                    let token_to_repair = if clean_token.ends_with('}') && !clean_token.contains('{') {
+                                    let token_to_repair = if clean_token.ends_with('}')
+                                        && !clean_token.contains('{')
+                                    {
                                         clean_token.trim_end_matches('}').to_string()
                                     } else {
                                         clean_token
                                     };
 
-                                    if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(&token_to_repair) {
+                                    if let Some(repaired) =
+                                        crate::figure::latex::validate_and_repair_latex(
+                                            &token_to_repair,
+                                        )
+                                    {
                                         result.push('$');
                                         result.push_str(&repaired);
                                         result.push('$');
@@ -1608,7 +1969,9 @@ fn is_table_separator(line: &str) -> bool {
         return false;
     }
     let inner = &trimmed[1..trimmed.len() - 1];
-    inner.chars().all(|c| c == '-' || c == ':' || c == '|' || c.is_whitespace())
+    inner
+        .chars()
+        .all(|c| c == '-' || c == ':' || c == '|' || c.is_whitespace())
 }
 
 fn split_table_row(row: &str) -> Vec<String> {
@@ -1626,11 +1989,12 @@ fn split_table_row(row: &str) -> Vec<String> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             if let Some(&next) = chars.peek()
-                && next == '|' {
-                    current.push('|');
-                    chars.next();
-                    continue;
-                }
+                && next == '|'
+            {
+                current.push('|');
+                chars.next();
+                continue;
+            }
             current.push(c);
         } else if c == '|' {
             cells.push(current.trim().to_string());
@@ -1675,7 +2039,9 @@ fn wrap_unfenced_math(text: &str) -> String {
                     if is_likely_prose_sentence(trimmed_buf) {
                         out.push_str(trimmed_buf);
                         out.push_str("\n\n");
-                    } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+                    } else if let Some(repaired) =
+                        crate::figure::latex::validate_and_repair_latex(trimmed_buf)
+                    {
                         out.push_str("$$\n");
                         out.push_str(&repaired);
                         out.push_str("\n$$\n");
@@ -1698,7 +2064,9 @@ fn wrap_unfenced_math(text: &str) -> String {
                     if is_likely_prose_sentence(trimmed_buf) {
                         out.push_str(trimmed_buf);
                         out.push_str("\n\n");
-                    } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+                    } else if let Some(repaired) =
+                        crate::figure::latex::validate_and_repair_latex(trimmed_buf)
+                    {
                         out.push_str("$$\n");
                         out.push_str(&repaired);
                         out.push_str("\n$$\n");
@@ -1806,7 +2174,9 @@ fn wrap_unfenced_math(text: &str) -> String {
             if is_likely_prose_sentence(trimmed_buf) {
                 out.push_str(trimmed_buf);
                 out.push_str("\n\n");
-            } else if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(trimmed_buf) {
+            } else if let Some(repaired) =
+                crate::figure::latex::validate_and_repair_latex(trimmed_buf)
+            {
                 out.push_str("$$\n");
                 out.push_str(&repaired);
                 out.push_str("\n$$\n");
@@ -2008,11 +2378,7 @@ mod tests {
         let page_text =
             "Introductory paragraph.\n\nFigure 4.7.—Variation of species.\n\nNext paragraph.";
         let attached = attach_figures_to_page_text(page_text, &figures);
-        assert!(
-            attached.contains(
-                "![[images/Figure-4-7.png]]"
-            )
-        );
+        assert!(attached.contains("![[images/Figure-4-7.png]]"));
 
         // Case 2: Figure label is absent from page text
         let page_text_no_label = "Page with only text paragraphs.";
@@ -2139,7 +2505,9 @@ PLDmax = (1 + \Gamma)Tmav/KYPD + Pmn Pp0s
 avoided if application specific testing is done to determine \mu{t, _tb} and K."#;
 
         let formatted = normalize_latex_delimiters(doc_sample);
-        assert!(formatted.contains("$$\nPLDmax = (1 + \\Gamma)Tmaw/[Rt (tana + u1 VP/coss) + Roub Vp] + Ptn p0s\n$$"));
+        assert!(formatted.contains(
+            "$$\nPLDmax = (1 + \\Gamma)Tmaw/[Rt (tana + u1 VP/coss) + Roub Vp] + Ptn p0s\n$$"
+        ));
         assert!(formatted.contains("$$\nPLDmin = (1 - \\Gamma) (Tmin - Tp)/[Rt (tana + u P/cosp) + Ro ub P] + Ptn n9 - Pioss\n$$"));
         assert!(formatted.contains("$$\nPLDmax = (1 + \\Gamma)Tmav/KYPD + Pmn Pp0s\n$$"));
         assert!(formatted.contains("determine $\\mu{t, _tb}$ and K."));
@@ -2209,7 +2577,8 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
     #[test]
     fn test_math_gating_and_prose_rejection() {
         // Stop words in prose should be rejected from math wrapping
-        let prose_candidate = "Expressing the particle mass in Eq. (2) in terms of the particle density and volume";
+        let prose_candidate =
+            "Expressing the particle mass in Eq. (2) in terms of the particle density and volume";
         assert!(is_likely_prose_sentence(prose_candidate));
 
         // Legitimate formula should not be rejected
@@ -2219,7 +2588,12 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         // Short inline variable sharing a line
         assert!(is_inline_formula(r"m = \dot{m}", 1, 20, 24.0));
         // Tall display equation block
-        assert!(!is_inline_formula(r"\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \mathbf{u}) = 0", 0, 60, 24.0));
+        assert!(!is_inline_formula(
+            r"\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \mathbf{u}) = 0",
+            0,
+            60,
+            24.0
+        ));
     }
 
     #[test]
@@ -2231,7 +2605,10 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         let text = "# Supersonic Scramjet Propulsion and Combustion Analysis\n\nBy Dr. Jane Doe\nUniversity of Michigan\n\n## Abstract\nExperimental investigation of scramjet propulsion.\n\n## References\n1. Chen et al.";
         enrich_document_metadata(&mut meta, text);
 
-        assert_eq!(meta.title.as_deref(), Some("Supersonic Scramjet Propulsion and Combustion Analysis"));
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("Supersonic Scramjet Propulsion and Combustion Analysis")
+        );
         assert_eq!(meta.author.as_deref(), Some("By Dr. Jane Doe"));
         assert!(meta.tags.contains(&"type/journal-article".to_string()));
         assert!(meta.tags.contains(&"domain/propulsion".to_string()));
@@ -2298,7 +2675,10 @@ This is an unadorned prose paragraph that was trapped inside backticks.
         // Python should be preserved
         assert!(unwrapped.contains("```python\ndef foo():\n    return 42\n```"));
         // Section in untagged fence should be unwrapped
-        assert!(unwrapped.contains("# Section In Untagged Fence\n\nThis is an unadorned prose paragraph"));
+        assert!(
+            unwrapped
+                .contains("# Section In Untagged Fence\n\nThis is an unadorned prose paragraph")
+        );
     }
 
     #[test]
@@ -2424,7 +2804,8 @@ Inline code: `![Ignore](images/code.png)`
 
     #[test]
     fn test_convert_figure_links_preserves_base64_data_uris() {
-        let input = "Base64 image: ![Figure 1](data:image/jpeg;base64,/9j/4AAQSkZJRg==)\n*Figure 1*";
+        let input =
+            "Base64 image: ![Figure 1](data:image/jpeg;base64,/9j/4AAQSkZJRg==)\n*Figure 1*";
         let (output, count) = convert_figure_links_to_obsidian(input);
         assert_eq!(count, 0);
         assert_eq!(output, input);
@@ -2497,6 +2878,9 @@ Refer to the system schematic below.
         assert!(yaml.contains(&format!("pdf_sha256: \"{sha}\"")));
 
         let (parsed_meta, _) = parse_existing_frontmatter(&yaml);
-        assert_eq!(parsed_meta.unwrap().pdf_sha256.as_deref(), Some(sha.as_str()));
+        assert_eq!(
+            parsed_meta.unwrap().pdf_sha256.as_deref(),
+            Some(sha.as_str())
+        );
     }
 }

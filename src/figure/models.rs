@@ -7,14 +7,25 @@ use std::sync::RwLock;
 
 static CUSTOM_LAYOUT_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 
-#[cfg(any(feature = "slanet-ort", feature = "latex-ort", feature = "gliner-ort", feature = "ort"))]
+#[cfg(any(
+    feature = "slanet-ort",
+    feature = "latex-ort",
+    feature = "gliner-ort",
+    feature = "ort"
+))]
 static ORT_ENVIRONMENT: std::sync::OnceLock<std::sync::Arc<ort::environment::Environment>> =
     std::sync::OnceLock::new();
 
 /// Returns a shared, process-wide ONNX Runtime Environment singleton.
 /// Only one Environment is permitted per process by ONNX Runtime.
-#[cfg(any(feature = "slanet-ort", feature = "latex-ort", feature = "gliner-ort", feature = "ort"))]
-pub fn get_shared_ort_environment() -> anyhow::Result<std::sync::Arc<ort::environment::Environment>> {
+#[cfg(any(
+    feature = "slanet-ort",
+    feature = "latex-ort",
+    feature = "gliner-ort",
+    feature = "ort"
+))]
+pub fn get_shared_ort_environment() -> anyhow::Result<std::sync::Arc<ort::environment::Environment>>
+{
     if let Some(env) = ORT_ENVIRONMENT.get() {
         return Ok(env.clone());
     }
@@ -63,10 +74,11 @@ impl LayoutModelSource {
     pub fn load_layout_model(&self) -> Result<Vec<u8>> {
         // 1. Check custom override path if specified
         if let Some(ref path) = self.custom_path
-            && path.exists() {
-                return fs::read(path)
-                    .with_context(|| format!("Failed to read custom layout model at {:?}", path));
-            }
+            && path.exists()
+        {
+            return fs::read(path)
+                .with_context(|| format!("Failed to read custom layout model at {:?}", path));
+        }
 
         // 2. Check local workspace models/layout/ directory
         let local_path = Path::new("models/layout/yolov8n-doclaynet.onnx");

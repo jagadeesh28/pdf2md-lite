@@ -156,12 +156,13 @@ pub fn format_notes_in_path(
                 }
             }
         } else if let Some(out_p) = output
-            && !dry_run {
-                if let Some(parent) = out_p.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(out_p, fixed)?;
+            && !dry_run
+        {
+            if let Some(parent) = out_p.parent() {
+                fs::create_dir_all(parent)?;
             }
+            fs::write(out_p, fixed)?;
+        }
     } else if path.is_dir() {
         let mut md_files = Vec::new();
         collect_md_files(path, &mut md_files);
@@ -190,10 +191,9 @@ pub fn format_notes_in_path(
                 summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
                 summary.figure_links_converted += report.figure_links_converted;
 
-                if !dry_run
-                    && let Err(err) = fs::write(&p, fixed) {
-                        eprintln!("Warning: could not write {}: {err}", p.display());
-                    }
+                if !dry_run && let Err(err) = fs::write(&p, fixed) {
+                    eprintln!("Warning: could not write {}: {err}", p.display());
+                }
             }
         }
     } else {
@@ -327,10 +327,9 @@ pub fn convert_vault_png_to_jpeg(
             summary.notes_updated += 1;
             summary.links_updated += links_changed;
 
-            if !dry_run
-                && let Err(e) = fs::write(md_path, updated) {
-                    eprintln!("Warning: could not write {}: {e}", md_path.display());
-                }
+            if !dry_run && let Err(e) = fs::write(md_path, updated) {
+                eprintln!("Warning: could not write {}: {e}", md_path.display());
+            }
         }
     }
 
@@ -347,7 +346,11 @@ pub struct EmbedVaultSummary {
 }
 
 /// Retroactively generates `.embeddings.jsonl` sidecars across an existing Markdown vault or folder.
-pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> anyhow::Result<EmbedVaultSummary> {
+pub fn embed_vault_in_path(
+    path: &Path,
+    force: bool,
+    quiet: bool,
+) -> anyhow::Result<EmbedVaultSummary> {
     let mut collected = Vec::new();
     if path.is_file() {
         collected.push(path.to_path_buf());
@@ -373,7 +376,10 @@ pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> anyhow::Res
         }
 
         let content = fs::read_to_string(md_path)?;
-        let stem = md_path.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
+        let stem = md_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("note");
         let slug = crate::batch::sanitize_short_slug(stem);
 
         match crate::embeddings::generate_and_save_sidecar(&content, &slug, md_path, &engine) {
@@ -408,10 +414,15 @@ pub fn download_embedding_models_cli() -> anyhow::Result<()> {
     let model_target = target_dir.join("model.onnx");
     let tokenizer_target = target_dir.join("tokenizer.json");
 
-    println!("Checking embedding model assets in '{}'...", target_dir.display());
+    println!(
+        "Checking embedding model assets in '{}'...",
+        target_dir.display()
+    );
 
-    let model_url = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
-    let tokenizer_url = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/main/tokenizer.json";
+    let model_url =
+        "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
+    let tokenizer_url =
+        "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/main/tokenizer.json";
 
     if !model_target.exists() {
         println!("Downloading quantized all-MiniLM-L6-v2 ONNX model (~22 MB)...");
@@ -436,7 +447,12 @@ pub fn download_embedding_models_cli() -> anyhow::Result<()> {
     if !tokenizer_target.exists() {
         println!("Downloading tokenizer.json...");
         let status = std::process::Command::new("curl.exe")
-            .args(["-L", "-o", tokenizer_target.to_str().unwrap(), tokenizer_url])
+            .args([
+                "-L",
+                "-o",
+                tokenizer_target.to_str().unwrap(),
+                tokenizer_url,
+            ])
             .status();
 
         match status {
@@ -484,7 +500,9 @@ pub fn run() {
     let dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n");
     let mut watch_mode = args.iter().any(|a| a == "--watch" || a == "-w");
 
-    let download_models_mode = args.iter().any(|a| a == "--download-models" || a == "--fetch-models");
+    let download_models_mode = args
+        .iter()
+        .any(|a| a == "--download-models" || a == "--fetch-models");
     if download_models_mode {
         if let Err(e) = download_embedding_models_cli() {
             eprintln!("Error provisioning models: {e:#}");
@@ -505,12 +523,12 @@ pub fn run() {
                 || a == "--convert-images"
                 || a == "--convert-to-jpeg"
             {
-                if idx + 1 < args.len() && !args[idx + 1].starts_with('-')
-                    && target_path.is_none() {
-                        target_path = Some(PathBuf::from(&args[idx + 1]));
-                        idx += 2;
-                        continue;
-                    }
+                if idx + 1 < args.len() && !args[idx + 1].starts_with('-') && target_path.is_none()
+                {
+                    target_path = Some(PathBuf::from(&args[idx + 1]));
+                    idx += 2;
+                    continue;
+                }
             } else if a == "--image-quality" || a == "--quality" {
                 if idx + 1 < args.len() {
                     if let Ok(q) = args[idx + 1].parse::<u8>() {
@@ -534,7 +552,9 @@ pub fn run() {
         let target = match target_path {
             Some(p) => p,
             None => {
-                eprintln!("Error: Flag '--convert-images-to-jpeg' requires a vault or directory path");
+                eprintln!(
+                    "Error: Flag '--convert-images-to-jpeg' requires a vault or directory path"
+                );
                 print_usage();
                 process::exit(1);
             }
@@ -542,20 +562,38 @@ pub fn run() {
 
         match convert_vault_png_to_jpeg(&target, quality, dry_run) {
             Ok(summary) => {
-                let action = if dry_run { "Previewed (dry-run)" } else { "Successfully converted" };
-                let pct_saved = if summary.orig_bytes > 0 && summary.new_bytes < summary.orig_bytes {
-                    format!("{:.1}% reduction", (summary.orig_bytes - summary.new_bytes) as f64 / summary.orig_bytes as f64 * 100.0)
+                let action = if dry_run {
+                    "Previewed (dry-run)"
+                } else {
+                    "Successfully converted"
+                };
+                let pct_saved = if summary.orig_bytes > 0 && summary.new_bytes < summary.orig_bytes
+                {
+                    format!(
+                        "{:.1}% reduction",
+                        (summary.orig_bytes - summary.new_bytes) as f64 / summary.orig_bytes as f64
+                            * 100.0
+                    )
                 } else {
                     "0.0% reduction".to_string()
                 };
                 println!("{action} PNG images to JPEG in {}:", target.display());
                 println!("  - PNG images scanned:        {}", summary.images_scanned);
-                println!("  - PNG images converted:      {}", summary.images_converted);
+                println!(
+                    "  - PNG images converted:      {}",
+                    summary.images_converted
+                );
                 println!("  - Markdown notes scanned:    {}", summary.notes_scanned);
                 println!("  - Notes with updated links:  {}", summary.notes_updated);
                 println!("  - Total image links changed: {}", summary.links_updated);
-                println!("  - Original image disk size:  {:.2} MB", summary.orig_bytes as f64 / (1024.0 * 1024.0));
-                println!("  - New image disk size:       {:.2} MB ({pct_saved})", summary.new_bytes as f64 / (1024.0 * 1024.0));
+                println!(
+                    "  - Original image disk size:  {:.2} MB",
+                    summary.orig_bytes as f64 / (1024.0 * 1024.0)
+                );
+                println!(
+                    "  - New image disk size:       {:.2} MB ({pct_saved})",
+                    summary.new_bytes as f64 / (1024.0 * 1024.0)
+                );
                 if dry_run {
                     println!("\n(Dry-run mode: no changes were written to disk)");
                 }
@@ -584,12 +622,12 @@ pub fn run() {
                 || a == "--fix-math"
                 || a == "-f"
             {
-                if idx + 1 < args.len() && !args[idx + 1].starts_with('-')
-                    && target_path.is_none() {
-                        target_path = Some(PathBuf::from(&args[idx + 1]));
-                        idx += 2;
-                        continue;
-                    }
+                if idx + 1 < args.len() && !args[idx + 1].starts_with('-') && target_path.is_none()
+                {
+                    target_path = Some(PathBuf::from(&args[idx + 1]));
+                    idx += 2;
+                    continue;
+                }
             } else if a == "--dry-run" || a == "-n" {
                 idx += 1;
                 continue;
@@ -618,7 +656,9 @@ pub fn run() {
         let target = match target_path {
             Some(p) => p,
             None => {
-                eprintln!("Error: Flag '--format-notes' requires a Markdown file or directory path");
+                eprintln!(
+                    "Error: Flag '--format-notes' requires a Markdown file or directory path"
+                );
                 print_usage();
                 process::exit(1);
             }
@@ -626,16 +666,44 @@ pub fn run() {
 
         match format_notes_in_path(&target, out_path.as_deref(), dry_run) {
             Ok(summary) => {
-                let action = if dry_run { "Previewed (dry-run)" } else { "Successfully formatted" };
+                let action = if dry_run {
+                    "Previewed (dry-run)"
+                } else {
+                    "Successfully formatted"
+                };
                 println!("{action} note(s) in {}:", target.display());
-                println!("  - Files scanned:                  {}", summary.files_scanned);
-                println!("  - Files modified:                 {}", summary.files_modified);
-                println!("  - Spurious codeblocks unwrapped:  {}", summary.codeblocks_unwrapped);
-                println!("  - Extraction banners purged:      {}", summary.banners_purged);
-                println!("  - LaTeX equations / tables fixed: {}", summary.latex_repaired);
-                println!("  - Frontmatter blocks synthesized: {}", summary.frontmatter_added);
-                println!("  - Metadata properties backfilled: {}", summary.frontmatter_fields_backfilled);
-                println!("  - Figure links converted:         {}", summary.figure_links_converted);
+                println!(
+                    "  - Files scanned:                  {}",
+                    summary.files_scanned
+                );
+                println!(
+                    "  - Files modified:                 {}",
+                    summary.files_modified
+                );
+                println!(
+                    "  - Spurious codeblocks unwrapped:  {}",
+                    summary.codeblocks_unwrapped
+                );
+                println!(
+                    "  - Extraction banners purged:      {}",
+                    summary.banners_purged
+                );
+                println!(
+                    "  - LaTeX equations / tables fixed: {}",
+                    summary.latex_repaired
+                );
+                println!(
+                    "  - Frontmatter blocks synthesized: {}",
+                    summary.frontmatter_added
+                );
+                println!(
+                    "  - Metadata properties backfilled: {}",
+                    summary.frontmatter_fields_backfilled
+                );
+                println!(
+                    "  - Figure links converted:         {}",
+                    summary.figure_links_converted
+                );
                 if dry_run {
                     println!("\n(Dry-run mode: no changes were written to disk)");
                 }
@@ -780,14 +848,20 @@ pub fn run() {
     if embed && output_path.is_none() && input_path.is_some() {
         let target = input_path.clone().unwrap();
         if target.is_file() || target.is_dir() {
-            println!("Retroactively embedding vault notes in '{}'...", target.display());
+            println!(
+                "Retroactively embedding vault notes in '{}'...",
+                target.display()
+            );
             match embed_vault_in_path(&target, force, quiet) {
                 Ok(summary) => {
                     println!("\nVault embedding complete:");
                     println!("  - Markdown notes scanned:     {}", summary.notes_scanned);
                     println!("  - Markdown notes embedded:    {}", summary.notes_embedded);
                     println!("  - Notes skipped (up to date): {}", summary.notes_skipped);
-                    println!("  - Total chunks indexed:       {}", summary.chunks_embedded);
+                    println!(
+                        "  - Total chunks indexed:       {}",
+                        summary.chunks_embedded
+                    );
                     process::exit(0);
                 }
                 Err(e) => {
@@ -838,22 +912,20 @@ pub fn run() {
         })
         .unwrap_or(ImageFormat::Jpeg);
 
-    let final_image_quality = image_quality
-        .or(config.image_quality)
-        .unwrap_or(80);
+    let final_image_quality = image_quality.or(config.image_quality).unwrap_or(80);
 
     let final_save_table_images = save_table_images
         .or(config.save_table_images)
         .unwrap_or(false);
 
-    let final_embed_base64 = embed_images_base64
-        || config.embed_images_base64.unwrap_or(false);
+    let final_embed_base64 = embed_images_base64 || config.embed_images_base64.unwrap_or(false);
 
     let image_opts = ImageOptions::new(
         final_image_format,
         final_image_quality,
         final_save_table_images,
-    ).with_embed_base64(final_embed_base64);
+    )
+    .with_embed_base64(final_embed_base64);
 
     if watch_mode {
         let watch_opts = crate::watch::WatchOptions {
@@ -900,9 +972,8 @@ pub fn run() {
             }
         } else {
             let begin = begin_page.unwrap_or(1);
-            let end = end_page.unwrap_or_else(|| {
-                crate::pdf::get_pdf_page_count(&input).unwrap_or(begin)
-            });
+            let end =
+                end_page.unwrap_or_else(|| crate::pdf::get_pdf_page_count(&input).unwrap_or(begin));
             match crate::batch::dry_run_single_pdf(
                 &input,
                 &output,
@@ -965,9 +1036,8 @@ pub fn run() {
         }
     } else {
         let begin = begin_page.unwrap_or(1);
-        let end = end_page.unwrap_or_else(|| {
-            crate::pdf::get_pdf_page_count(&input).unwrap_or(begin)
-        });
+        let end =
+            end_page.unwrap_or_else(|| crate::pdf::get_pdf_page_count(&input).unwrap_or(begin));
 
         // Determine target markdown output path
         let target_md = if output.is_dir() || output.extension().is_none() {
@@ -1018,12 +1088,15 @@ mod tests {
         let png_path = img_dir.join("figure1.png");
 
         let dummy = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
-        dummy.save_with_format(&png_path, image::ImageFormat::Png).unwrap();
+        dummy
+            .save_with_format(&png_path, image::ImageFormat::Png)
+            .unwrap();
         assert!(png_path.exists());
 
         // Create markdown file referencing the PNG
         let md_path = vault.join("Note.md");
-        let initial_md = "# Title\n\n![Figure 1](notes_images/figure1.png)\n\n![[notes_images/figure1.png]]\n";
+        let initial_md =
+            "# Title\n\n![Figure 1](notes_images/figure1.png)\n\n![[notes_images/figure1.png]]\n";
         fs::write(&md_path, initial_md).unwrap();
 
         // Run conversion

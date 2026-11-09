@@ -1,4 +1,4 @@
-name: CI Build Matrix
+name: CI Quality Gates & Build Matrix
 
 on:
   push:
@@ -7,8 +7,42 @@ on:
     branches: [ "main" ]
 
 jobs:
+  quality-gates:
+    name: Code Health & Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up build caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting (rustfmt)
+        run: cargo fmt --check
+
+      - name: Strict clippy linting (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Verify benchmarks compilation
+        run: cargo check --benches
+
+      - name: Run test suite
+        run: cargo test --all-targets
+
+      - name: Cargo deny security & license audits
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+        continue-on-error: true
+
   build:
     name: ${{ matrix.name }}
+    needs: quality-gates
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

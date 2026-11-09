@@ -229,9 +229,8 @@ impl BatchProgressTracker {
             "-- p/s".to_string()
         };
 
-        self.pb.set_message(format!(
-            "{active} | {throughput_str} | ETA: {eta_str}"
-        ));
+        self.pb
+            .set_message(format!("{active} | {throughput_str} | ETA: {eta_str}"));
     }
 
     /// Finishes the progress bar and clears the transient line cleanly.

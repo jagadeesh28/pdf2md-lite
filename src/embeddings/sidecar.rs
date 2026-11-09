@@ -77,8 +77,8 @@ pub fn write_embeddings_sidecar(path: &Path, records: &[EmbeddingRecord]) -> Res
     let mut writer = BufWriter::new(file);
 
     for record in records {
-        let json = serde_json::to_string(record)
-            .context("Failed to serialize EmbeddingRecord to JSON")?;
+        let json =
+            serde_json::to_string(record).context("Failed to serialize EmbeddingRecord to JSON")?;
         writeln!(writer, "{json}")?;
     }
 
@@ -100,8 +100,13 @@ pub fn read_embeddings_sidecar(path: &Path) -> Result<Vec<EmbeddingRecord>> {
             continue;
         }
 
-        let record: EmbeddingRecord = serde_json::from_str(trimmed)
-            .with_context(|| format!("Failed to deserialize record at line {} in {}", line_num + 1, path.display()))?;
+        let record: EmbeddingRecord = serde_json::from_str(trimmed).with_context(|| {
+            format!(
+                "Failed to deserialize record at line {} in {}",
+                line_num + 1,
+                path.display()
+            )
+        })?;
         records.push(record);
     }
 
@@ -148,6 +153,9 @@ mod tests {
     fn test_sidecar_path_derivation() {
         let md = Path::new("output/turbines/turbines.md");
         let sidecar = sidecar_path_for_markdown(md);
-        assert_eq!(sidecar, Path::new("output/turbines/turbines.embeddings.jsonl"));
+        assert_eq!(
+            sidecar,
+            Path::new("output/turbines/turbines.embeddings.jsonl")
+        );
     }
 }

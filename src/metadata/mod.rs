@@ -1,3 +1,6 @@
 pub mod gliner;
 
-pub use gliner::{GlinerEngine, GlinerExtractionResult, get_gliner_engine, extract_header_metadata_fallback, populate_metadata_from_text};
+pub use gliner::{
+    GlinerEngine, GlinerExtractionResult, extract_header_metadata_fallback, get_gliner_engine,
+    populate_metadata_from_text,
+};

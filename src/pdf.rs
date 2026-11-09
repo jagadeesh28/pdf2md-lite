@@ -85,7 +85,13 @@ pub fn stream_rendered_pages(
         .take(end_page - begin_page + 1)
     {
         let page_num = index + 1;
-        let pixmap = hayro::render(page, &cache, &interpreter_settings, &render_settings, &pixmap_settings);
+        let pixmap = hayro::render(
+            page,
+            &cache,
+            &interpreter_settings,
+            &render_settings,
+            &pixmap_settings,
+        );
         let dynamic_image = pixmap_to_dynamic_image(&pixmap);
         if tx.send(Ok((page_num, dynamic_image))).is_err() {
             // Receiver closed channel early (e.g. error or pipeline abort)
@@ -143,9 +149,15 @@ pub fn render_pages_to_images(
         .take(end_page - begin_page + 1)
     {
         let page_path = output_dir.join(format!("page-{}.png", index + 1));
-        let png = hayro::render(page, &cache, &interpreter_settings, &render_settings, &pixmap_settings)
-            .into_png()
-            .with_context(|| format!("failed to encode rendered PDF page {}", index + 1))?;
+        let png = hayro::render(
+            page,
+            &cache,
+            &interpreter_settings,
+            &render_settings,
+            &pixmap_settings,
+        )
+        .into_png()
+        .with_context(|| format!("failed to encode rendered PDF page {}", index + 1))?;
         fs::write(&page_path, png)
             .with_context(|| format!("failed to save rendered page {}", index + 1))?;
         page_paths.push(page_path);
@@ -239,32 +251,40 @@ pub fn extract_pdf_metadata(pdf_path: &Path) -> DocumentMetadata {
     if let Ok(doc) = lopdf::Document::load(pdf_path) {
         let info_obj = doc.trailer.get(b"Info").ok();
         let info_dict = match info_obj {
-            Some(lopdf::Object::Reference(id)) => doc.get_object(*id).ok().and_then(|o| o.as_dict().ok().cloned()),
+            Some(lopdf::Object::Reference(id)) => doc
+                .get_object(*id)
+                .ok()
+                .and_then(|o| o.as_dict().ok().cloned()),
             Some(lopdf::Object::Dictionary(dict)) => Some(dict.clone()),
             _ => None,
         };
 
         if let Some(dict) = info_dict {
             if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty() {
-                    meta.title = Some(val);
-                }
+                && !val.trim().is_empty()
+            {
+                meta.title = Some(val);
+            }
             if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty() {
-                    meta.author = Some(val);
-                }
+                && !val.trim().is_empty()
+            {
+                meta.author = Some(val);
+            }
             if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty() {
-                    meta.subject = Some(val);
-                }
+                && !val.trim().is_empty()
+            {
+                meta.subject = Some(val);
+            }
             if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty() {
-                    meta.keywords = Some(val);
-                }
+                && !val.trim().is_empty()
+            {
+                meta.keywords = Some(val);
+            }
             if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty() {
-                    meta.creation_date = Some(clean_pdf_date(&val));
-                }
+                && !val.trim().is_empty()
+            {
+                meta.creation_date = Some(clean_pdf_date(&val));
+            }
         }
     }
 

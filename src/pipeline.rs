@@ -15,7 +15,9 @@ use crate::backends::indra::{IndraEngine, IndraScript, TextLine};
 use crate::batch::sanitize_short_slug;
 use crate::concurrency::resolve_concurrency;
 use crate::figure::{self, mask_page_regions};
-use crate::markdown::{attach_figures_to_page_text, format_page_demarcation, normalize_latex_delimiters};
+use crate::markdown::{
+    attach_figures_to_page_text, format_page_demarcation, normalize_latex_delimiters,
+};
 use crate::pdf::{safe_extract_text_by_pages, validate_page_range};
 
 static INDRA_ENGINE: std::sync::OnceLock<IndraEngine> = std::sync::OnceLock::new();
@@ -138,9 +140,7 @@ pub fn process_pdf_full(
     let short_slug = sanitize_short_slug(pdf_stem);
     let images_folder_name = format!("{short_slug}_images");
 
-    let output_dir = output_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let output_dir = output_path.parent().unwrap_or_else(|| Path::new("."));
     let image_output_dir = output_dir.join(&images_folder_name);
 
     fs::create_dir_all(output_dir)
@@ -175,32 +175,45 @@ pub fn process_pdf_full(
         if !header_slice.trim().is_empty() {
             #[cfg(feature = "gliner-ort")]
             if let Some(gliner) = crate::metadata::get_gliner_engine()
-                && let Ok(res) = gliner.extract_metadata(&header_slice, &["title", "author", "date", "organization", "journal", "volume", "keywords", "doi"]) {
-                    if metadata.author.is_none() && !res.authors.is_empty() {
-                        metadata.author = Some(res.authors.join(", "));
-                    }
-                    if metadata.publication_date.is_none() && res.date.is_some() {
-                        metadata.publication_date = res.date;
-                    }
-                    if metadata.organization.is_none() && res.organization.is_some() {
-                        metadata.organization = res.organization;
-                    }
-                    if metadata.journal.is_none() && res.journal.is_some() {
-                        metadata.journal = res.journal;
-                    }
-                    if metadata.volume.is_none() && res.volume.is_some() {
-                        metadata.volume = res.volume;
-                    }
-                    if metadata.issue.is_none() && res.issue.is_some() {
-                        metadata.issue = res.issue;
-                    }
-                    if metadata.doi.is_none() && res.doi.is_some() {
-                        metadata.doi = res.doi;
-                    }
-                    if metadata.keywords.is_none() && !res.keywords.is_empty() {
-                        metadata.keywords = Some(res.keywords.join(", "));
-                    }
+                && let Ok(res) = gliner.extract_metadata(
+                    &header_slice,
+                    &[
+                        "title",
+                        "author",
+                        "date",
+                        "organization",
+                        "journal",
+                        "volume",
+                        "keywords",
+                        "doi",
+                    ],
+                )
+            {
+                if metadata.author.is_none() && !res.authors.is_empty() {
+                    metadata.author = Some(res.authors.join(", "));
                 }
+                if metadata.publication_date.is_none() && res.date.is_some() {
+                    metadata.publication_date = res.date;
+                }
+                if metadata.organization.is_none() && res.organization.is_some() {
+                    metadata.organization = res.organization;
+                }
+                if metadata.journal.is_none() && res.journal.is_some() {
+                    metadata.journal = res.journal;
+                }
+                if metadata.volume.is_none() && res.volume.is_some() {
+                    metadata.volume = res.volume;
+                }
+                if metadata.issue.is_none() && res.issue.is_some() {
+                    metadata.issue = res.issue;
+                }
+                if metadata.doi.is_none() && res.doi.is_some() {
+                    metadata.doi = res.doi;
+                }
+                if metadata.keywords.is_none() && !res.keywords.is_empty() {
+                    metadata.keywords = Some(res.keywords.join(", "));
+                }
+            }
 
             // Fallback pattern extractor if neural weights are not present
             if metadata.author.is_none()
@@ -357,7 +370,9 @@ pub fn process_pdf_full(
                 }
             }
         } else {
-            eprintln!("Warning: Embedding generation requested but embedding model is not loaded. Run 'pdfmd-lite --download-models'.");
+            eprintln!(
+                "Warning: Embedding generation requested but embedding model is not loaded. Run 'pdfmd-lite --download-models'."
+            );
         }
     }
 
@@ -434,7 +449,8 @@ where
 
     // Zero-disk Pipelined Streaming: Dedicated rendering thread streams DynamicImages into a bounded channel
     let channel_bound = concurrency.clamp(2, 4);
-    let (raster_tx, raster_rx) = mpsc::sync_channel::<Result<(usize, image::DynamicImage)>>(channel_bound);
+    let (raster_tx, raster_rx) =
+        mpsc::sync_channel::<Result<(usize, image::DynamicImage)>>(channel_bound);
     let pdf_path_for_render = input_path.to_path_buf();
 
     let render_thread = thread::spawn(move || {
@@ -481,7 +497,9 @@ where
             let handle = thread::spawn(move || {
                 loop {
                     let item = {
-                        let Ok(rx) = raster_rx_clone.lock() else { break };
+                        let Ok(rx) = raster_rx_clone.lock() else {
+                            break;
+                        };
                         rx.recv().ok()
                     };
 
@@ -577,11 +595,12 @@ pub fn safe_process_single_page(
                  > Failed to open image for OCR: {err:#}\n\n"
             );
             if let Some(txt) = raw_page_text
-                && !txt.trim().is_empty() {
-                    warning_block.push_str("### Recovered Stream Text\n\n");
-                    warning_block.push_str(txt.trim());
-                    warning_block.push_str("\n\n");
-                }
+                && !txt.trim().is_empty()
+            {
+                warning_block.push_str("### Recovered Stream Text\n\n");
+                warning_block.push_str(txt.trim());
+                warning_block.push_str("\n\n");
+            }
             return warning_block;
         }
     };
@@ -668,18 +687,21 @@ pub fn safe_process_single_page_image_with_doc_and_options(
     match result {
         Ok(Ok(page_md)) => page_md,
         Ok(Err(err)) => {
-            eprintln!("Warning: Page {page_num} processing failed ({err:#}). Emitting warning callout.");
+            eprintln!(
+                "Warning: Page {page_num} processing failed ({err:#}). Emitting warning callout."
+            );
             let page_demarcation = format_page_demarcation(page_num);
             let mut warning_block = format!(
                 "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
                  > An error occurred during page transcription: {err:#}\n\n"
             );
             if let Some(txt) = raw_page_text
-                && !txt.trim().is_empty() {
-                    warning_block.push_str("### Recovered Stream Text\n\n");
-                    warning_block.push_str(txt.trim());
-                    warning_block.push_str("\n\n");
-                }
+                && !txt.trim().is_empty()
+            {
+                warning_block.push_str("### Recovered Stream Text\n\n");
+                warning_block.push_str(txt.trim());
+                warning_block.push_str("\n\n");
+            }
             warning_block
         }
         Err(_) => {
@@ -690,11 +712,12 @@ pub fn safe_process_single_page_image_with_doc_and_options(
                  > An unexpected panic occurred while decoding or processing page {page_num}.\n\n"
             );
             if let Some(txt) = raw_page_text
-                && !txt.trim().is_empty() {
-                    warning_block.push_str("### Recovered Stream Text\n\n");
-                    warning_block.push_str(txt.trim());
-                    warning_block.push_str("\n\n");
-                }
+                && !txt.trim().is_empty()
+            {
+                warning_block.push_str("### Recovered Stream Text\n\n");
+                warning_block.push_str(txt.trim());
+                warning_block.push_str("\n\n");
+            }
             warning_block
         }
     }
@@ -778,8 +801,10 @@ fn process_single_page_image_with_doc(
         let is_inside_table = layout.tables.iter().any(|(t_rect, _)| {
             let cx = formula_rect.x + formula_rect.width / 2;
             let cy = formula_rect.y + formula_rect.height / 2;
-            cx >= t_rect.x && cx <= t_rect.x + t_rect.width
-                && cy >= t_rect.y && cy <= t_rect.y + t_rect.height
+            cx >= t_rect.x
+                && cx <= t_rect.x + t_rect.width
+                && cy >= t_rect.y
+                && cy <= t_rect.y + t_rect.height
         });
 
         let inside_lines: Vec<&TextLine> = text_lines
@@ -828,9 +853,10 @@ fn process_single_page_image_with_doc(
                 if crop_w > 15 && crop_h > 15 {
                     let crop = page_img.crop_imm(formula_rect.x, formula_rect.y, crop_w, crop_h);
                     if let Ok(pred) = latex_engine.predict_latex(&crop)
-                        && !pred.trim().is_empty() {
-                            recognized_latex = Some(pred);
-                        }
+                        && !pred.trim().is_empty()
+                    {
+                        recognized_latex = Some(pred);
+                    }
                 }
             }
         }
@@ -857,7 +883,9 @@ fn process_single_page_image_with_doc(
         }
 
         // Validate and repair LaTeX syntax: preserve valid single-letter variables, reject unfixable noise
-        let formula_trimmed = if formula_candidate.len() == 1 && formula_candidate.chars().all(|c| c.is_ascii_alphabetic()) {
+        let formula_trimmed = if formula_candidate.len() == 1
+            && formula_candidate.chars().all(|c| c.is_ascii_alphabetic())
+        {
             formula_candidate
         } else {
             match figure::latex::validate_and_repair_latex(&formula_candidate) {
@@ -895,7 +923,8 @@ fn process_single_page_image_with_doc(
             .filter(|l| {
                 let l_mid_y = l.bbox.y + l.bbox.height / 2;
                 (l_mid_y as i32 - f_mid_y as i32).abs() < (avg_line_height * 0.6) as i32
-                    && (l.bbox.x + l.bbox.width < formula_rect.x || l.bbox.x > formula_rect.x + formula_rect.width)
+                    && (l.bbox.x + l.bbox.width < formula_rect.x
+                        || l.bbox.x > formula_rect.x + formula_rect.width)
             })
             .count();
 
@@ -955,33 +984,40 @@ fn process_single_page_image_with_doc(
 
         #[cfg(feature = "slanet-ort")]
         if let Some(slanet) = figure::slanet::get_slanet_engine() {
-            let crop = page_img.crop_imm(table_rect.x, table_rect.y, table_rect.width, table_rect.height);
-            if let Ok(md) = slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y)
-                && !md.trim().is_empty() {
-                    table_md_opt = Some(md);
-                    raw_lines = text_lines
-                        .iter()
-                        .filter(|l| {
-                            let mid_x = l.bbox.x + l.bbox.width / 2;
-                            let mid_y = l.bbox.y + l.bbox.height / 2;
-                            mid_x >= table_rect.x
-                                && mid_x <= table_rect.x + table_rect.width
-                                && mid_y >= table_rect.y
-                                && mid_y <= table_rect.y + table_rect.height
-                        })
-                        .map(|l| l.text.clone())
-                        .collect();
-                }
+            let crop = page_img.crop_imm(
+                table_rect.x,
+                table_rect.y,
+                table_rect.width,
+                table_rect.height,
+            );
+            if let Ok(md) =
+                slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y)
+                && !md.trim().is_empty()
+            {
+                table_md_opt = Some(md);
+                raw_lines = text_lines
+                    .iter()
+                    .filter(|l| {
+                        let mid_x = l.bbox.x + l.bbox.width / 2;
+                        let mid_y = l.bbox.y + l.bbox.height / 2;
+                        mid_x >= table_rect.x
+                            && mid_x <= table_rect.x + table_rect.width
+                            && mid_y >= table_rect.y
+                            && mid_y <= table_rect.y + table_rect.height
+                    })
+                    .map(|l| l.text.clone())
+                    .collect();
+            }
         }
 
         // Fall back to pure geometric table grid extraction if SLANet not used or yields empty/degenerate output
         if table_md_opt.is_none()
             && let Some((geom_md, geom_lines)) =
                 figure::table::extract_table_with_lines(table_rect, &table_input_lines)
-            {
-                table_md_opt = Some(geom_md);
-                raw_lines = geom_lines;
-            }
+        {
+            table_md_opt = Some(geom_md);
+            raw_lines = geom_lines;
+        }
 
         if let Some(table_md) = table_md_opt {
             let callout = if image_opts.save_table_images {
@@ -1031,7 +1067,14 @@ mod tests {
         let fake_out = Path::new("fake_out");
         let raw_text = Some("Fallback extracted stream text on page 7.");
 
-        let md = safe_process_single_page(None, fake_image, fake_out, 7, raw_text, IndraScript::default());
+        let md = safe_process_single_page(
+            None,
+            fake_image,
+            fake_out,
+            7,
+            raw_text,
+            IndraScript::default(),
+        );
 
         assert!(md.contains("<!-- Page 7 -->"));
         assert!(md.contains("> [!WARNING] Page 7 Processing Incomplete"));

@@ -27,17 +27,26 @@ impl AppConfig {
         if let Some(path) = explicit_path {
             let content = fs::read_to_string(path)
                 .with_context(|| format!("Failed to read config file at {}", path.display()))?;
-            let config: AppConfig = toml::from_str(&content)
-                .with_context(|| format!("Failed to parse TOML configuration at {}", path.display()))?;
+            let config: AppConfig = toml::from_str(&content).with_context(|| {
+                format!("Failed to parse TOML configuration at {}", path.display())
+            })?;
             return Ok(config);
         }
 
         let default_config = Path::new("pdfmd-lite.toml");
         if default_config.exists() {
-            let content = fs::read_to_string(default_config)
-                .with_context(|| format!("Failed to read default config at {}", default_config.display()))?;
-            let config: AppConfig = toml::from_str(&content)
-                .with_context(|| format!("Failed to parse default config at {}", default_config.display()))?;
+            let content = fs::read_to_string(default_config).with_context(|| {
+                format!(
+                    "Failed to read default config at {}",
+                    default_config.display()
+                )
+            })?;
+            let config: AppConfig = toml::from_str(&content).with_context(|| {
+                format!(
+                    "Failed to parse default config at {}",
+                    default_config.display()
+                )
+            })?;
             return Ok(config);
         }
 

@@ -15,21 +15,21 @@ pub mod xycut;
 
 pub use backends::indra::{IndraEngine, IndraScript, TextLine};
 pub use batch::{
-    dry_run_pdf_directory, dry_run_single_pdf, process_pdf_directory, process_pdf_directory_all,
-    process_pdf_directory_full, process_pdf_directory_with_image_options, BatchConversionResult,
-    ConversionPlan, DryRunReport, sanitize_short_slug,
+    BatchConversionResult, ConversionPlan, DryRunReport, dry_run_pdf_directory, dry_run_single_pdf,
+    process_pdf_directory, process_pdf_directory_all, process_pdf_directory_full,
+    process_pdf_directory_with_image_options, sanitize_short_slug,
 };
-pub use cli::{convert_vault_png_to_jpeg, embed_vault_in_path, ConvertImagesSummary, EmbedVaultSummary};
+pub use cli::{
+    ConvertImagesSummary, EmbedVaultSummary, convert_vault_png_to_jpeg, embed_vault_in_path,
+};
 pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult};
-pub use progress::{BatchProgressTracker, format_eta};
-pub use watch::{watch_directory, WatchOptions};
 pub use markdown::{
-    attach_figures_to_page_text, convert_figure_links_to_obsidian, format_page_demarcation,
-    normalize_latex_delimiters, render_markdown, replace_png_links_with_jpg, DocumentMetadata,
-    PdfExtractionResult,
+    DocumentMetadata, PdfExtractionResult, attach_figures_to_page_text,
+    convert_figure_links_to_obsidian, format_page_demarcation, normalize_latex_delimiters,
+    render_markdown, replace_png_links_with_jpg,
 };
 pub use pdf::{
     clean_extracted_text, extract_pdf_metadata, extract_pdf_text, get_pdf_page_count,
@@ -40,3 +40,5 @@ pub use pipeline::{
     process_pdf_full, process_pdf_with_options, process_pdf_with_pipeline_options,
     process_pdf_with_source, safe_process_single_page,
 };
+pub use progress::{BatchProgressTracker, format_eta};
+pub use watch::{WatchOptions, watch_directory};

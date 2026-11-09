@@ -31,8 +31,12 @@ impl EmbeddingEngine {
 
         #[cfg(feature = "embed-models")]
         let tokenizer = {
-            let mut tok = tokenizers::Tokenizer::from_file(&tokenizer_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load tokenizer from {}: {e}", tokenizer_path.display()))?;
+            let mut tok = tokenizers::Tokenizer::from_file(&tokenizer_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to load tokenizer from {}: {e}",
+                    tokenizer_path.display()
+                )
+            })?;
             // Truncate to maximum 512 tokens (standard BERT/MiniLM context window)
             let _ = tok.with_truncation(Some(tokenizers::TruncationParams {
                 max_length: 512,
@@ -49,7 +53,12 @@ impl EmbeddingEngine {
                 .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
                 .map_err(|e| anyhow::anyhow!("Failed to set embedding optimization level: {e}"))?
                 .commit_from_file(&model_path)
-                .map_err(|e| anyhow::anyhow!("Failed to load embedding model from {}: {e}", model_path.display()))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to load embedding model from {}: {e}",
+                        model_path.display()
+                    )
+                })?;
             Mutex::new(s)
         };
 
@@ -64,7 +73,10 @@ impl EmbeddingEngine {
     /// Embeds a single text string into a 384-dimensional unit L2-normalized vector.
     pub fn embed_text(&self, text: &str) -> Result<Vec<f32>> {
         let results = self.embed_batch(&[text])?;
-        results.into_iter().next().context("No embedding produced for text")
+        results
+            .into_iter()
+            .next()
+            .context("No embedding produced for text")
     }
 
     /// Embeds a batch of texts into 384-dimensional unit L2-normalized vectors.
@@ -77,15 +89,25 @@ impl EmbeddingEngine {
 
         #[cfg(all(feature = "embed-models", feature = "ort"))]
         {
-            let mut session_guard = self.session.lock().map_err(|e| anyhow::anyhow!("Embedding mutex poisoned: {e}"))?;
+            let mut session_guard = self
+                .session
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Embedding mutex poisoned: {e}"))?;
 
             for &text in texts {
-                let encoding = self.tokenizer.encode(text, true)
+                let encoding = self
+                    .tokenizer
+                    .encode(text, true)
                     .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
 
                 let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-                let attention_mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&x| x as i64).collect();
-                let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&x| x as i64).collect();
+                let attention_mask: Vec<i64> = encoding
+                    .get_attention_mask()
+                    .iter()
+                    .map(|&x| x as i64)
+                    .collect();
+                let token_type_ids: Vec<i64> =
+                    encoding.get_type_ids().iter().map(|&x| x as i64).collect();
 
                 let seq_len = input_ids.len();
                 if seq_len == 0 {
@@ -115,9 +137,10 @@ impl EmbeddingEngine {
                 let outputs = session_guard.run(inputs)?;
 
                 // Output 0: last_hidden_state [1, seq_len, 384]
-                let (hidden_shape, hidden_slice) = outputs[0]
-                    .try_extract_tensor::<f32>()
-                    .map_err(|e| anyhow::anyhow!("Failed to extract last_hidden_state tensor: {e}"))?;
+                let (hidden_shape, hidden_slice) =
+                    outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+                        anyhow::anyhow!("Failed to extract last_hidden_state tensor: {e}")
+                    })?;
 
                 let hidden_dim = if hidden_shape.len() >= 3 {
                     hidden_shape[2] as usize

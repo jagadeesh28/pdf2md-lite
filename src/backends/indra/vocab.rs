@@ -55,7 +55,19 @@ pub fn is_valid_telugu_doc_char(c: char) -> bool {
     // 3. Permitted Indic and typography punctuation: dandas (।, ॥), ZWNJ, ZWJ, quotes, dashes, bullets, ellipses, rupee
     matches!(
         cp,
-        0x0964 | 0x0965 | 0x200C | 0x200D | 0x20B9 | 0x2013 | 0x2014 | 0x2018 | 0x2019 | 0x201C | 0x201D | 0x2022 | 0x2026
+        0x0964
+            | 0x0965
+            | 0x200C
+            | 0x200D
+            | 0x20B9
+            | 0x2013
+            | 0x2014
+            | 0x2018
+            | 0x2019
+            | 0x201C
+            | 0x201D
+            | 0x2022
+            | 0x2026
     )
 }
 
@@ -77,8 +89,8 @@ pub struct IndraVocab {
 impl IndraVocab {
     /// Loads base Latin/math vocabulary from meta.json byte slice.
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self> {
-        let meta: VocabMeta = serde_json::from_slice(bytes)
-            .context("Failed to parse Indra meta.json metadata")?;
+        let meta: VocabMeta =
+            serde_json::from_slice(bytes).context("Failed to parse Indra meta.json metadata")?;
         let def: VocabDef = serde_json::from_str(&meta.vocab)
             .context("Failed to parse inner vocab definition string")?;
 
@@ -93,12 +105,9 @@ impl IndraVocab {
 
     /// Loads world vocabulary (including Telugu, Devanagari, etc.) from meta.json byte slice.
     pub fn from_world_json_bytes(bytes: &[u8]) -> Result<Self> {
-        let meta: VocabMeta = serde_json::from_slice(bytes)
-            .context("Failed to parse Indra meta.json metadata")?;
-        let vocab_str = meta
-            .vocab_world
-            .as_deref()
-            .unwrap_or(&meta.vocab);
+        let meta: VocabMeta =
+            serde_json::from_slice(bytes).context("Failed to parse Indra meta.json metadata")?;
+        let vocab_str = meta.vocab_world.as_deref().unwrap_or(&meta.vocab);
         let def: VocabDef = serde_json::from_str(vocab_str)
             .context("Failed to parse world vocab definition string")?;
 
@@ -133,10 +142,13 @@ impl IndraVocab {
         let mut prev = self.blank_idx as i64;
 
         for &tok in tokens {
-            if tok != self.blank_idx as i64 && tok != prev
-                && tok > 0 && (tok as usize - 1) < self.chars.len() {
-                    result.push_str(&self.chars[tok as usize - 1]);
-                }
+            if tok != self.blank_idx as i64
+                && tok != prev
+                && tok > 0
+                && (tok as usize - 1) < self.chars.len()
+            {
+                result.push_str(&self.chars[tok as usize - 1]);
+            }
             prev = tok;
         }
 
@@ -190,7 +202,10 @@ mod tests {
     #[test]
     fn parses_meta_json_vocab() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("meta.json");
+        let meta_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("indra")
+            .join("meta.json");
         let bytes = std::fs::read(meta_path).unwrap();
         let vocab = IndraVocab::from_json_bytes(&bytes).unwrap();
         assert_eq!(vocab.blank_idx, 0);
@@ -202,13 +217,19 @@ mod tests {
     #[test]
     fn parses_meta_json_world_vocab_and_telugu() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("meta.json");
+        let meta_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("indra")
+            .join("meta.json");
         let bytes = std::fs::read(meta_path).unwrap();
         let world_vocab = IndraVocab::from_world_json_bytes(&bytes).unwrap();
         assert_eq!(world_vocab.blank_idx, 0);
         assert!(world_vocab.is_world);
         assert_eq!(world_vocab.rec_height, 32);
-        assert!(world_vocab.contains_telugu(), "World vocabulary must contain Telugu script");
+        assert!(
+            world_vocab.contains_telugu(),
+            "World vocabulary must contain Telugu script"
+        );
         assert_eq!(world_vocab.chars.len(), 2935);
 
         // Verify Telugu character recognition helper

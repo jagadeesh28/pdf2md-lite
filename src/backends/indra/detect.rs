@@ -84,7 +84,10 @@ impl IndraDetector {
         let outputs = self.plan.run(tvec!(tract_tensor.into()))?;
         let output_tensor = outputs[0].to_plain_array_view::<f32>()?;
         let out_shape = outputs[0].shape();
-        let (out_h, out_w) = (out_shape[out_shape.len() - 2], out_shape[out_shape.len() - 1]);
+        let (out_h, out_w) = (
+            out_shape[out_shape.len() - 2],
+            out_shape[out_shape.len() - 1],
+        );
 
         let raw_slice = output_tensor.as_slice().context("Tensor not contiguous")?;
         let channel_size = out_h * out_w;
@@ -210,4 +213,3 @@ impl IndraDetector {
         Ok(raw_boxes)
     }
 }
-

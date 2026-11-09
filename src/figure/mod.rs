@@ -27,7 +27,6 @@ pub enum ImageFormat {
     Webp,
 }
 
-
 impl ImageFormat {
     pub fn extension(&self) -> &'static str {
         match self {
@@ -95,9 +94,12 @@ pub fn flatten_to_rgb(img: &DynamicImage) -> image::RgbImage {
             let mut rgb_raw = vec![0u8; (w as usize) * (h as usize) * 3];
             for (dst_chunk, src_chunk) in rgb_raw.chunks_exact_mut(3).zip(rgba_raw.chunks(4)) {
                 let alpha = src_chunk[3] as f32 / 255.0;
-                dst_chunk[0] = ((src_chunk[0] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
-                dst_chunk[1] = ((src_chunk[1] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
-                dst_chunk[2] = ((src_chunk[2] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+                dst_chunk[0] =
+                    ((src_chunk[0] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+                dst_chunk[1] =
+                    ((src_chunk[1] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
+                dst_chunk[2] =
+                    ((src_chunk[2] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
             }
             image::RgbImage::from_raw(w, h, rgb_raw).expect("RgbImage dimensions match")
         }
@@ -121,7 +123,8 @@ pub fn save_image_with_format(
             let file = fs::File::create(path)
                 .with_context(|| format!("Failed to create JPEG file: {}", path.display()))?;
             let mut writer = std::io::BufWriter::new(file);
-            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
+            let mut encoder =
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
             encoder
                 .encode_image(&rgb)
                 .with_context(|| format!("Failed to encode JPEG: {}", path.display()))?;
@@ -150,8 +153,10 @@ pub fn encode_image_to_base64_data_uri(
     let mime = match format {
         ImageFormat::Jpeg => {
             let rgb = flatten_to_rgb(img);
-            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
-            encoder.encode_image(&rgb)
+            let mut encoder =
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+            encoder
+                .encode_image(&rgb)
                 .context("Failed to encode JPEG for base64 data URI")?;
             "image/jpeg"
         }
@@ -294,9 +299,9 @@ pub fn analyze_page_layout_image_with_doc_and_options(
     let stream_figs_opt = if let Some(doc) = preloaded_doc {
         pdf_stream::extract_page_stream_figures(doc, page_num, page_w, page_h).ok()
     } else if let Some(pdf_file) = pdf_path {
-        lopdf::Document::load(pdf_file)
-            .ok()
-            .and_then(|doc| pdf_stream::extract_page_stream_figures(&doc, page_num, page_w, page_h).ok())
+        lopdf::Document::load(pdf_file).ok().and_then(|doc| {
+            pdf_stream::extract_page_stream_figures(&doc, page_num, page_w, page_h).ok()
+        })
     } else {
         None
     };
@@ -308,9 +313,15 @@ pub fn analyze_page_layout_image_with_doc_and_options(
             let file_path = image_output_dir.join(&filename);
 
             let data_uri = if image_opts.embed_base64 {
-                encode_image_to_base64_data_uri(&sf.image, image_opts.format, image_opts.quality).ok()
+                encode_image_to_base64_data_uri(&sf.image, image_opts.format, image_opts.quality)
+                    .ok()
             } else {
-                let _ = save_image_with_format(&sf.image, &file_path, image_opts.format, image_opts.quality);
+                let _ = save_image_with_format(
+                    &sf.image,
+                    &file_path,
+                    image_opts.format,
+                    image_opts.quality,
+                );
                 None
             };
 
@@ -352,9 +363,14 @@ pub fn analyze_page_layout_image_with_doc_and_options(
             LayoutClass::Picture => {
                 // If this region doesn't overlap heavily with an already extracted stream figure
                 let overlaps = result.picture_masks.iter().any(|m| {
-                    let inter_w = (rect.x + rect.width).min(m.x + m.width).saturating_sub(rect.x.max(m.x));
-                    let inter_h = (rect.y + rect.height).min(m.y + m.height).saturating_sub(rect.y.max(m.y));
-                    (inter_w * inter_h) > 0 && (inter_w * inter_h) as f32 / (rect.width * rect.height) as f32 > 0.5
+                    let inter_w = (rect.x + rect.width)
+                        .min(m.x + m.width)
+                        .saturating_sub(rect.x.max(m.x));
+                    let inter_h = (rect.y + rect.height)
+                        .min(m.y + m.height)
+                        .saturating_sub(rect.y.max(m.y));
+                    (inter_w * inter_h) > 0
+                        && (inter_w * inter_h) as f32 / (rect.width * rect.height) as f32 > 0.5
                 });
 
                 if !overlaps {
@@ -363,11 +379,23 @@ pub fn analyze_page_layout_image_with_doc_and_options(
                     let file_path = image_output_dir.join(&filename);
 
                     // Crop raw unenhanced image directly from page canvas
-                    let data_uri = if let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
+                    let data_uri = if let Ok(cropped) =
+                        crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h)
+                    {
                         if image_opts.embed_base64 {
-                            encode_image_to_base64_data_uri(&cropped, image_opts.format, image_opts.quality).ok()
+                            encode_image_to_base64_data_uri(
+                                &cropped,
+                                image_opts.format,
+                                image_opts.quality,
+                            )
+                            .ok()
                         } else {
-                            let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
+                            let _ = save_image_with_format(
+                                &cropped,
+                                &file_path,
+                                image_opts.format,
+                                image_opts.quality,
+                            );
                             None
                         }
                     } else {
@@ -397,16 +425,28 @@ pub fn analyze_page_layout_image_with_doc_and_options(
 
                 // Save companion raw table crop only if configured
                 let data_uri = if image_opts.save_table_images
-                    && let Ok(cropped) = crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h) {
-                        if image_opts.embed_base64 {
-                            encode_image_to_base64_data_uri(&cropped, image_opts.format, image_opts.quality).ok()
-                        } else {
-                            let _ = save_image_with_format(&cropped, &file_path, image_opts.format, image_opts.quality);
-                            None
-                        }
+                    && let Ok(cropped) =
+                        crop_rectangle(page_img, b.x, b.y, b.width, b.height, page_w, page_h)
+                {
+                    if image_opts.embed_base64 {
+                        encode_image_to_base64_data_uri(
+                            &cropped,
+                            image_opts.format,
+                            image_opts.quality,
+                        )
+                        .ok()
                     } else {
+                        let _ = save_image_with_format(
+                            &cropped,
+                            &file_path,
+                            image_opts.format,
+                            image_opts.quality,
+                        );
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 let fig = CroppedFigure {
                     file_path,
@@ -457,8 +497,12 @@ fn crop_rectangle(
     let margin = 4u32;
     let min_x = x.saturating_sub(margin);
     let min_y = y.saturating_sub(margin);
-    let crop_w = (width + 2 * margin).min(page_w.saturating_sub(min_x)).max(1);
-    let crop_h = (height + 2 * margin).min(page_h.saturating_sub(min_y)).max(1);
+    let crop_w = (width + 2 * margin)
+        .min(page_w.saturating_sub(min_x))
+        .max(1);
+    let crop_h = (height + 2 * margin)
+        .min(page_h.saturating_sub(min_y))
+        .max(1);
 
     Ok(img.crop_imm(min_x, min_y, crop_w, crop_h))
 }
@@ -520,4 +564,3 @@ mod tests {
         assert!(uri_webp.starts_with("data:image/webp;base64,"));
     }
 }
-

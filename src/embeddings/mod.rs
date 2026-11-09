@@ -7,14 +7,14 @@ pub mod chunking;
 pub mod engine;
 pub mod sidecar;
 
-pub use chunking::{chunk_markdown_document, SemanticChunk};
+pub use chunking::{SemanticChunk, chunk_markdown_document};
 pub use engine::{
-    cosine_similarity, embedding_models_exist, get_embedding_engine, resolve_embedding_paths,
-    EmbeddingEngine, EMBEDDING_DIM,
+    EMBEDDING_DIM, EmbeddingEngine, cosine_similarity, embedding_models_exist,
+    get_embedding_engine, resolve_embedding_paths,
 };
 pub use sidecar::{
-    read_embeddings_sidecar, should_update_embeddings, sidecar_path_for_markdown,
-    write_embeddings_sidecar, EmbeddingRecord,
+    EmbeddingRecord, read_embeddings_sidecar, should_update_embeddings, sidecar_path_for_markdown,
+    write_embeddings_sidecar,
 };
 
 use anyhow::{Context, Result};
@@ -33,7 +33,8 @@ pub fn generate_and_save_sidecar(
     }
 
     let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-    let embeddings = engine.embed_batch(&texts)
+    let embeddings = engine
+        .embed_batch(&texts)
         .context("Failed to compute embeddings for chunks")?;
 
     let records: Vec<EmbeddingRecord> = chunks

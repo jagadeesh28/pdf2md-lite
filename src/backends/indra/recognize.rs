@@ -51,10 +51,7 @@ impl IndraRecognizer {
                             tvec!(1, 1, target_height as usize, width),
                         ),
                     )?
-                    .with_input_fact(
-                        1,
-                        InferenceFact::dt_shape(i64::datum_type(), tvec!(1)),
-                    )?
+                    .with_input_fact(1, InferenceFact::dt_shape(i64::datum_type(), tvec!(1)))?
                     .into_typed()
                     .context("Failed to type SVTR model")?
                     .into_runnable()
@@ -79,10 +76,7 @@ impl IndraRecognizer {
                             tvec!(batch, 1, target_height as usize, width),
                         ),
                     )?
-                    .with_input_fact(
-                        1,
-                        InferenceFact::dt_shape(i64::datum_type(), tvec!(batch)),
-                    )?
+                    .with_input_fact(1, InferenceFact::dt_shape(i64::datum_type(), tvec!(batch)))?
                     .into_typed()
                     .context("Failed to type SVTR model")?
                     .into_runnable()
@@ -204,7 +198,12 @@ impl IndraRecognizer {
         }
         let target_h = self.target_height;
         let out_w = ((cw as f32 * target_h as f32 / ch as f32).round() as u32).clamp(8, 4096);
-        let resized = image::imageops::resize(&crop, out_w, target_h, image::imageops::FilterType::Triangle);
+        let resized = image::imageops::resize(
+            &crop,
+            out_w,
+            target_h,
+            image::imageops::FilterType::Triangle,
+        );
         let mut ink_map = Vec::with_capacity((out_w as usize) * (target_h as usize));
         for y in 0..target_h {
             for x in 0..out_w {
@@ -332,12 +331,14 @@ impl IndraRecognizer {
         let mut prev = self.vocab.blank_idx as i64;
 
         for (i, &tok) in final_tokens.iter().enumerate() {
-            if tok != self.vocab.blank_idx as i64 && tok != prev
+            if tok != self.vocab.blank_idx as i64
+                && tok != prev
                 && let Some(c) = confs
-                    && let Some(&conf) = c.get(i) {
-                        sum_conf += conf;
-                        count_conf += 1;
-                    }
+                && let Some(&conf) = c.get(i)
+            {
+                sum_conf += conf;
+                count_conf += 1;
+            }
             prev = tok;
         }
 
@@ -387,9 +388,9 @@ impl IndraRecognizer {
     ) -> Result<()> {
         for (bucket_w, indices) in groups {
             let n = indices.len();
-            let (batch_size, bucket_w, plan) =
-                self.select_batched_plan(n, bucket_w)
-                    .unwrap_or_else(|| (1, bucket_w, self.select_plan(bucket_w).1));
+            let (batch_size, bucket_w, plan) = self
+                .select_batched_plan(n, bucket_w)
+                .unwrap_or_else(|| (1, bucket_w, self.select_plan(bucket_w).1));
 
             let target_h = self.target_height as usize;
             let mut tensor_data = vec![0.0f32; batch_size * target_h * bucket_w];
@@ -406,13 +407,15 @@ impl IndraRecognizer {
                 for y in 0..line_h.min(target_h) {
                     let src_base = y * line_w;
                     let dst_base = row * target_h * bucket_w + y * bucket_w;
-                    tensor_data[dst_base..(dst_base + copy_w)].copy_from_slice(&ink_map[src_base..(src_base + copy_w)]);
+                    tensor_data[dst_base..(dst_base + copy_w)]
+                        .copy_from_slice(&ink_map[src_base..(src_base + copy_w)]);
                 }
             }
 
             if actual_widths.iter().all(|&w| w <= 1) {
                 for &idx in &indices {
-                    if let Ok((text, conf)) = self.recognize_line_with_mask(gray, &boxes[idx], mask) {
+                    if let Ok((text, conf)) = self.recognize_line_with_mask(gray, &boxes[idx], mask)
+                    {
                         results[idx] = Some((text, conf));
                     }
                 }
@@ -434,8 +437,16 @@ impl IndraRecognizer {
             let outputs = plan.run(tvec!(tract_input.into(), tract_lengths.into()))?;
 
             self.decode_batch_results(
-                gray, boxes, mask, &indices, batch_size, bucket_w, target_h,
-                &outputs, &actual_widths, results,
+                gray,
+                boxes,
+                mask,
+                &indices,
+                batch_size,
+                bucket_w,
+                target_h,
+                &outputs,
+                &actual_widths,
+                results,
             )?;
         }
         Ok(())
@@ -466,7 +477,11 @@ impl IndraRecognizer {
             let slice = v.as_slice().context("valid lengths not contiguous")?;
             slice.iter().take(batch_size).map(|&x| x as usize).collect()
         } else {
-            actual_widths.iter().take(batch_size).map(|&w| w as usize).collect()
+            actual_widths
+                .iter()
+                .take(batch_size)
+                .map(|&w| w as usize)
+                .collect()
         };
 
         let conf_views: Option<Vec<Vec<f32>>> = if outputs.len() > 1 {
@@ -536,16 +551,19 @@ impl IndraRecognizer {
             let mut count_conf = 0usize;
             let mut prev = self.vocab.blank_idx as i64;
             if let Some(confs) = &conf_views
-                && let Some(row_conf) = confs.get(row) {
-                    for (i, &tok) in final_tokens.iter().enumerate() {
-                        if tok != self.vocab.blank_idx as i64 && tok != prev
-                            && let Some(&c) = row_conf.get(i) {
-                                sum_conf += c;
-                                count_conf += 1;
-                            }
-                        prev = tok;
+                && let Some(row_conf) = confs.get(row)
+            {
+                for (i, &tok) in final_tokens.iter().enumerate() {
+                    if tok != self.vocab.blank_idx as i64
+                        && tok != prev
+                        && let Some(&c) = row_conf.get(i)
+                    {
+                        sum_conf += c;
+                        count_conf += 1;
                     }
+                    prev = tok;
                 }
+            }
             let mean_conf = if count_conf > 0 {
                 sum_conf / count_conf as f32
             } else {
@@ -693,7 +711,10 @@ mod tests {
     #[test]
     fn test_load_rec_world_tract() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("rec_world.onnx");
+        let model_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("indra")
+            .join("rec_world.onnx");
         if !model_path.exists() {
             return;
         }
@@ -707,32 +728,35 @@ mod tests {
                 InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 1, 32, 160)),
             )
             .expect("input 0 fact")
-            .with_input_fact(
-                1,
-                InferenceFact::dt_shape(i64::datum_type(), tvec!(1)),
-            )
+            .with_input_fact(1, InferenceFact::dt_shape(i64::datum_type(), tvec!(1)))
             .expect("input 1 fact")
             .into_typed()
             .expect("typed")
             .into_runnable()
             .expect("runnable");
 
-        let input_tensor = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, 32, 160),
-            vec![0.0f32; 32 * 160],
-        ).unwrap();
+        let input_tensor =
+            tract_ndarray::Array4::from_shape_vec((1, 1, 32, 160), vec![0.0f32; 32 * 160]).unwrap();
         let lengths_tensor = tract_ndarray::Array1::from_vec(vec![160i64]);
         let tract_input: Tensor = input_tensor.into();
         let tract_lengths: Tensor = lengths_tensor.into();
-        let outputs = model.run(tvec!(tract_input.into(), tract_lengths.into())).expect("run model");
+        let outputs = model
+            .run(tvec!(tract_input.into(), tract_lengths.into()))
+            .expect("run model");
         assert!(!outputs.is_empty());
     }
 
     #[test]
     fn test_indra_recognizer_world_initialization() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let meta_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("meta.json");
-        let model_path = std::path::Path::new(&manifest_dir).join("models").join("indra").join("rec_world.onnx");
+        let meta_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("indra")
+            .join("meta.json");
+        let model_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("indra")
+            .join("rec_world.onnx");
         if !model_path.exists() {
             return;
         }
@@ -745,4 +769,3 @@ mod tests {
         assert!(rec.vocab().contains_telugu());
     }
 }
-

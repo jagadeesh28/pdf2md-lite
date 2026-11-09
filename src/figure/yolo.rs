@@ -334,7 +334,11 @@ impl YoloLayoutDetector {
 
     /// Class-wise greedy Non-Maximum Suppression.
     pub fn apply_nms(mut boxes: Vec<LayoutBox>, iou_threshold: f32) -> Vec<LayoutBox> {
-        boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        boxes.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut selected: Vec<LayoutBox> = Vec::new();
 

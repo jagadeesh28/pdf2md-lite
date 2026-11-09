@@ -331,7 +331,8 @@ fn split_sentences(text: &str) -> Vec<String> {
         current.push(' ');
 
         let ends_sentence = word.ends_with('.') || word.ends_with('?') || word.ends_with('!');
-        let is_short_abbreviation = word.len() <= 3 && word.chars().all(|c| c.is_ascii_uppercase() || c == '.');
+        let is_short_abbreviation =
+            word.len() <= 3 && word.chars().all(|c| c.is_ascii_uppercase() || c == '.');
 
         if ends_sentence && !is_short_abbreviation && current.len() > 40 {
             sentences.push(current.trim().to_string());
@@ -381,7 +382,11 @@ Experimental validation demonstrated a 4.2% increase in stage efficiency.
 "#;
 
         let chunks = chunk_markdown_document(md, "test-doc");
-        assert!(chunks.len() >= 3, "Expected at least 3 chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 3,
+            "Expected at least 3 chunks, got {}",
+            chunks.len()
+        );
 
         // Check chunk 0
         assert_eq!(chunks[0].chunk_id, "test-doc#p1-c0");
@@ -390,8 +395,13 @@ Experimental validation demonstrated a 4.2% increase in stage efficiency.
         assert!(chunks[0].text.contains("aerodynamic principles"));
 
         // Check math block preservation
-        let math_chunk = chunks.iter().find(|c| c.text.contains(r"\frac{\partial \rho}"));
-        assert!(math_chunk.is_some(), "Display math equation should be preserved inside a chunk");
+        let math_chunk = chunks
+            .iter()
+            .find(|c| c.text.contains(r"\frac{\partial \rho}"));
+        assert!(
+            math_chunk.is_some(),
+            "Display math equation should be preserved inside a chunk"
+        );
         let mc = math_chunk.unwrap();
         assert_eq!(mc.heading.as_deref(), Some("2. Governing Equations"));
         assert!(mc.text.contains("$$"));

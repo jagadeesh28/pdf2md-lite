@@ -162,7 +162,7 @@ flowchart TD
 
 ### Phase 3 — Workflow, Operational Hardening & UX 🛠️
 
-> **Status**: In Progress  
+> **Status**: Completed & Verified ✅  
 > **Primary Goal**: Enhance operational reliability, developer ergonomics, and vault synchronization.
 
 #### Milestone 3.1: Cryptographic Content-Hash Idempotency ([ADR 0009](./docs/adr/0009-per-note-embedding-sidecars-and-frontmatter-hash.md)) ✅
@@ -194,13 +194,14 @@ flowchart TD
   - Checks existing note content hashes to identify `WOULD_SKIP`, `WOULD_OVERWRITE`, and `WOULD_CONVERT` statuses.
   - Operates strictly read-only without rasterizing pages or modifying files on disk.
 
-#### Milestone 3.5: CI Quality Gates & Code Health
-- Establish GitHub Actions CI pipeline:
-  - `cargo fmt --check`
-  - `cargo clippy --all-targets -- -D warnings`
-  - `cargo test --all-targets`
-  - `cargo check --benches`
-  - `cargo deny check` for license and advisory audits.
+#### Milestone 3.5: CI Quality Gates & Code Health ✅
+- Established comprehensive GitHub Actions CI pipeline:
+  - `cargo fmt --check` (code formatting across crate and benches)
+  - `cargo clippy --all-targets -- -D warnings` (strict zero-warning gate)
+  - `cargo test --all-targets` (comprehensive unit and integration test suite)
+  - `cargo check --benches` (benchmark compilation validation)
+  - `cargo-deny-action` with `deny.toml` for license, advisory, and bans auditing.
+- Automated code formatting pass applied across the entire codebase.
 
 ---
 

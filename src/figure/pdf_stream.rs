@@ -73,8 +73,12 @@ pub fn extract_page_stream_figures(
         None => return Ok(Vec::new()),
     };
 
-    let page_obj = doc.get_object(page_id).context("Failed to get page object")?;
-    let page_dict = page_obj.as_dict().context("Page object is not a dictionary")?;
+    let page_obj = doc
+        .get_object(page_id)
+        .context("Failed to get page object")?;
+    let page_dict = page_obj
+        .as_dict()
+        .context("Page object is not a dictionary")?;
 
     // 1. Determine page MediaBox [x_min, y_min, x_max, y_max] in PDF points
     let (page_x_min, page_y_min, page_w_pt, page_h_pt) = get_page_dimensions(doc, page_dict);
@@ -179,7 +183,12 @@ fn process_image_xobject(
     }
 
     let img_w = stream.dict.get(b"Width").ok().and_then(to_u32).unwrap_or(0);
-    let img_h = stream.dict.get(b"Height").ok().and_then(to_u32).unwrap_or(0);
+    let img_h = stream
+        .dict
+        .get(b"Height")
+        .ok()
+        .and_then(to_u32)
+        .unwrap_or(0);
 
     // Filter out tiny icons or 1px dividing lines
     if img_w < 32 || img_h < 32 {
@@ -213,8 +222,10 @@ fn process_image_xobject(
     // Scale to target pixel dimensions
     let px_x = (norm_x * target_img_width as f32).round() as u32;
     let px_y = (norm_y * target_img_height as f32).round() as u32;
-    let px_w = ((norm_w * target_img_width as f32).round() as u32).min(target_img_width.saturating_sub(px_x));
-    let px_h = ((norm_h * target_img_height as f32).round() as u32).min(target_img_height.saturating_sub(px_y));
+    let px_w = ((norm_w * target_img_width as f32).round() as u32)
+        .min(target_img_width.saturating_sub(px_x));
+    let px_h = ((norm_h * target_img_height as f32).round() as u32)
+        .min(target_img_height.saturating_sub(px_y));
 
     if px_w == 0 || px_h == 0 {
         return None;
@@ -246,21 +257,30 @@ fn decode_xobject_image(stream: &lopdf::Stream) -> Option<DynamicImage> {
 
         let width = stream.dict.get(b"Width").ok().and_then(to_u32)? as usize;
         let height = stream.dict.get(b"Height").ok().and_then(to_u32)? as usize;
-        let color_space = stream.dict.get(b"ColorSpace").ok()
+        let color_space = stream
+            .dict
+            .get(b"ColorSpace")
+            .ok()
             .and_then(|o| o.as_name().ok())
             .unwrap_or(b"DeviceRGB");
 
         match color_space {
-            b"DeviceRGB"
-                if decompressed.len() >= width * height * 3 => {
-                    let rgb = image::RgbImage::from_raw(width as u32, height as u32, decompressed[..width * height * 3].to_vec())?;
-                    return Some(DynamicImage::ImageRgb8(rgb));
-                }
-            b"DeviceGray"
-                if decompressed.len() >= width * height => {
-                    let gray = image::GrayImage::from_raw(width as u32, height as u32, decompressed[..width * height].to_vec())?;
-                    return Some(DynamicImage::ImageLuma8(gray));
-                }
+            b"DeviceRGB" if decompressed.len() >= width * height * 3 => {
+                let rgb = image::RgbImage::from_raw(
+                    width as u32,
+                    height as u32,
+                    decompressed[..width * height * 3].to_vec(),
+                )?;
+                return Some(DynamicImage::ImageRgb8(rgb));
+            }
+            b"DeviceGray" if decompressed.len() >= width * height => {
+                let gray = image::GrayImage::from_raw(
+                    width as u32,
+                    height as u32,
+                    decompressed[..width * height].to_vec(),
+                )?;
+                return Some(DynamicImage::ImageLuma8(gray));
+            }
             _ => {}
         }
     }
@@ -298,7 +318,8 @@ fn resolve_xobjects(doc: &Document, page_dict: &lopdf::Dictionary) -> HashMap<St
 }
 
 fn get_page_dimensions(doc: &Document, page_dict: &lopdf::Dictionary) -> (f32, f32, f32, f32) {
-    let box_obj = page_dict.get(b"MediaBox")
+    let box_obj = page_dict
+        .get(b"MediaBox")
         .or_else(|_| page_dict.get(b"CropBox"))
         .ok();
 
@@ -310,18 +331,19 @@ fn get_page_dimensions(doc: &Document, page_dict: &lopdf::Dictionary) -> (f32, f
         };
 
         if let Some(a) = arr
-            && a.len() >= 4 {
-                let x1 = to_f32(&a[0]).unwrap_or(0.0);
-                let y1 = to_f32(&a[1]).unwrap_or(0.0);
-                let x2 = to_f32(&a[2]).unwrap_or(612.0);
-                let y2 = to_f32(&a[3]).unwrap_or(792.0);
+            && a.len() >= 4
+        {
+            let x1 = to_f32(&a[0]).unwrap_or(0.0);
+            let y1 = to_f32(&a[1]).unwrap_or(0.0);
+            let x2 = to_f32(&a[2]).unwrap_or(612.0);
+            let y2 = to_f32(&a[3]).unwrap_or(792.0);
 
-                let x_min = x1.min(x2);
-                let y_min = y1.min(y2);
-                let w = (x2 - x1).abs();
-                let h = (y2 - y1).abs();
-                return (x_min, y_min, w, h);
-            }
+            let x_min = x1.min(x2);
+            let y_min = y1.min(y2);
+            let w = (x2 - x1).abs();
+            let h = (y2 - y1).abs();
+            return (x_min, y_min, w, h);
+        }
     }
 
     // Default US Letter (612 x 792 points)
@@ -351,8 +373,22 @@ mod tests {
 
     #[test]
     fn test_matrix_multiplication() {
-        let m1 = Matrix2D { a: 2.0, b: 0.0, c: 0.0, d: 2.0, e: 10.0, f: 20.0 };
-        let m2 = Matrix2D { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 5.0, f: 5.0 };
+        let m1 = Matrix2D {
+            a: 2.0,
+            b: 0.0,
+            c: 0.0,
+            d: 2.0,
+            e: 10.0,
+            f: 20.0,
+        };
+        let m2 = Matrix2D {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 5.0,
+            f: 5.0,
+        };
         let prod = m1.multiply(&m2);
         assert_eq!(prod.a, 2.0);
         assert_eq!(prod.e, 15.0);
@@ -404,6 +440,9 @@ mod tests {
                 total_figures += figures.len();
             }
         }
-        println!("Total stream figures across first 10 pages: {}", total_figures);
+        println!(
+            "Total stream figures across first 10 pages: {}",
+            total_figures
+        );
     }
 }

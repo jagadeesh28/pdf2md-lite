@@ -2,13 +2,13 @@
 //! Predicts table HTML structure tokens and cell bounding boxes via ONNX Runtime.
 
 #[cfg(feature = "slanet-ort")]
-use std::path::Path;
-#[cfg(feature = "slanet-ort")]
-use std::sync::{Arc, Mutex};
+use crate::backends::indra::order::TextLine;
 #[cfg(feature = "slanet-ort")]
 use image::{DynamicImage, GenericImageView};
 #[cfg(feature = "slanet-ort")]
-use crate::backends::indra::order::TextLine;
+use std::path::Path;
+#[cfg(feature = "slanet-ort")]
+use std::sync::{Arc, Mutex};
 
 /// A recognized table cell with spatial coordinates and text.
 #[derive(Debug, Clone)]
@@ -32,10 +32,18 @@ static SLANET_ENGINE: std::sync::OnceLock<Option<Arc<SlaNetEngine>>> = std::sync
 pub fn get_slanet_engine() -> Option<Arc<SlaNetEngine>> {
     let engine = SLANET_ENGINE.get_or_init(|| {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("slanet.onnx");
-        let dict_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("table_structure_dict.txt");
+        let model_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("layout")
+            .join("slanet.onnx");
+        let dict_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("layout")
+            .join("table_structure_dict.txt");
         if model_path.exists() && dict_path.exists() {
-            SlaNetEngine::new(&model_path, &dict_path).ok().map(Arc::new)
+            SlaNetEngine::new(&model_path, &dict_path)
+                .ok()
+                .map(Arc::new)
         } else {
             None
         }
@@ -110,7 +118,10 @@ impl SlaNetEngine {
         }
 
         // 2. Run inference via ORT
-        let tensor = ort::value::Tensor::from_array(([1usize, 3, 488, 488], input_tensor.into_boxed_slice()))?;
+        let tensor = ort::value::Tensor::from_array((
+            [1usize, 3, 488, 488],
+            input_tensor.into_boxed_slice(),
+        ))?;
         let inputs = ort::inputs!["x" => tensor];
         let mut session = self
             .session
@@ -272,8 +283,14 @@ mod tests {
     #[cfg(feature = "slanet-ort")]
     fn test_slanet_load_and_dummy_predict() -> anyhow::Result<()> {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let model_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("slanet.onnx");
-        let dict_path = std::path::Path::new(&manifest_dir).join("models").join("layout").join("table_structure_dict.txt");
+        let model_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("layout")
+            .join("slanet.onnx");
+        let dict_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("layout")
+            .join("table_structure_dict.txt");
 
         if !model_path.exists() || !dict_path.exists() {
             println!("SLANet models not found, skipping");

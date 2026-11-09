@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use super::detect::{IndraDetector, TextBoundingBox};
 use super::models::IndraModelSource;
-use super::order::{sort_and_format_markdown, TextLine};
+use super::order::{TextLine, sort_and_format_markdown};
 use super::recognize::IndraRecognizer;
-use super::vocab::{count_telugu_chars, IndraVocab};
+use super::vocab::{IndraVocab, count_telugu_chars};
 
 /// Target script or routing strategy for Indra OCR text recognition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -153,7 +153,8 @@ impl IndraEngine {
             }
             IndraScript::Auto => {
                 if let Some(world) = &self.world_recognizer {
-                    let (world_text, world_conf) = world.recognize_line_with_mask(gray, bbox, self.telugu_mask.as_deref())?;
+                    let (world_text, world_conf) =
+                        world.recognize_line_with_mask(gray, bbox, self.telugu_mask.as_deref())?;
 
                     // If world text contains genuine Telugu characters, route to world model
                     let telugu_count = count_telugu_chars(&world_text);
@@ -162,8 +163,12 @@ impl IndraEngine {
                     }
 
                     // Otherwise prioritize base Latin recognizer to avoid hallucinated world glyphs
-                    let (base_text, base_conf) = self.recognizer.recognize_line_with_conf(gray, bbox)?;
-                    if base_text.trim().is_empty() && !world_text.trim().is_empty() && world_conf > 0.6 {
+                    let (base_text, base_conf) =
+                        self.recognizer.recognize_line_with_conf(gray, bbox)?;
+                    if base_text.trim().is_empty()
+                        && !world_text.trim().is_empty()
+                        && world_conf > 0.6
+                    {
                         Ok((world_text, world_conf))
                     } else {
                         Ok((base_text, base_conf))
@@ -200,9 +205,7 @@ impl IndraEngine {
             IndraScript::English | IndraScript::Latin => {
                 // Batched SVTR inference: groups lines by bucket width and runs
                 // one ONNX inference per bucket group, amortizing dispatch overhead.
-                let batch_results = self
-                    .recognizer
-                    .recognize_lines_batch(&gray, &boxes, None)?;
+                let batch_results = self.recognizer.recognize_lines_batch(&gray, &boxes, None)?;
                 for (bbox, (text, _conf)) in boxes.iter().zip(batch_results.iter()) {
                     if !text.trim().is_empty() {
                         recognized_lines.push(TextLine {
@@ -253,9 +256,17 @@ mod tests {
     #[test]
     fn test_indra_engine_initializes_with_world_model() -> Result<()> {
         let engine = IndraEngine::new(None).context("Failed to initialize IndraEngine")?;
-        assert!(engine.has_world_model(), "IndraEngine should detect and load rec_world.onnx");
-        let world = engine.world_recognizer().expect("World recognizer must be present");
-        assert!(world.vocab().contains_telugu(), "World recognizer vocab must contain Telugu script");
+        assert!(
+            engine.has_world_model(),
+            "IndraEngine should detect and load rec_world.onnx"
+        );
+        let world = engine
+            .world_recognizer()
+            .expect("World recognizer must be present");
+        assert!(
+            world.vocab().contains_telugu(),
+            "World recognizer vocab must contain Telugu script"
+        );
         assert_eq!(world.target_height(), 32);
         assert_eq!(world.window(), 1);
         assert_eq!(engine.base_recognizer().target_height(), 96);
@@ -265,8 +276,7 @@ mod tests {
 
     #[test]
     fn test_indra_engine_script_configuration() -> Result<()> {
-        let engine = IndraEngine::new(None)?
-            .with_script(IndraScript::World);
+        let engine = IndraEngine::new(None)?.with_script(IndraScript::World);
         assert_eq!(engine.default_script(), IndraScript::World);
 
         let eng_script: IndraScript = "english".parse()?;
@@ -294,7 +304,10 @@ mod tests {
         println!("{}", markdown);
         println!("============================");
 
-        assert!(!markdown.trim().is_empty(), "Transcribed output should not be empty");
+        assert!(
+            !markdown.trim().is_empty(),
+            "Transcribed output should not be empty"
+        );
         Ok(())
     }
 }

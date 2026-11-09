@@ -2,13 +2,13 @@
 //! Predicts LaTeX code from cropped formula images using an encoder-decoder architecture.
 
 #[cfg(feature = "latex-ort")]
+use image::{DynamicImage, GenericImageView};
+#[cfg(feature = "latex-ort")]
 use std::collections::HashMap;
 #[cfg(feature = "latex-ort")]
 use std::path::Path;
 #[cfg(feature = "latex-ort")]
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "latex-ort")]
-use image::{DynamicImage, GenericImageView};
 
 #[cfg(feature = "latex-ort")]
 pub struct RapidLatexEngine {
@@ -18,7 +18,8 @@ pub struct RapidLatexEngine {
 }
 
 #[cfg(feature = "latex-ort")]
-static LATEX_ENGINE: std::sync::OnceLock<Option<Arc<RapidLatexEngine>>> = std::sync::OnceLock::new();
+static LATEX_ENGINE: std::sync::OnceLock<Option<Arc<RapidLatexEngine>>> =
+    std::sync::OnceLock::new();
 
 /// Returns a shared, lazily initialized singleton instance of the RapidLaTeXOCR Engine,
 /// or `None` if the model/tokenizer files are not provisioned.
@@ -26,12 +27,23 @@ static LATEX_ENGINE: std::sync::OnceLock<Option<Arc<RapidLatexEngine>>> = std::s
 pub fn get_latex_engine() -> Option<Arc<RapidLatexEngine>> {
     let engine = LATEX_ENGINE.get_or_init(|| {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let enc_path = std::path::Path::new(&manifest_dir).join("models").join("latex").join("encoder.onnx");
-        let dec_path = std::path::Path::new(&manifest_dir).join("models").join("latex").join("decoder.onnx");
-        let tok_path = std::path::Path::new(&manifest_dir).join("models").join("latex").join("tokenizer.json");
+        let enc_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("latex")
+            .join("encoder.onnx");
+        let dec_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("latex")
+            .join("decoder.onnx");
+        let tok_path = std::path::Path::new(&manifest_dir)
+            .join("models")
+            .join("latex")
+            .join("tokenizer.json");
 
         if enc_path.exists() && dec_path.exists() && tok_path.exists() {
-            RapidLatexEngine::new(&enc_path, &dec_path, &tok_path).ok().map(Arc::new)
+            RapidLatexEngine::new(&enc_path, &dec_path, &tok_path)
+                .ok()
+                .map(Arc::new)
         } else {
             None
         }
@@ -47,7 +59,11 @@ pub fn get_latex_engine() -> Option<()> {
 #[cfg(feature = "latex-ort")]
 impl RapidLatexEngine {
     /// Initializes RapidLaTeXOCR from encoder, decoder, and tokenizer paths.
-    pub fn new<P: AsRef<Path>>(encoder_path: P, decoder_path: P, tokenizer_path: P) -> anyhow::Result<Self> {
+    pub fn new<P: AsRef<Path>>(
+        encoder_path: P,
+        decoder_path: P,
+        tokenizer_path: P,
+    ) -> anyhow::Result<Self> {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
         let encoder = ort::session::Session::builder(&env)
@@ -68,7 +84,11 @@ impl RapidLatexEngine {
         let tok_json: serde_json::Value = serde_json::from_str(&tok_str)?;
 
         let mut vocab = HashMap::new();
-        if let Some(vocab_obj) = tok_json.get("model").and_then(|m| m.get("vocab")).and_then(|v| v.as_object()) {
+        if let Some(vocab_obj) = tok_json
+            .get("model")
+            .and_then(|m| m.get("vocab"))
+            .and_then(|v| v.as_object())
+        {
             for (token_str, id_val) in vocab_obj {
                 if let Some(id) = id_val.as_i64() {
                     vocab.insert(id, token_str.clone());
@@ -138,7 +158,8 @@ impl RapidLatexEngine {
         let scale = target_h as f32 / ch.max(1) as f32;
         let target_w = ((cw as f32 * scale / 32.0).round() as u32 * 32).clamp(32, 672);
 
-        let resized = cropped.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
+        let resized =
+            cropped.resize_exact(target_w, target_h, image::imageops::FilterType::Triangle);
         let resized_gray = resized.to_luma8();
 
         // 3. Normalize image: mean = 0.7931, std = 0.1738
@@ -161,14 +182,21 @@ impl RapidLatexEngine {
                 tensor_buf.into_boxed_slice(),
             ))?;
             let enc_inputs = ort::inputs!["input" => enc_input];
-            let mut encoder_session = self.encoder.lock().map_err(|e| anyhow::anyhow!("Encoder mutex poisoned: {e}"))?;
+            let mut encoder_session = self
+                .encoder
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Encoder mutex poisoned: {e}"))?;
             let enc_outputs = encoder_session.run(enc_inputs)?;
 
             let (ctx_shape, ctx_slice) = enc_outputs[0]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| anyhow::anyhow!("Failed to extract context tensor: {e}"))?;
 
-            (ctx_shape[1] as usize, ctx_shape[2] as usize, ctx_slice.to_vec())
+            (
+                ctx_shape[1] as usize,
+                ctx_shape[2] as usize,
+                ctx_slice.to_vec(),
+            )
         };
 
         // 5. Autoregressive Decoder Loop with Repetition Early-Stop
@@ -178,7 +206,10 @@ impl RapidLatexEngine {
         let mut repeat_count = 0;
         let mut prev_token = -1;
 
-        let mut decoder_session = self.decoder.lock().map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
+        let mut decoder_session = self
+            .decoder
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
 
         for _ in 0..max_seq_len {
             let x_tensor = ort::value::Tensor::from_array((
@@ -221,7 +252,8 @@ impl RapidLatexEngine {
             }
 
             let next_tok = best_idx as i64;
-            if next_tok == 2 { // [EOS]
+            if next_tok == 2 {
+                // [EOS]
                 break;
             }
 
@@ -292,39 +324,42 @@ pub fn clean_stray_dollars(s: &str) -> String {
 pub fn extract_equation_tag(s: &str) -> (String, Option<String>) {
     let trimmed = s.trim();
     if let Some(open_paren) = trimmed.rfind('(')
-        && let Some(close_paren) = trimmed[open_paren..].find(')') {
-            let tag_candidate = trimmed[open_paren + 1..open_paren + close_paren].trim();
-            let after_tag = trimmed[open_paren + close_paren + 1..].trim();
-            let is_valid_tag = !tag_candidate.is_empty()
-                && tag_candidate.len() <= 8
-                && tag_candidate.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        && let Some(close_paren) = trimmed[open_paren..].find(')')
+    {
+        let tag_candidate = trimmed[open_paren + 1..open_paren + close_paren].trim();
+        let after_tag = trimmed[open_paren + close_paren + 1..].trim();
+        let is_valid_tag = !tag_candidate.is_empty()
+            && tag_candidate.len() <= 8
+            && tag_candidate
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
 
-            let is_at_end = after_tag.is_empty()
-                || after_tag == "$"
-                || after_tag == "$$"
-                || after_tag == "dx"
-                || after_tag == "dr"
-                || after_tag.starts_with("where")
-                || after_tag.starts_with("with");
+        let is_at_end = after_tag.is_empty()
+            || after_tag == "$"
+            || after_tag == "$$"
+            || after_tag == "dx"
+            || after_tag == "dr"
+            || after_tag.starts_with("where")
+            || after_tag.starts_with("with");
 
-            if is_valid_tag && is_at_end {
-                let before = trimmed[..open_paren].trim_end();
-                let before_tag = if let Some(last_space) = before.rfind(' ') {
-                    let trailing_word = before[last_space + 1..].trim();
-                    if trailing_word.chars().all(|c| c.is_ascii_digit()) {
-                        before[..last_space].trim_end()
-                    } else {
-                        before
-                    }
+        if is_valid_tag && is_at_end {
+            let before = trimmed[..open_paren].trim_end();
+            let before_tag = if let Some(last_space) = before.rfind(' ') {
+                let trailing_word = before[last_space + 1..].trim();
+                if trailing_word.chars().all(|c| c.is_ascii_digit()) {
+                    before[..last_space].trim_end()
                 } else {
                     before
-                };
-
-                if !before_tag.is_empty() {
-                    return (before_tag.to_string(), Some(tag_candidate.to_string()));
                 }
+            } else {
+                before
+            };
+
+            if !before_tag.is_empty() {
+                return (before_tag.to_string(), Some(tag_candidate.to_string()));
             }
         }
+    }
     (trimmed.to_string(), None)
 }
 
@@ -332,19 +367,22 @@ pub fn extract_equation_tag(s: &str) -> (String, Option<String>) {
 pub fn fix_common_latex_command_typos(s: &str) -> String {
     let mut res = s.to_string();
 
-    res = res.replace(r"_{p\}", "_{p}")
-             .replace(r"^{p\}", "^{p}")
-             .replace(r"p_{p\}", "p_p")
-             .replace(r"\}", "}");
+    res = res
+        .replace(r"_{p\}", "_{p}")
+        .replace(r"^{p\}", "^{p}")
+        .replace(r"p_{p\}", "p_p")
+        .replace(r"\}", "}");
 
-    res = res.replace(r"\dotm_", r"\dot{m}_")
-             .replace(r"\dotm", r"\dot{m}")
-             .replace(r"\ddotm_", r"\ddot{m}_")
-             .replace(r"\ddotm", r"\ddot{m}");
+    res = res
+        .replace(r"\dotm_", r"\dot{m}_")
+        .replace(r"\dotm", r"\dot{m}")
+        .replace(r"\ddotm_", r"\ddot{m}_")
+        .replace(r"\ddotm", r"\ddot{m}");
 
-    res = res.replace("{n^{}}", "{n}")
-             .replace("T{{}}", "T")
-             .replace(r"\sigma_r{}", r"\sigma_r");
+    res = res
+        .replace("{n^{}}", "{n}")
+        .replace("T{{}}", "T")
+        .replace(r"\sigma_r{}", r"\sigma_r");
 
     let mut out = String::with_capacity(res.len());
     let mut i = 0;
@@ -521,21 +559,90 @@ pub fn is_valid_latex_formula(s: &str) -> bool {
     }
 
     // Explanatory table column descriptions like "= Reynolds number" without math commands/subscripts
-    if trimmed.starts_with('=') && !trimmed.contains('\\') && !trimmed.contains('_') && !trimmed.contains('^') {
+    if trimmed.starts_with('=')
+        && !trimmed.contains('\\')
+        && !trimmed.contains('_')
+        && !trimmed.contains('^')
+    {
         return false;
     }
 
     const KNOWN_MATH_COMMANDS: &[&str] = &[
-        r"\alpha", r"\beta", r"\gamma", r"\delta", r"\epsilon", r"\varepsilon", r"\zeta", r"\eta",
-        r"\theta", r"\vartheta", r"\iota", r"\kappa", r"\lambda", r"\mu", r"\nu", r"\xi",
-        r"\pi", r"\varpi", r"\rho", r"\varrho", r"\sigma", r"\varsigma", r"\tau", r"\upsilon",
-        r"\phi", r"\varphi", r"\chi", r"\psi", r"\omega",
-        r"\Gamma", r"\Delta", r"\Theta", r"\Lambda", r"\Xi", r"\Pi", r"\Sigma", r"\Upsilon",
-        r"\Phi", r"\Psi", r"\Omega",
-        r"\frac", r"\dfrac", r"\tfrac", r"\sqrt", r"\sum", r"\prod", r"\int", r"\iint", r"\oint",
-        r"\partial", r"\nabla", r"\infty", r"\times", r"\pm", r"\mp", r"\cdot", r"\leq", r"\geq",
-        r"\neq", r"\approx", r"\equiv", r"\propto", r"\to", r"\implies",
-        r"\dot", r"\ddot", r"\hat", r"\bar", r"\tilde", r"\vec", r"\left", r"\right", r"\exp", r"\ln", r"\log",
+        r"\alpha",
+        r"\beta",
+        r"\gamma",
+        r"\delta",
+        r"\epsilon",
+        r"\varepsilon",
+        r"\zeta",
+        r"\eta",
+        r"\theta",
+        r"\vartheta",
+        r"\iota",
+        r"\kappa",
+        r"\lambda",
+        r"\mu",
+        r"\nu",
+        r"\xi",
+        r"\pi",
+        r"\varpi",
+        r"\rho",
+        r"\varrho",
+        r"\sigma",
+        r"\varsigma",
+        r"\tau",
+        r"\upsilon",
+        r"\phi",
+        r"\varphi",
+        r"\chi",
+        r"\psi",
+        r"\omega",
+        r"\Gamma",
+        r"\Delta",
+        r"\Theta",
+        r"\Lambda",
+        r"\Xi",
+        r"\Pi",
+        r"\Sigma",
+        r"\Upsilon",
+        r"\Phi",
+        r"\Psi",
+        r"\Omega",
+        r"\frac",
+        r"\dfrac",
+        r"\tfrac",
+        r"\sqrt",
+        r"\sum",
+        r"\prod",
+        r"\int",
+        r"\iint",
+        r"\oint",
+        r"\partial",
+        r"\nabla",
+        r"\infty",
+        r"\times",
+        r"\pm",
+        r"\mp",
+        r"\cdot",
+        r"\leq",
+        r"\geq",
+        r"\neq",
+        r"\approx",
+        r"\equiv",
+        r"\propto",
+        r"\to",
+        r"\implies",
+        r"\dot",
+        r"\ddot",
+        r"\hat",
+        r"\bar",
+        r"\tilde",
+        r"\vec",
+        r"\left",
+        r"\right",
+        r"\exp",
+        r"\ln",
+        r"\log",
     ];
 
     let has_cmd = KNOWN_MATH_COMMANDS.iter().any(|cmd| trimmed.contains(cmd));
@@ -625,7 +732,10 @@ mod tests {
         // Escaped brace sample
         let input2 = r"p_{p\}=\rho_{i0}";
         let repaired2 = validate_and_repair_latex(input2).expect("Should repair");
-        assert_eq!(repaired2.matches('{').count(), repaired2.matches('}').count());
+        assert_eq!(
+            repaired2.matches('{').count(),
+            repaired2.matches('}').count()
+        );
         assert!(!repaired2.contains(r"\}"));
     }
 

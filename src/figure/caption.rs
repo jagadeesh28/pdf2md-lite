@@ -31,9 +31,13 @@ pub struct FigureRect {
 
 impl FigureRect {
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
-
 
     pub fn from_stream_figure(s: &StreamFigure) -> Self {
         let (x, y, w, h) = s.pixel_box;
@@ -137,9 +141,7 @@ pub fn parse_caption_anchor(line: &str) -> Option<CaptionAnchor> {
     }
 
     // Extract prefix slice
-    let after_prefix = trimmed[matched_prefix_len..].trim_start_matches(|c: char| {
-        c == ' ' || c == '\t' || c == '.' || c == ':'
-    });
+    let after_prefix = trimmed[matched_prefix_len..].trim_start_matches([' ', '\t', '.', ':']);
 
     if after_prefix.is_empty() {
         return None;
@@ -166,23 +168,36 @@ pub fn parse_caption_anchor(line: &str) -> Option<CaptionAnchor> {
     }
 
     // Must contain a digit, roman numeral, or alphanumeric section key (e.g. 1, 4.2, II-A, A)
-    let has_valid_id = identifier
-        .split(['-', '.', '(', ')'])
-        .any(|part| {
-            let p = part.trim();
-            if p.is_empty() {
-                return false;
-            }
-            if p.chars().any(|c| c.is_ascii_digit()) {
-                return true;
-            }
-            let upper = p.to_uppercase();
-            matches!(
-                upper.as_str(),
-                "I" | "II" | "III" | "IV" | "V" | "VI" | "VII" | "VIII" | "IX" | "X" | "XI" | "XII"
-                    | "A" | "B" | "C" | "D" | "E" | "F"
-            )
-        });
+    let has_valid_id = identifier.split(['-', '.', '(', ')']).any(|part| {
+        let p = part.trim();
+        if p.is_empty() {
+            return false;
+        }
+        if p.chars().any(|c| c.is_ascii_digit()) {
+            return true;
+        }
+        let upper = p.to_uppercase();
+        matches!(
+            upper.as_str(),
+            "I" | "II"
+                | "III"
+                | "IV"
+                | "V"
+                | "VI"
+                | "VII"
+                | "VIII"
+                | "IX"
+                | "X"
+                | "XI"
+                | "XII"
+                | "A"
+                | "B"
+                | "C"
+                | "D"
+                | "E"
+                | "F"
+        )
+    });
 
     if !has_valid_id {
         return None;
@@ -192,9 +207,11 @@ pub fn parse_caption_anchor(line: &str) -> Option<CaptionAnchor> {
     let canonical_label = format!("{prefix_str} {identifier}");
 
     // The remaining text after identifier is the description
-    let remainder = after_prefix[identifier.len()..].trim_start_matches(|c: char| {
-        c == ' ' || c == '\t' || c == ':' || c == '.' || c == '-' || c == '—' || c == '–'
-    }).trim();
+    let remainder = after_prefix[identifier.len()..]
+        .trim_start_matches(|c: char| {
+            c == ' ' || c == '\t' || c == ':' || c == '.' || c == '-' || c == '—' || c == '–'
+        })
+        .trim();
 
     let description = if remainder.is_empty() {
         None
@@ -228,11 +245,7 @@ pub fn match_proximity_caption(
 
             // Check horizontal column overlap/gap
             let h_inter = (figure.xmax().min(l_xmax) as i32) - (figure.xmin().max(l_xmin) as i32);
-            let h_gap = if h_inter >= 0 {
-                0
-            } else {
-                (-h_inter) as u32
-            };
+            let h_gap = if h_inter >= 0 { 0 } else { (-h_inter) as u32 };
 
             if h_gap > config.max_horizontal_gap {
                 continue;
@@ -339,11 +352,17 @@ mod tests {
     fn test_parse_caption_anchor_variants() {
         let c1 = parse_caption_anchor("Figure 1: System Architecture Overview").unwrap();
         assert_eq!(c1.label, "Figure 1");
-        assert_eq!(c1.description.as_deref(), Some("System Architecture Overview"));
+        assert_eq!(
+            c1.description.as_deref(),
+            Some("System Architecture Overview")
+        );
 
         let c2 = parse_caption_anchor("Fig. 4.7 — Variation of species mole fractions").unwrap();
         assert_eq!(c2.label, "Fig 4.7");
-        assert_eq!(c2.description.as_deref(), Some("Variation of species mole fractions"));
+        assert_eq!(
+            c2.description.as_deref(),
+            Some("Variation of species mole fractions")
+        );
 
         let c3 = parse_caption_anchor("Diagram 3. Component Hierarchy").unwrap();
         assert_eq!(c3.label, "Diagram 3");
@@ -418,18 +437,16 @@ mod tests {
     #[test]
     fn test_proximity_caption_matching_above() {
         let fig = FigureRect::new(100, 300, 400, 300); // y: 300..600
-        let lines = vec![
-            TextLine {
-                bbox: TextBoundingBox {
-                    x: 100,
-                    y: 270, // 30px above figure top (300)
-                    width: 300,
-                    height: 20,
-                    score: 0.95,
-                },
-                text: "Table 2: Experimental validation matrix".to_string(),
+        let lines = vec![TextLine {
+            bbox: TextBoundingBox {
+                x: 100,
+                y: 270, // 30px above figure top (300)
+                width: 300,
+                height: 20,
+                score: 0.95,
             },
-        ];
+            text: "Table 2: Experimental validation matrix".to_string(),
+        }];
 
         let matched = match_proximity_caption(&fig, &lines, &CaptionMatchConfig::default(), (2, 1));
         assert_eq!(matched.label, "Table 2");

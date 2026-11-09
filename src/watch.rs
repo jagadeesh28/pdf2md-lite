@@ -8,7 +8,7 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, RecvTimeoutError};
+use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 use crate::backends::indra::IndraScript;
@@ -28,7 +28,11 @@ pub fn is_candidate_pdf(path: &Path) -> bool {
     };
 
     // Filter out temporary files created by editors, downloaders, or OS
-    if filename.starts_with('.') || filename.starts_with("~$") || filename.ends_with(".tmp") || filename.ends_with(".crdownload") {
+    if filename.starts_with('.')
+        || filename.starts_with("~$")
+        || filename.ends_with(".tmp")
+        || filename.ends_with(".crdownload")
+    {
         return false;
     }
 
@@ -111,17 +115,16 @@ impl Default for WatchOptions {
 }
 
 /// Starts an autonomous directory watch loop, converting existing and newly added PDFs.
-pub fn watch_directory(
-    input_dir: &Path,
-    output_dir: &Path,
-    options: WatchOptions,
-) -> Result<()> {
+pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOptions) -> Result<()> {
     if !input_dir.is_dir() {
         anyhow::bail!("Input path '{}' is not a directory", input_dir.display());
     }
 
     fs::create_dir_all(output_dir).with_context(|| {
-        format!("Failed to create output root directory {}", output_dir.display())
+        format!(
+            "Failed to create output root directory {}",
+            output_dir.display()
+        )
     })?;
 
     if !options.quiet {
@@ -129,8 +132,18 @@ pub fn watch_directory(
         println!("  - Watching: {}", input_dir.display());
         println!("  - Output:   {}", output_dir.display());
         println!("  - Language: {}", options.script);
-        println!("  - Embeddings: {}", if options.embed { "enabled" } else { "disabled" });
-        println!("  - Base64 images: {}", if options.image_opts.embed_base64 { "enabled" } else { "disabled" });
+        println!(
+            "  - Embeddings: {}",
+            if options.embed { "enabled" } else { "disabled" }
+        );
+        println!(
+            "  - Base64 images: {}",
+            if options.image_opts.embed_base64 {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         println!("Initial batch pass scanning for un-converted PDFs...");
     }
 
@@ -212,15 +225,17 @@ pub fn watch_directory(
 
             // Verify if content has actually changed before re-converting
             if target_md.is_file()
-                && let Ok(existing_content) = fs::read_to_string(&target_md) {
-                    let (meta, _) = crate::markdown::parse_existing_frontmatter(&existing_content);
-                    if let Some(m) = meta
-                        && let Some(existing_sha) = m.pdf_sha256
-                        && let Ok(current_sha) = crate::markdown::compute_file_sha256(&pdf_path)
-                        && existing_sha == current_sha {
-                            continue;
-                        }
+                && let Ok(existing_content) = fs::read_to_string(&target_md)
+            {
+                let (meta, _) = crate::markdown::parse_existing_frontmatter(&existing_content);
+                if let Some(m) = meta
+                    && let Some(existing_sha) = m.pdf_sha256
+                    && let Ok(current_sha) = crate::markdown::compute_file_sha256(&pdf_path)
+                    && existing_sha == current_sha
+                {
+                    continue;
                 }
+            }
 
             if !options.quiet {
                 println!(
@@ -230,7 +245,10 @@ pub fn watch_directory(
             }
 
             if let Err(e) = fs::create_dir_all(&doc_out_dir) {
-                eprintln!("Failed to create directory {}: {e:#}", doc_out_dir.display());
+                eprintln!(
+                    "Failed to create directory {}: {e:#}",
+                    doc_out_dir.display()
+                );
                 continue;
             }
 

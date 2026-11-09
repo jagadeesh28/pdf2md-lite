@@ -77,7 +77,10 @@ pub fn format_table_cell_with_latex(cell: &str) -> String {
         .replace(r"\[", "$")
         .replace(r"\]", "$");
 
-    if cell_no_newlines.starts_with('$') && cell_no_newlines.ends_with('$') && cell_no_newlines.len() >= 2 {
+    if cell_no_newlines.starts_with('$')
+        && cell_no_newlines.ends_with('$')
+        && cell_no_newlines.len() >= 2
+    {
         let inside = &cell_no_newlines[1..cell_no_newlines.len() - 1];
         if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(inside) {
             let stripped_tag = strip_tag_from_inline_latex(&repaired);
@@ -89,8 +92,17 @@ pub fn format_table_cell_with_latex(cell: &str) -> String {
     }
 
     // Dimensionless numbers and physical ratios (e.g. "Re", "Nu", "Pr", "H/C")
-    let is_dimensionless_symbol = trimmed == "Re" || trimmed == "Nu" || trimmed == "Pr" || trimmed == "CD" || trimmed == "CP" || trimmed == "H/C"
-        || trimmed == "Ma" || trimmed == "Kn" || trimmed == "Pe" || trimmed == "Sc" || trimmed == "St";
+    let is_dimensionless_symbol = trimmed == "Re"
+        || trimmed == "Nu"
+        || trimmed == "Pr"
+        || trimmed == "CD"
+        || trimmed == "CP"
+        || trimmed == "H/C"
+        || trimmed == "Ma"
+        || trimmed == "Kn"
+        || trimmed == "Pe"
+        || trimmed == "Sc"
+        || trimmed == "St";
 
     if is_dimensionless_symbol {
         return format!("${trimmed}$");
@@ -102,7 +114,9 @@ pub fn format_table_cell_with_latex(cell: &str) -> String {
 
     if has_math_cmd || has_sub_super {
         if !crate::markdown::is_likely_prose_sentence(&cell_no_newlines) {
-            if let Some(repaired) = crate::figure::latex::validate_and_repair_latex(&cell_no_newlines) {
+            if let Some(repaired) =
+                crate::figure::latex::validate_and_repair_latex(&cell_no_newlines)
+            {
                 let stripped_tag = strip_tag_from_inline_latex(&repaired);
                 let escaped_pipe = stripped_tag.replace('|', r"\|");
                 return format!("${escaped_pipe}$");
@@ -118,11 +132,12 @@ pub fn format_table_cell_with_latex(cell: &str) -> String {
 
 fn strip_tag_from_inline_latex(s: &str) -> String {
     if let Some(pos) = s.rfind(r"\tag{")
-        && let Some(end) = s[pos..].find('}') {
-            let tag_content = &s[pos + 5..pos + end];
-            let before = s[..pos].trim_end();
-            return format!("{before} ({tag_content})");
-        }
+        && let Some(end) = s[pos..].find('}')
+    {
+        let tag_content = &s[pos + 5..pos + end];
+        let before = s[..pos].trim_end();
+        return format!("{before} ({tag_content})");
+    }
     s.to_string()
 }
 
@@ -259,7 +274,10 @@ pub fn extract_table_grid(table_rect: &FigureRect, text_lines: &[TextLine]) -> O
         let mut matched_row = false;
 
         for group in &mut row_groups {
-            let avg_y = group.iter().map(|l| l.bbox.y + l.bbox.height / 2).sum::<u32>()
+            let avg_y = group
+                .iter()
+                .map(|l| l.bbox.y + l.bbox.height / 2)
+                .sum::<u32>()
                 / group.len() as u32;
             let avg_h = group.iter().map(|l| l.bbox.height).sum::<u32>() / group.len() as u32;
             let tol = (avg_h / 2).max(6);
@@ -368,7 +386,9 @@ fn expand_single_line_tokens(row_groups: &[Vec<&TextLine>]) -> Vec<Vec<TableCell
                 let sym = text[..eq_idx].trim();
                 let def = text[eq_idx + 1..].trim(); // starts with "= ..."
                 if !sym.is_empty() && !def.is_empty() && sym.len() <= 15 && !sym.contains("  ") {
-                    let sym_w = (line.bbox.width as f32 * (sym.len() as f32 / text.len().max(1) as f32)).max(15.0) as u32;
+                    let sym_w = (line.bbox.width as f32
+                        * (sym.len() as f32 / text.len().max(1) as f32))
+                        .max(15.0) as u32;
                     let def_x = line.bbox.x + sym_w + 10;
                     let def_w = line.bbox.width.saturating_sub(sym_w + 10);
                     tokens_in_row.push(TableCellToken {
@@ -402,7 +422,10 @@ fn expand_single_line_tokens(row_groups: &[Vec<&TextLine>]) -> Vec<Vec<TableCell
                     };
 
                     let mut current_x = line.bbox.x;
-                    let spacing = (line.bbox.width.saturating_sub((total_chars as f32 * char_width) as u32))
+                    let spacing = (line
+                        .bbox
+                        .width
+                        .saturating_sub((total_chars as f32 * char_width) as u32))
                         / (sub_chunks.len() as u32);
 
                     for chunk in sub_chunks {
@@ -513,9 +536,21 @@ mod tests {
     fn test_table_grid_to_markdown() {
         let grid = TableGrid {
             rows: vec![
-                vec!["Header 1".to_string(), "Header 2".to_string(), "Header 3".to_string()],
-                vec!["Val 1".to_string(), "Val 2".to_string(), "Val 3".to_string()],
-                vec!["Val 4".to_string(), "Val 5 | Pipe".to_string(), "Val 6".to_string()],
+                vec![
+                    "Header 1".to_string(),
+                    "Header 2".to_string(),
+                    "Header 3".to_string(),
+                ],
+                vec![
+                    "Val 1".to_string(),
+                    "Val 2".to_string(),
+                    "Val 3".to_string(),
+                ],
+                vec![
+                    "Val 4".to_string(),
+                    "Val 5 | Pipe".to_string(),
+                    "Val 6".to_string(),
+                ],
             ],
             num_cols: 3,
         };
@@ -551,7 +586,10 @@ mod tests {
 
         assert_eq!(grid.num_cols, 3);
         assert_eq!(grid.rows.len(), 3);
-        assert_eq!(grid.rows[0], vec!["Station", "Pressure (atm)", "Temperature (K)"]);
+        assert_eq!(
+            grid.rows[0],
+            vec!["Station", "Pressure (atm)", "Temperature (K)"]
+        );
         assert_eq!(grid.rows[1], vec!["1", "1.000", "300.0"]);
         assert_eq!(grid.rows[2], vec!["2", "0.528", "250.0"]);
 
@@ -573,7 +611,8 @@ mod tests {
         let l5 = make_line(400, 95, 40, 15, "Data C1");
 
         let lines = vec![l1, l2, l3, l4, l5];
-        let grid = extract_table_grid(&table_rect, &lines).expect("Grid should extract sparse table");
+        let grid =
+            extract_table_grid(&table_rect, &lines).expect("Grid should extract sparse table");
 
         assert_eq!(grid.num_cols, 3);
         assert_eq!(grid.rows.len(), 2);
@@ -589,7 +628,8 @@ mod tests {
         let raw_lines = vec!["Col1 Col2".to_string(), "Val1 Val2".to_string()];
         let callout = "> [!table]- Original Table Image: Table 1\n> ![Table 1](images/Table-1.png)";
 
-        let res = integrate_table_into_markdown(body, table_md, &raw_lines, "Table 1", Some(callout));
+        let res =
+            integrate_table_into_markdown(body, table_md, &raw_lines, "Table 1", Some(callout));
         assert!(res.contains("Table 1 Equilibrium states."));
         assert!(res.contains("| Col1 | Col2 |"));
         assert!(res.contains("> [!table]- Original Table Image: Table 1"));
@@ -602,9 +642,18 @@ mod tests {
         assert_eq!(format_table_cell_with_latex("Re"), "$Re$");
         assert_eq!(format_table_cell_with_latex("T"), "T");
         assert_eq!(format_table_cell_with_latex(r"\dot{m}"), r"$\dot{m}$");
-        assert_eq!(format_table_cell_with_latex(r"V_{p0}/V_{ref}"), r"$V_{p0}/V_{ref}$");
-        assert_eq!(format_table_cell_with_latex(r"|V_p - V_g|"), r"$\|V_p - V_g\|$");
-        assert_eq!(format_table_cell_with_latex("= Reynolds number"), "= Reynolds number");
+        assert_eq!(
+            format_table_cell_with_latex(r"V_{p0}/V_{ref}"),
+            r"$V_{p0}/V_{ref}$"
+        );
+        assert_eq!(
+            format_table_cell_with_latex(r"|V_p - V_g|"),
+            r"$\|V_p - V_g\|$"
+        );
+        assert_eq!(
+            format_table_cell_with_latex("= Reynolds number"),
+            "= Reynolds number"
+        );
     }
 
     #[test]

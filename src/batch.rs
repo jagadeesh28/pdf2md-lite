@@ -300,25 +300,29 @@ pub fn process_pdf_directory_all(
 
         // Incremental Batch Resume: If the target markdown file already exists and contains
         // valid converted content (at least 100 bytes), verify content-hash or length before skipping.
-        if resume && target_md_path.is_file()
+        if resume
+            && target_md_path.is_file()
             && let Ok(meta) = fs::metadata(&target_md_path)
-                && meta.len() > 100 {
-                    let mut should_skip = true;
-                    if let Ok(existing_content) = fs::read_to_string(&target_md_path) {
-                        let (existing_meta, _) = crate::markdown::parse_existing_frontmatter(&existing_content);
-                        if let Some(em) = existing_meta
-                            && let Some(existing_sha) = em.pdf_sha256
-                                && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path) {
-                                    should_skip = existing_sha == source_sha;
-                                }
-                    }
-
-                    if should_skip {
-                        skipped_items.push((index + 1, folder_slug));
-                        initial_succeeded += 1;
-                        continue;
-                    }
+            && meta.len() > 100
+        {
+            let mut should_skip = true;
+            if let Ok(existing_content) = fs::read_to_string(&target_md_path) {
+                let (existing_meta, _) =
+                    crate::markdown::parse_existing_frontmatter(&existing_content);
+                if let Some(em) = existing_meta
+                    && let Some(existing_sha) = em.pdf_sha256
+                    && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path)
+                {
+                    should_skip = existing_sha == source_sha;
                 }
+            }
+
+            if should_skip {
+                skipped_items.push((index + 1, folder_slug));
+                initial_succeeded += 1;
+                continue;
+            }
+        }
 
         let total_pages = match get_pdf_page_count(&pdf_path) {
             Ok(count) => count,
@@ -411,12 +415,23 @@ pub fn process_pdf_directory_all(
             let elapsed = t0.elapsed().as_secs_f32();
             match conv_res {
                 Ok(_) => {
-                    tracker.on_doc_complete(0, item.index, &item.folder_slug, pages_count, elapsed, true);
+                    tracker.on_doc_complete(
+                        0,
+                        item.index,
+                        &item.folder_slug,
+                        pages_count,
+                        elapsed,
+                        true,
+                    );
                     result.lock().unwrap().succeeded += 1;
                 }
                 Err(err) => {
                     tracker.on_doc_failed(0, item.index, &item.folder_slug, &err.to_string());
-                    result.lock().unwrap().failed.push((item.pdf_path, err.to_string()));
+                    result
+                        .lock()
+                        .unwrap()
+                        .failed
+                        .push((item.pdf_path, err.to_string()));
                 }
             }
         }
@@ -426,10 +441,8 @@ pub fn process_pdf_directory_all(
         // strictly guaranteeing that sum(doc_workers) <= total_workers across the process.
         // Uses batch_page_worker_limit to prevent nested concurrency oversubscription.
         let concurrent_docs = total_workers.min(4).min(doc_items.len()).max(1);
-        let per_doc_workers = crate::concurrency::batch_page_worker_limit(
-            None,
-            total_workers,
-        ) / concurrent_docs;
+        let per_doc_workers =
+            crate::concurrency::batch_page_worker_limit(None, total_workers) / concurrent_docs;
         let per_doc_workers = per_doc_workers.max(1);
 
         let queue = std::sync::Arc::new(std::sync::Mutex::new(doc_items.into_iter()));
@@ -535,9 +548,15 @@ pub struct DryRunReport {
 impl DryRunReport {
     /// Formats and prints the dry-run report to stdout.
     pub fn print(&self) {
-        println!("================================================================================");
-        println!("                         pdfmd-lite Conversion Dry-Run                          ");
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
+        println!(
+            "                         pdfmd-lite Conversion Dry-Run                          "
+        );
+        println!(
+            "================================================================================"
+        );
         println!(
             "Execution Plan ({} document(s), {} pages to process):",
             self.total_documents, self.total_pages_to_process
@@ -559,17 +578,27 @@ impl DryRunReport {
                 println!("        Sidecar: {}", emb.display());
             }
         }
-        println!("--------------------------------------------------------------------------------");
+        println!(
+            "--------------------------------------------------------------------------------"
+        );
         println!("Resource Budgets & Performance Projections:");
-        println!("  - Concurrency workers:        {}", self.resolved_concurrency);
-        println!("  - Estimated memory budget:    {} MB", self.memory_budget_mb);
+        println!(
+            "  - Concurrency workers:        {}",
+            self.resolved_concurrency
+        );
+        println!(
+            "  - Estimated memory budget:    {} MB",
+            self.memory_budget_mb
+        );
         println!(
             "  - Estimated conversion time:  {:.1}s - {:.1}s (~{})",
             self.estimated_time_secs.0,
             self.estimated_time_secs.1,
             crate::progress::format_eta(self.estimated_time_secs.1)
         );
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
     }
 }
 
@@ -634,9 +663,10 @@ pub fn dry_run_pdf_directory(
                     let (meta, _) = crate::markdown::parse_existing_frontmatter(&content);
                     if let Some(m) = meta
                         && let Some(sha) = m.pdf_sha256
-                        && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path) {
-                            matches_sha = sha == source_sha;
-                        }
+                        && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path)
+                    {
+                        matches_sha = sha == source_sha;
+                    }
                 }
                 if matches_sha {
                     "WOULD_SKIP (Already converted, content-hash matches)"
@@ -653,7 +683,11 @@ pub fn dry_run_pdf_directory(
         let images_target = if image_opts.embed_base64 {
             "inlined (base64 data URIs, no folder created)".to_string()
         } else {
-            format!("{folder_slug}_images/ ({}, quality: {})", image_opts.format.extension(), image_opts.quality)
+            format!(
+                "{folder_slug}_images/ ({}, quality: {})",
+                image_opts.format.extension(),
+                image_opts.quality
+            )
         };
 
         let embeddings_target = if embed {
@@ -734,7 +768,12 @@ pub fn dry_run_single_pdf(
         "inlined (base64 data URIs, no folder created)".to_string()
     } else {
         let parent = target_md.parent().unwrap_or_else(|| Path::new("."));
-        format!("{}/ ({}, quality: {})", parent.join(format!("{short_slug}_images")).display(), image_opts.format.extension(), image_opts.quality)
+        format!(
+            "{}/ ({}, quality: {})",
+            parent.join(format!("{short_slug}_images")).display(),
+            image_opts.format.extension(),
+            image_opts.quality
+        )
     };
 
     let embeddings_target = if embed {

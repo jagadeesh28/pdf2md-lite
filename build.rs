@@ -14,9 +14,7 @@ const INDRA_FILES: &[&str] = &[
     "config.json",
 ];
 
-const LAYOUT_FILES: &[&str] = &[
-    "yolov8n-doclaynet.onnx",
-];
+const LAYOUT_FILES: &[&str] = &["yolov8n-doclaynet.onnx"];
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(has_avx2)");
@@ -52,9 +50,8 @@ fn detect_hardware_features() {
 }
 
 fn check_model_weights() {
-    let manifest_dir = PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()),
-    );
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()));
 
     println!("cargo:rerun-if-changed=models/indra");
     println!("cargo:rerun-if-changed=models/layout");

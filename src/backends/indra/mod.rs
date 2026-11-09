@@ -9,8 +9,6 @@ pub mod vocab;
 pub use detect::{IndraDetector, TextBoundingBox};
 pub use engine::{IndraEngine, IndraScript};
 pub use models::IndraModelSource;
-pub use order::{sort_and_format_markdown, TextLine};
+pub use order::{TextLine, sort_and_format_markdown};
 pub use recognize::IndraRecognizer;
-pub use vocab::{
-    count_telugu_chars, has_telugu, is_telugu_char, IndraVocab, TELUGU_RANGE,
-};
+pub use vocab::{IndraVocab, TELUGU_RANGE, count_telugu_chars, has_telugu, is_telugu_char};
