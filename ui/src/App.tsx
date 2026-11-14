@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { MenuBar } from './components/MenuBar';
 import { BatchQueue } from './components/BatchQueue';
 import { SplitPane } from './components/SplitPane';
@@ -57,6 +58,20 @@ export const App: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState<boolean>(false);
   const [showAbout, setShowAbout] = useState<boolean>(false);
   const [dryRunReport, setDryRunReport] = useState<DryRunSummary | null>(null);
+  const [actionNotice, setActionNotice] = useState<{
+    type: 'success' | 'error' | 'info';
+    title: string;
+    message: string;
+  } | null>(null);
+
+  // Auto-dismiss action notice after 7 seconds
+  useEffect(() => {
+    if (!actionNotice) return;
+    const timer = setTimeout(() => {
+      setActionNotice(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [actionNotice]);
 
   // Initial config load
   useEffect(() => {
@@ -184,50 +199,109 @@ export const App: React.FC = () => {
 
   const handleFormatNotes = async () => {
     addLog('info', `Formatting notes across output vault '${outputDir}'...`);
+    setActionNotice({
+      type: 'info',
+      title: 'Formatting Notes',
+      message: `Scanning Markdown notes in '${outputDir}'...`,
+    });
     try {
       const res = await formatNotes(outputDir, false);
       addLog('info', `Note formatter completed: ${res.filesProcessed} notes processed.`);
+      setActionNotice({
+        type: 'success',
+        title: 'Note Formatting Completed',
+        message: `${res.filesProcessed} notes scanned and formatted in '${outputDir}'.`,
+      });
     } catch (err) {
       addLog('error', `Note formatting failed: ${err}`);
+      setActionNotice({
+        type: 'error',
+        title: 'Note Formatting Failed',
+        message: `${err}`,
+      });
     }
   };
 
   const handleFixLatex = async () => {
     addLog('info', `Sanitizing LaTeX delimiters across notes in '${outputDir}'...`);
+    setActionNotice({
+      type: 'info',
+      title: 'Sanitizing LaTeX Delimiters',
+      message: `Scanning equations in notes across '${outputDir}'...`,
+    });
     try {
       const res = await formatNotes(outputDir, true);
       addLog('info', `LaTeX sanitizer completed: ${res.replacementsMade} equations repaired.`);
+      setActionNotice({
+        type: 'success',
+        title: 'LaTeX Sanitizer Completed',
+        message: `${res.replacementsMade} equations repaired across notes in '${outputDir}'.`,
+      });
     } catch (err) {
       addLog('error', `LaTeX sanitizer failed: ${err}`);
+      setActionNotice({
+        type: 'error',
+        title: 'LaTeX Sanitizer Failed',
+        message: `${err}`,
+      });
     }
   };
 
   const handleConvertPngToJpeg = async () => {
     addLog('info', `Migrating vault PNG images in '${outputDir}' to JPEG format...`);
+    setActionNotice({
+      type: 'info',
+      title: 'Migrating PNG Images',
+      message: `Scanning for PNG figures in '${outputDir}'...`,
+    });
     try {
       const q = config.image_quality || 85;
       const res = await convertPngToJpeg(outputDir, q);
+      const savedKb = Math.round(res.bytesSaved / 1024);
       addLog(
         'info',
-        `Image migration completed: ${res.imagesConverted} images converted (~${Math.round(
-          res.bytesSaved / 1024
-        )} KB saved).`
+        `Image migration completed: ${res.imagesConverted} images converted (~${savedKb} KB saved).`
       );
+      setActionNotice({
+        type: 'success',
+        title: 'Image Migration Completed',
+        message: `${res.imagesConverted} images converted to JPEG (~${savedKb} KB disk space saved).`,
+      });
     } catch (err) {
       addLog('error', `Image migration failed: ${err}`);
+      setActionNotice({
+        type: 'error',
+        title: 'Image Migration Failed',
+        message: `${err}`,
+      });
     }
   };
 
   const handleEmbedVault = async () => {
     addLog('info', `Generating semantic .embeddings.jsonl sidecars across vault in '${outputDir}'...`);
+    setActionNotice({
+      type: 'info',
+      title: 'Generating Semantic Embeddings',
+      message: `Indexing semantic vectors across notes in '${outputDir}'...`,
+    });
     try {
       const res = await embedVault(outputDir, false);
       addLog(
         'info',
         `Vault embedding finished: ${res.notesProcessed} notes processed, ${res.chunksEmbedded} semantic chunks indexed.`
       );
+      setActionNotice({
+        type: 'success',
+        title: 'Vault Embeddings Completed',
+        message: `${res.notesProcessed} notes processed, ${res.chunksEmbedded} semantic chunks indexed.`,
+      });
     } catch (err) {
       addLog('error', `Vault embedding failed: ${err}`);
+      setActionNotice({
+        type: 'error',
+        title: 'Vault Embeddings Failed',
+        message: `${err}`,
+      });
     }
   };
 
@@ -378,6 +452,38 @@ export const App: React.FC = () => {
                 Close Report
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action Notice Toast */}
+      {actionNotice && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md w-full animate-in fade-in slide-in-from-bottom-4 duration-200 pointer-events-auto">
+          <div
+            className={`p-4 rounded-xl border shadow-2xl flex items-start space-x-3 ${
+              actionNotice.type === 'success'
+                ? 'bg-emerald-950/95 border-emerald-500/50 text-emerald-200'
+                : actionNotice.type === 'error'
+                ? 'bg-rose-950/95 border-rose-500/50 text-rose-200'
+                : 'bg-gray-850/95 border-purple-500/50 text-gray-200'
+            }`}
+          >
+            <div className="flex-shrink-0 mt-0.5">
+              {actionNotice.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
+              {actionNotice.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400" />}
+              {actionNotice.type === 'info' && <Info className="w-5 h-5 text-purple-400 animate-pulse" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-white">{actionNotice.title}</div>
+              <div className="text-[11px] mt-0.5 opacity-90 leading-relaxed">{actionNotice.message}</div>
+            </div>
+            <button
+              onClick={() => setActionNotice(null)}
+              className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
