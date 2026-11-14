@@ -657,13 +657,27 @@ async fn format_notes_handler(
             false,
             move |p| {
                 let _ = tx.send(ProgressEvent::VaultProgress {
-                    task: p.task,
-                    step: p.step,
+                    task: p.task.clone(),
+                    step: p.step.clone(),
                     completed: p.completed,
                     total: p.total,
                     items_per_sec: p.items_per_sec,
                     eta_sec: p.eta_sec,
                 });
+                if p.completed == 1 || p.completed % 25 == 0 || p.completed == p.total {
+                    let pct = if p.total > 0 {
+                        (p.completed as f32 / p.total as f32) * 100.0
+                    } else {
+                        100.0
+                    };
+                    let _ = tx.send(ProgressEvent::Log {
+                        level: "info".to_string(),
+                        message: format!(
+                            "Note formatting: {}/{} notes ({:.1}%) - {:.1} notes/s, ETA: ~{:.0}s",
+                            p.completed, p.total, pct, p.items_per_sec, p.eta_sec
+                        ),
+                    });
+                }
             },
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -692,13 +706,27 @@ async fn convert_png_handler(
             false,
             move |p| {
                 let _ = tx.send(ProgressEvent::VaultProgress {
-                    task: p.task,
-                    step: p.step,
+                    task: p.task.clone(),
+                    step: p.step.clone(),
                     completed: p.completed,
                     total: p.total,
                     items_per_sec: p.items_per_sec,
                     eta_sec: p.eta_sec,
                 });
+                if p.completed == 1 || p.completed % 25 == 0 || p.completed == p.total {
+                    let pct = if p.total > 0 {
+                        (p.completed as f32 / p.total as f32) * 100.0
+                    } else {
+                        100.0
+                    };
+                    let _ = tx.send(ProgressEvent::Log {
+                        level: "info".to_string(),
+                        message: format!(
+                            "PNG migration: {}/{} images ({:.1}%) - {:.1} img/s, ETA: ~{:.0}s",
+                            p.completed, p.total, pct, p.items_per_sec, p.eta_sec
+                        ),
+                    });
+                }
             },
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

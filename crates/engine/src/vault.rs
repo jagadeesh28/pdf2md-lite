@@ -105,6 +105,19 @@ where
         summary.files_scanned = total;
         let start = std::time::Instant::now();
 
+        on_progress(VaultTaskProgress {
+            task: "metadata_formatting".to_string(),
+            step: if total == 0 {
+                "No Markdown notes found in directory".to_string()
+            } else {
+                format!("Discovered {total} Markdown note(s). Formatting...")
+            },
+            completed: 0,
+            total,
+            items_per_sec: 0.0,
+            eta_sec: 0.0,
+        });
+
         for (idx, file) in md_files.iter().enumerate() {
             let completed = idx + 1;
             let elapsed = start.elapsed().as_secs_f32();
@@ -222,6 +235,19 @@ where
     summary.images_scanned = total_png;
     let png_start = std::time::Instant::now();
 
+    on_progress(VaultTaskProgress {
+        task: "image_migration".to_string(),
+        step: if total_png == 0 {
+            "No PNG images found to convert".to_string()
+        } else {
+            format!("Discovered {total_png} PNG image(s). Starting conversion...")
+        },
+        completed: 0,
+        total: total_png,
+        items_per_sec: 0.0,
+        eta_sec: 0.0,
+    });
+
     for (idx, png_path) in png_files.iter().enumerate() {
         let completed = idx + 1;
         let elapsed = png_start.elapsed().as_secs_f32();
@@ -292,6 +318,17 @@ where
     let total_md = md_files.len();
     summary.notes_scanned = total_md;
     let md_start = std::time::Instant::now();
+
+    if total_md > 0 {
+        on_progress(VaultTaskProgress {
+            task: "image_migration".to_string(),
+            step: format!("Updating note references across {total_md} note(s)..."),
+            completed: 0,
+            total: total_md,
+            items_per_sec: 0.0,
+            eta_sec: 0.0,
+        });
+    }
 
     for (idx, md_path) in md_files.iter().enumerate() {
         let completed = idx + 1;

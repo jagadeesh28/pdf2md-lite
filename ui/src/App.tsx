@@ -238,6 +238,14 @@ export const App: React.FC = () => {
 
   const handleFormatNotes = async () => {
     addLog('info', `Formatting notes across output vault '${outputDir}'...`);
+    setVaultProgress({
+      task: 'metadata_formatting',
+      step: `Scanning Markdown notes in '${outputDir}'...`,
+      completed: 0,
+      total: 0,
+      itemsPerSec: 0,
+      etaSec: 0,
+    });
     setActionNotice({
       type: 'info',
       title: 'Formatting Notes & Inserting Metadata',
@@ -269,6 +277,14 @@ export const App: React.FC = () => {
 
   const handleFixLatex = async () => {
     addLog('info', `Sanitizing LaTeX delimiters across notes in '${outputDir}'...`);
+    setVaultProgress({
+      task: 'metadata_formatting',
+      step: `Scanning equations in notes across '${outputDir}'...`,
+      completed: 0,
+      total: 0,
+      itemsPerSec: 0,
+      etaSec: 0,
+    });
     setActionNotice({
       type: 'info',
       title: 'Sanitizing LaTeX Delimiters',
@@ -296,6 +312,14 @@ export const App: React.FC = () => {
 
   const handleConvertPngToJpeg = async () => {
     addLog('info', `Migrating vault PNG images in '${outputDir}' to JPEG format...`);
+    setVaultProgress({
+      task: 'image_migration',
+      step: `Scanning for PNG figures in '${outputDir}'...`,
+      completed: 0,
+      total: 0,
+      itemsPerSec: 0,
+      etaSec: 0,
+    });
     setActionNotice({
       type: 'info',
       title: 'Migrating PNG Images',
@@ -450,6 +474,7 @@ export const App: React.FC = () => {
             batchTotalPages={batchTotalPages}
             completionSummary={completionSummary}
             onDismissCompletionSummary={dismissCompletionSummary}
+            vaultProgress={vaultProgress}
           />
         ) : (
           <SplitPane

@@ -5,8 +5,7 @@ use pdfmd_lite::{
     AppConfig, DomExtractionMode, DryRunReport, ImageFormat, ImageOptions, IndraScript,
     ProgressEmitter, batch::dry_run_pdf_directory, batch::dry_run_single_pdf,
     get_pdf_page_count,
-    vault::convert_vault_png_to_jpeg, vault::download_embedding_models, vault::embed_vault_in_path,
-    vault::format_notes_in_path,
+    vault::download_embedding_models, vault::embed_vault_in_path,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -604,91 +603,145 @@ fn open_output_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn format_notes(
+async fn format_notes(
     app: tauri::AppHandle,
     vault_path: String,
     _fix_latex: bool,
 ) -> Result<serde_json::Value, String> {
-    let path = Path::new(&vault_path);
     let app_handle = app.clone();
-    let summary = pdfmd_lite::format_notes_in_path_with_progress(
-        path,
-        None,
-        false,
-        move |p| {
-            let _ = app_handle.emit(
-                "conversion-progress",
-                DesktopProgressEvent::VaultProgress {
-                    task: p.task,
-                    step: p.step,
-                    completed: p.completed,
-                    total: p.total,
-                    items_per_sec: p.items_per_sec,
-                    eta_sec: p.eta_sec,
-                },
-            );
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "filesProcessed": summary.files_scanned,
-        "replacementsMade": summary.latex_repaired + summary.codeblocks_unwrapped + summary.banners_purged,
-        "frontmatterAdded": summary.frontmatter_added,
-        "fieldsBackfilled": summary.frontmatter_fields_backfilled,
-    }))
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&vault_path);
+        let emitter_handle = app_handle.clone();
+        let summary = pdfmd_lite::format_notes_in_path_with_progress(
+            path,
+            None,
+            false,
+            move |p| {
+                let _ = emitter_handle.emit(
+                    "conversion-progress",
+                    DesktopProgressEvent::VaultProgress {
+                        task: p.task.clone(),
+                        step: p.step.clone(),
+                        completed: p.completed,
+                        total: p.total,
+                        items_per_sec: p.items_per_sec,
+                        eta_sec: p.eta_sec,
+                    },
+                );
+
+                if p.completed == 1 || p.completed % 25 == 0 || p.completed == p.total {
+                    let pct = if p.total > 0 {
+                        (p.completed as f32 / p.total as f32) * 100.0
+                    } else {
+                        100.0
+                    };
+                    let _ = emitter_handle.emit(
+                        "conversion-progress",
+                        DesktopProgressEvent::Log {
+                            level: "info".to_string(),
+                            message: format!(
+                                "Formatting notes: {}/{} ({:.1}%) - {:.1} notes/s, ETA: ~{:.0}s",
+                                p.completed, p.total, pct, p.items_per_sec, p.eta_sec
+                            ),
+                        },
+                    );
+                }
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "filesProcessed": summary.files_scanned,
+            "replacementsMade": summary.latex_repaired + summary.codeblocks_unwrapped + summary.banners_purged,
+            "frontmatterAdded": summary.frontmatter_added,
+            "fieldsBackfilled": summary.frontmatter_fields_backfilled,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn convert_png_to_jpeg(
+async fn convert_png_to_jpeg(
     app: tauri::AppHandle,
     vault_path: String,
     quality: Option<u8>,
 ) -> Result<serde_json::Value, String> {
-    let path = Path::new(&vault_path);
-    let q = quality.unwrap_or(85);
     let app_handle = app.clone();
-    let summary = pdfmd_lite::convert_vault_png_to_jpeg_with_progress(
-        path,
-        q,
-        false,
-        move |p| {
-            let _ = app_handle.emit(
-                "conversion-progress",
-                DesktopProgressEvent::VaultProgress {
-                    task: p.task,
-                    step: p.step,
-                    completed: p.completed,
-                    total: p.total,
-                    items_per_sec: p.items_per_sec,
-                    eta_sec: p.eta_sec,
-                },
-            );
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "imagesConverted": summary.images_converted,
-        "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),
-    }))
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&vault_path);
+        let q = quality.unwrap_or(85);
+        let emitter_handle = app_handle.clone();
+        let summary = pdfmd_lite::convert_vault_png_to_jpeg_with_progress(
+            path,
+            q,
+            false,
+            move |p| {
+                let _ = emitter_handle.emit(
+                    "conversion-progress",
+                    DesktopProgressEvent::VaultProgress {
+                        task: p.task.clone(),
+                        step: p.step.clone(),
+                        completed: p.completed,
+                        total: p.total,
+                        items_per_sec: p.items_per_sec,
+                        eta_sec: p.eta_sec,
+                    },
+                );
+
+                if p.completed == 1 || p.completed % 25 == 0 || p.completed == p.total {
+                    let pct = if p.total > 0 {
+                        (p.completed as f32 / p.total as f32) * 100.0
+                    } else {
+                        100.0
+                    };
+                    let _ = emitter_handle.emit(
+                        "conversion-progress",
+                        DesktopProgressEvent::Log {
+                            level: "info".to_string(),
+                            message: format!(
+                                "PNG migration: {}/{} images ({:.1}%) - {:.1} img/s, ETA: ~{:.0}s",
+                                p.completed, p.total, pct, p.items_per_sec, p.eta_sec
+                            ),
+                        },
+                    );
+                }
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "imagesConverted": summary.images_converted,
+            "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn embed_vault(vault_path: String, force: bool) -> Result<serde_json::Value, String> {
-    let path = Path::new(&vault_path);
-    let summary = embed_vault_in_path(path, force, false).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "notesProcessed": summary.notes_scanned,
-        "chunksEmbedded": summary.chunks_embedded,
-    }))
+async fn embed_vault(vault_path: String, force: bool) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = Path::new(&vault_path);
+        let summary = embed_vault_in_path(path, force, false).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "notesProcessed": summary.notes_scanned,
+            "chunksEmbedded": summary.chunks_embedded,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn download_models() -> Result<serde_json::Value, String> {
-    download_embedding_models().map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "success": true,
-        "message": "All required offline models downloaded and verified.",
-    }))
+async fn download_models() -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        download_embedding_models().map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "success": true,
+            "message": "All required offline models downloaded and verified.",
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn main() {

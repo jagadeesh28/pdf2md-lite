@@ -16,6 +16,7 @@ import {
   Cpu,
   Zap,
   Activity,
+  Loader2,
 } from 'lucide-react';
 import { BatchCompletionSummary, ConversionJob, JobStatus } from '../types';
 import { isTauri, pickFiles, pickFolder, uploadFile } from '../bridge/api';
@@ -41,6 +42,14 @@ interface BatchQueueProps {
   batchTotalPages?: number;
   completionSummary?: BatchCompletionSummary | null;
   onDismissCompletionSummary?: () => void;
+  vaultProgress?: {
+    task: string;
+    step: string;
+    completed: number;
+    total: number;
+    itemsPerSec: number;
+    etaSec: number;
+  } | null;
 }
 
 export const BatchQueue: React.FC<BatchQueueProps> = ({
@@ -64,6 +73,7 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
   batchTotalPages,
   completionSummary,
   onDismissCompletionSummary,
+  vaultProgress,
 }) => {
   const [resume, setResume] = useState<boolean>(true);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -493,25 +503,44 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
       {/* Telemetry Snapshot Banner */}
       <div className="bg-gray-950/70 border-b border-gray-800 px-4 py-2 flex items-center justify-between text-xs text-gray-400">
         <div className="flex items-center space-x-5">
-          <span className="flex items-center space-x-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Completed: <strong className="text-white">{completedCount}</strong></span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Pending: <strong className="text-white">{pendingCount}</strong></span>
-          </span>
-          {errorCount > 0 && (
-            <span className="flex items-center space-x-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-              <span>Errors: <strong className="text-white">{errorCount}</strong></span>
-            </span>
-          )}
-          {runningCount > 0 && (
-            <span className="flex items-center space-x-1.5">
-              <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping"></span>
-              <span>Running: <strong className="text-white">{runningCount}</strong></span>
-            </span>
+          {vaultProgress ? (
+            <>
+              <span className="flex items-center space-x-1.5 text-purple-300 font-semibold">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                <span>
+                  {vaultProgress.task === 'image_migration' ? 'Migrating PNGs:' : 'Formatting Notes:'}{' '}
+                  <strong className="text-white">{vaultProgress.completed} / {vaultProgress.total}</strong>
+                </span>
+              </span>
+              {vaultProgress.itemsPerSec > 0 && (
+                <span className="text-gray-300 font-mono text-[11px]">
+                  {vaultProgress.itemsPerSec.toFixed(1)} items/s
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="flex items-center space-x-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Completed: <strong className="text-white">{completedCount}</strong></span>
+              </span>
+              <span className="flex items-center space-x-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Pending: <strong className="text-white">{pendingCount}</strong></span>
+              </span>
+              {errorCount > 0 && (
+                <span className="flex items-center space-x-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                  <span>Errors: <strong className="text-white">{errorCount}</strong></span>
+                </span>
+              )}
+              {runningCount > 0 && (
+                <span className="flex items-center space-x-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-500 animate-ping"></span>
+                  <span>Running: <strong className="text-white">{runningCount}</strong></span>
+                </span>
+              )}
+            </>
           )}
         </div>
 
@@ -524,27 +553,95 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
             <HardDrive className="w-3 h-3 text-cyan-400" />
             <span>Mem Budget: ~{estimatedMemoryMb} MB</span>
           </span>
-          {pagesPerSec !== undefined && (
+          {pagesPerSec !== undefined && !vaultProgress && (
             <span className="text-purple-300">
               {pagesPerSec.toFixed(1)} pages/sec
             </span>
           )}
           <span className="text-amber-300 font-semibold">
-            ETA: {formatEta(currentEta)}
+            ETA: {formatEta(vaultProgress ? vaultProgress.etaSec : currentEta)}
           </span>
         </div>
       </div>
 
-      {/* Jobs Table or Empty Dropzone */}
+      {/* Jobs Table or Empty Dropzone / Vault Task Dashboard */}
       <div className="flex-1 overflow-auto p-4">
         {jobs.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-700 rounded-xl p-8 text-center text-gray-400">
-            <FileText className="w-12 h-12 text-gray-600 mb-3" />
-            <h3 className="text-sm font-semibold text-gray-200">No documents in queue</h3>
-            <p className="text-xs text-gray-500 max-w-sm mt-1 mb-4">
-              Drag and drop PDF files or whole folders here, or use the buttons above to get started.
-            </p>
-          </div>
+          vaultProgress ? (
+            <div className="h-full flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-200">
+              <div className="w-full max-w-xl bg-gray-900/90 border border-purple-500/40 rounded-2xl p-6 shadow-2xl space-y-5">
+                <div className="flex items-center space-x-3.5">
+                  <div className="p-3 bg-purple-500/20 border border-purple-500/40 rounded-xl text-purple-400">
+                    <Loader2 className="w-6 h-6 animate-spin" />
+                  </div>
+                  <div className="text-left flex-1 min-w-0">
+                    <h3 className="text-sm font-bold text-white tracking-tight">
+                      {vaultProgress.task === 'image_migration'
+                        ? 'Migrating PNG Figures to Compressed JPEG'
+                        : 'Formatting Notes & Inserting Metadata'}
+                    </h3>
+                    <p className="text-xs text-purple-300 font-mono mt-0.5 truncate">
+                      {vaultProgress.step}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xl font-mono font-bold text-purple-400">
+                      {vaultProgress.total > 0
+                        ? `${Math.round((vaultProgress.completed / vaultProgress.total) * 100)}%`
+                        : '0%'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Large Progress bar */}
+                <div className="space-y-1.5">
+                  <div className="w-full bg-gray-950 rounded-full h-3 overflow-hidden border border-gray-800">
+                    <div
+                      className="bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-400 h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            2,
+                            vaultProgress.total > 0
+                              ? (vaultProgress.completed / vaultProgress.total) * 100
+                              : 0
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] font-mono text-gray-400 pt-1">
+                    <span>
+                      Progress: <strong className="text-gray-200">{vaultProgress.completed}</strong> / {vaultProgress.total} items
+                    </span>
+                    {vaultProgress.itemsPerSec > 0 && (
+                      <span>Speed: <strong className="text-gray-200">{vaultProgress.itemsPerSec.toFixed(1)}</strong> items/s</span>
+                    )}
+                    <span className="text-amber-300 font-semibold">
+                      ETA: {formatEta(vaultProgress.etaSec)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-gray-800 text-[11px] text-gray-400 flex items-center justify-between font-mono">
+                  <span className="truncate max-w-[360px]">Target Vault: {outputDir}</span>
+                  <span className="text-emerald-400 flex items-center space-x-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Processing in-place</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-700 rounded-xl p-8 text-center text-gray-400">
+              <FileText className="w-12 h-12 text-gray-600 mb-3" />
+              <h3 className="text-sm font-semibold text-gray-200">No documents in queue</h3>
+              <p className="text-xs text-gray-500 max-w-sm mt-1 mb-4">
+                Drag and drop PDF files or whole folders here, or use the buttons above to get started.
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-2">
             {jobs.map((job) => (
