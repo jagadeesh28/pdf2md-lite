@@ -18,7 +18,9 @@ pub struct AppConfig {
     pub language: Option<String>,
     pub image_format: Option<String>,
     pub image_quality: Option<u8>,
+    #[serde(alias = "table_crops")]
     pub save_table_images: Option<bool>,
+    pub extract_tables: Option<bool>,
     pub embed_images_base64: Option<bool>,
     pub log_file: Option<PathBuf>,
     pub log_level: Option<String>,

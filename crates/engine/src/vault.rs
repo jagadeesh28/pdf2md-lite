@@ -15,7 +15,7 @@ fn collect_files_with_ext(dir: &Path, ext: &str, collected: &mut Vec<PathBuf>) {
         let p = entry.path();
         if p.is_dir() {
             collect_files_with_ext(&p, ext, collected);
-        } else if p.is_file() && p.extension().is_some_and(|e| e == ext) {
+        } else if p.is_file() && p.extension().is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(ext)) {
             collected.push(p);
         }
     }

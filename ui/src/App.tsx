@@ -205,7 +205,8 @@ export const App: React.FC = () => {
   const handleConvertPngToJpeg = async () => {
     addLog('info', `Migrating vault PNG images in '${outputDir}' to JPEG format...`);
     try {
-      const res = await convertPngToJpeg(outputDir, config.image_quality);
+      const q = config.image_quality || 85;
+      const res = await convertPngToJpeg(outputDir, q);
       addLog(
         'info',
         `Image migration completed: ${res.imagesConverted} images converted (~${Math.round(

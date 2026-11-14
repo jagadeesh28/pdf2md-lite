@@ -249,7 +249,8 @@ pub struct FormatNotesRequest {
 pub struct ConvertPngRequest {
     #[serde(rename = "vaultPath")]
     pub vault_path: String,
-    pub quality: u8,
+    #[serde(default)]
+    pub quality: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -654,7 +655,8 @@ async fn convert_png_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&req.vault_path);
-        let summary = convert_vault_png_to_jpeg(path, req.quality, false)
+        let q = req.quality.unwrap_or(85);
+        let summary = convert_vault_png_to_jpeg(path, q, false)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         Ok(Json(serde_json::json!({
             "imagesConverted": summary.images_converted,

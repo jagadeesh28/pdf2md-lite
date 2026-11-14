@@ -1,21 +1,13 @@
+import { invoke, isTauri as checkIsTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { AppConfigData, DryRunSummary, ProgressPayload } from '../types';
 
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown;
-    __TAURI__?: {
-      core: {
-        invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      };
-      event: {
-        listen: <T = unknown>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
-      };
-    };
-  }
-}
-
 export function isTauri(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  try {
+    return checkIsTauri();
+  } catch {
+    return false;
+  }
 }
 
 export const defaultConfig: AppConfigData = {
@@ -30,12 +22,83 @@ export const defaultConfig: AppConfigData = {
   embed: false,
   log_level: 'info',
   log_file: null,
+  output_dir: './output',
 };
 
-export async function fetchConfig(): Promise<AppConfigData> {
-  if (isTauri() && window.__TAURI__?.core) {
+export function normalizeConfig(raw: Partial<AppConfigData> | null | undefined): AppConfigData {
+  if (!raw) return { ...defaultConfig };
+  return {
+    language: raw.language || defaultConfig.language,
+    dom_extraction: raw.dom_extraction || defaultConfig.dom_extraction,
+    image_format: raw.image_format || defaultConfig.image_format,
+    image_quality:
+      typeof raw.image_quality === 'number' && raw.image_quality > 0
+        ? raw.image_quality
+        : defaultConfig.image_quality,
+    embed_images_base64: raw.embed_images_base64 ?? defaultConfig.embed_images_base64,
+    extract_tables: raw.extract_tables ?? defaultConfig.extract_tables,
+    table_crops: raw.table_crops ?? defaultConfig.table_crops,
+    concurrency: raw.concurrency ?? defaultConfig.concurrency,
+    embed: raw.embed ?? defaultConfig.embed,
+    log_level: raw.log_level || defaultConfig.log_level,
+    log_file: raw.log_file ?? defaultConfig.log_file,
+    output_dir: raw.output_dir || defaultConfig.output_dir,
+  };
+}
+
+export async function pickFiles(): Promise<string[]> {
+  if (isTauri()) {
     try {
-      return await window.__TAURI__.core.invoke<AppConfigData>('get_config');
+      return await invoke<string[]>('pick_files');
+    } catch (err) {
+      console.error('Failed to open native file picker:', err);
+      return [];
+    }
+  }
+  return [];
+}
+
+export async function pickFolder(): Promise<string | null> {
+  if (isTauri()) {
+    try {
+      return await invoke<string | null>('pick_folder');
+    } catch (err) {
+      console.error('Failed to open native folder picker:', err);
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function openFolderInExplorer(folderPath: string): Promise<void> {
+  if (isTauri()) {
+    try {
+      await invoke('open_output_folder', { path: folderPath });
+    } catch (err) {
+      console.error('Failed to open folder in explorer:', err);
+    }
+  }
+}
+
+export async function uploadFile(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    throw new Error(`Upload failed: ${await res.text()}`);
+  }
+  const data = await res.json();
+  return (data.files && data.files[0]) || file.name;
+}
+
+export async function fetchConfig(): Promise<AppConfigData> {
+  if (isTauri()) {
+    try {
+      const cfg = await invoke<AppConfigData>('get_config');
+      return normalizeConfig(cfg);
     } catch {
       return defaultConfig;
     }
@@ -44,7 +107,8 @@ export async function fetchConfig(): Promise<AppConfigData> {
   try {
     const res = await fetch('/api/config');
     if (res.ok) {
-      return await res.json();
+      const cfg = await res.json();
+      return normalizeConfig(cfg);
     }
   } catch {
     // fallback
@@ -53,8 +117,8 @@ export async function fetchConfig(): Promise<AppConfigData> {
 }
 
 export async function saveConfig(config: AppConfigData): Promise<void> {
-  if (isTauri() && window.__TAURI__?.core) {
-    await window.__TAURI__.core.invoke('save_config', { config });
+  if (isTauri()) {
+    await invoke('save_config', { config });
     return;
   }
 
@@ -66,8 +130,8 @@ export async function saveConfig(config: AppConfigData): Promise<void> {
 }
 
 export async function runDryRun(inputPath: string, outputDir: string): Promise<DryRunSummary> {
-  if (isTauri() && window.__TAURI__?.core) {
-    return await window.__TAURI__.core.invoke<DryRunSummary>('dry_run', { inputPath, outputDir });
+  if (isTauri()) {
+    return await invoke<DryRunSummary>('dry_run', { inputPath, outputDir });
   }
 
   const res = await fetch('/api/dry-run', {
@@ -87,8 +151,8 @@ export async function startConversion(payload: {
   config: AppConfigData;
   resume: boolean;
 }): Promise<void> {
-  if (isTauri() && window.__TAURI__?.core) {
-    await window.__TAURI__.core.invoke('start_conversion', payload);
+  if (isTauri()) {
+    await invoke('start_conversion', payload);
     return;
   }
 
@@ -103,8 +167,8 @@ export async function startConversion(payload: {
 }
 
 export async function formatNotes(vaultPath: string, fixLatex: boolean): Promise<{ filesProcessed: number; replacementsMade: number }> {
-  if (isTauri() && window.__TAURI__?.core) {
-    return await window.__TAURI__.core.invoke('format_notes', { vaultPath, fixLatex });
+  if (isTauri()) {
+    return await invoke('format_notes', { vaultPath, fixLatex });
   }
 
   const res = await fetch('/api/format-notes', {
@@ -115,22 +179,33 @@ export async function formatNotes(vaultPath: string, fixLatex: boolean): Promise
   return await res.json();
 }
 
-export async function convertPngToJpeg(vaultPath: string, quality: number): Promise<{ imagesConverted: number; bytesSaved: number }> {
-  if (isTauri() && window.__TAURI__?.core) {
-    return await window.__TAURI__.core.invoke('convert_png_to_jpeg', { vaultPath, quality });
+export async function convertPngToJpeg(
+  vaultPath: string,
+  quality?: number | null
+): Promise<{ imagesConverted: number; bytesSaved: number }> {
+  const safeQuality =
+    typeof quality === 'number' && quality > 0 && quality <= 100
+      ? Math.round(quality)
+      : 85;
+
+  if (isTauri()) {
+    return await invoke('convert_png_to_jpeg', { vaultPath, quality: safeQuality });
   }
 
   const res = await fetch('/api/convert-png-to-jpeg', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vaultPath, quality }),
+    body: JSON.stringify({ vaultPath, quality: safeQuality }),
   });
+  if (!res.ok) {
+    throw new Error(`Convert PNG to JPEG failed: ${await res.text()}`);
+  }
   return await res.json();
 }
 
 export async function embedVault(vaultPath: string, force: boolean): Promise<{ notesProcessed: number; chunksEmbedded: number }> {
-  if (isTauri() && window.__TAURI__?.core) {
-    return await window.__TAURI__.core.invoke('embed_vault', { vaultPath, force });
+  if (isTauri()) {
+    return await invoke('embed_vault', { vaultPath, force });
   }
 
   const res = await fetch('/api/embed-vault', {
@@ -142,8 +217,8 @@ export async function embedVault(vaultPath: string, force: boolean): Promise<{ n
 }
 
 export async function downloadModels(): Promise<{ success: boolean; message: string }> {
-  if (isTauri() && window.__TAURI__?.core) {
-    return await window.__TAURI__.core.invoke('download_models');
+  if (isTauri()) {
+    return await invoke('download_models');
   }
 
   const res = await fetch('/api/download-models', { method: 'POST' });
@@ -151,9 +226,9 @@ export async function downloadModels(): Promise<{ success: boolean; message: str
 }
 
 export function subscribeProgress(onEvent: (payload: ProgressPayload) => void): () => void {
-  if (isTauri() && window.__TAURI__?.event) {
+  if (isTauri()) {
     let unlisten: (() => void) | undefined;
-    window.__TAURI__.event.listen<ProgressPayload>('conversion-progress', (e) => {
+    listen<ProgressPayload>('conversion-progress', (e) => {
       onEvent(e.payload);
     }).then((unsub) => {
       unlisten = unsub;
@@ -198,4 +273,22 @@ export function subscribeProgress(onEvent: (payload: ProgressPayload) => void): 
       ws.close();
     }
   };
+}
+
+export function onNativeFileDrop(callback: (paths: string[]) => void): () => void {
+  if (isTauri()) {
+    let unlisten: (() => void) | undefined;
+    listen<string[]>('native-file-drop', (e) => {
+      if (e.payload) {
+        callback(e.payload);
+      }
+    }).then((unsub) => {
+      unlisten = unsub;
+    }).catch(console.error);
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }
+  return () => {};
 }

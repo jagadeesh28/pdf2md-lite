@@ -276,7 +276,20 @@ async fn pick_folder() -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn get_config() -> Result<AppConfig, String> {
-    Ok(AppConfig::load(None).unwrap_or_default())
+    let mut config = AppConfig::load(None).unwrap_or_default();
+    if config.image_quality.is_none() {
+        config.image_quality = Some(85);
+    }
+    if config.image_format.is_none() {
+        config.image_format = Some("jpeg".to_string());
+    }
+    if config.language.is_none() {
+        config.language = Some("en".to_string());
+    }
+    if config.dom_extraction.is_none() {
+        config.dom_extraction = Some("auto".to_string());
+    }
+    Ok(config)
 }
 
 #[tauri::command]
@@ -590,9 +603,10 @@ fn format_notes(vault_path: String, _fix_latex: bool) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
-fn convert_png_to_jpeg(vault_path: String, quality: u8) -> Result<serde_json::Value, String> {
+fn convert_png_to_jpeg(vault_path: String, quality: Option<u8>) -> Result<serde_json::Value, String> {
     let path = Path::new(&vault_path);
-    let summary = convert_vault_png_to_jpeg(path, quality, false).map_err(|e| e.to_string())?;
+    let q = quality.unwrap_or(85);
+    let summary = convert_vault_png_to_jpeg(path, q, false).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "imagesConverted": summary.images_converted,
         "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),
