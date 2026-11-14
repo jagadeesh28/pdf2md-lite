@@ -353,7 +353,31 @@ pub fn download_embedding_models() -> Result<()> {
         println!("Tokenizer already exists: {}", tokenizer_target.display());
     }
 
-    println!("\nEmbedding model provisioning complete!");
+    let metadata_dir = Path::new("models/metadata");
+    fs::create_dir_all(metadata_dir)?;
+    let gliner_target = metadata_dir.join("gliner_small.onnx");
+    let gliner_url =
+        "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model_quantized.onnx";
+
+    if !gliner_target.exists() {
+        println!("Downloading GLiNER small metadata extractor ONNX model (~183 MB)...");
+        let status = std::process::Command::new("curl.exe")
+            .args(["-L", "-o", gliner_target.to_str().unwrap(), gliner_url])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => println!("Downloaded {}", gliner_target.display()),
+            _ => {
+                tracing::warn!(
+                    "Failed to download GLiNER model via curl. Manual URL: {gliner_url}"
+                );
+            }
+        }
+    } else {
+        println!("GLiNER model already exists: {}", gliner_target.display());
+    }
+
+    println!("\nModel provisioning complete!");
     Ok(())
 }
 

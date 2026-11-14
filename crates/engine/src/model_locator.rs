@@ -85,8 +85,8 @@ pub const KNOWN_MODELS: &[(&str, &str, bool)] = &[
     ("RapidLaTeXOCR Decoder", "models/latex/decoder.onnx", false),
     ("RapidLaTeXOCR Tokenizer", "models/latex/tokenizer.json", false),
     ("GLiNER Metadata Extractor", "models/metadata/gliner_small.onnx", false),
-    ("MiniLM Embedding Model", "models/embeddings/all-MiniLM-L6-v2/model.onnx", false),
-    ("MiniLM Embedding Tokenizer", "models/embeddings/all-MiniLM-L6-v2/tokenizer.json", false),
+    ("MiniLM Embedding Model", "models/embeddings/model.onnx", false),
+    ("MiniLM Embedding Tokenizer", "models/embeddings/tokenizer.json", false),
 ];
 
 /// Unified Model Locator resolving offline model weights.
