@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Save, RotateCcw } from 'lucide-react';
+import { X, Save, RotateCcw, FolderPlus } from 'lucide-react';
 import { AppConfigData } from '../types';
-import { defaultConfig } from '../bridge/api';
+import { defaultConfig, isTauri, pickFolder } from '../bridge/api';
 
 interface SettingsModalProps {
   config: AppConfigData;
@@ -37,6 +37,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, on
 
         {/* Form Body */}
         <form onSubmit={handleSave} className="flex-1 overflow-auto p-5 space-y-4 text-xs">
+          {/* Section: Output Storage & Vault Directory */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">
+              Output Vault & Storage
+            </h3>
+
+            <div>
+              <label className="block text-gray-300 font-medium mb-1">
+                Default Output Directory
+              </label>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={formData.output_dir ?? './output'}
+                  onChange={(e) => setFormData({ ...formData, output_dir: e.target.value })}
+                  placeholder="./output"
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 font-mono text-xs focus:outline-none focus:border-purple-500 placeholder-gray-500"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (isTauri()) {
+                      const selected = await pickFolder();
+                      if (selected) {
+                        setFormData({ ...formData, output_dir: selected });
+                      }
+                    }
+                  }}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded border border-gray-700 text-xs font-medium transition-colors"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Browse...</span>
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                Directory where structured Markdown notes, extracted figures, and semantic vector sidecars are generated.
+              </p>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-800 my-2" />
+
           {/* Section: OCR & Language */}
           <div className="space-y-3">
             <h3 className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">

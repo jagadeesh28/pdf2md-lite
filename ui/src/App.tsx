@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X, Clock, Loader2 } from 'lucide-react';
 import { MenuBar } from './components/MenuBar';
 import { BatchQueue } from './components/BatchQueue';
 import { SplitPane } from './components/SplitPane';
@@ -27,6 +27,15 @@ import {
   openFolderInExplorer,
 } from './bridge/api';
 
+function formatVaultEta(seconds?: number): string {
+  if (seconds === undefined || seconds < 0) return '--';
+  if (seconds <= 0.5) return 'Finishing...';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  if (mins > 0) return `~${mins}m ${secs}s`;
+  return `~${secs}s`;
+}
+
 export const App: React.FC = () => {
   const {
     jobs,
@@ -43,6 +52,8 @@ export const App: React.FC = () => {
     batchTotalPages,
     completionSummary,
     dismissCompletionSummary,
+    vaultProgress,
+    setVaultProgress,
   } = useConversionProgress();
 
   const [activeView, setActiveView] = useState<'queue' | 'inspector'>('queue');
@@ -62,11 +73,39 @@ export const App: React.FC = () => {
     type: 'success' | 'error' | 'info';
     title: string;
     message: string;
+    progress?: {
+      completed: number;
+      total: number;
+      itemsPerSec: number;
+      etaSec: number;
+      step?: string;
+    };
   } | null>(null);
 
-  // Auto-dismiss action notice after 7 seconds
+  // Sync real-time vault maintenance progress (image migration & metadata formatting)
   useEffect(() => {
-    if (!actionNotice) return;
+    if (vaultProgress) {
+      setActionNotice({
+        type: 'info',
+        title:
+          vaultProgress.task === 'image_migration'
+            ? 'Migrating PNG Images'
+            : 'Formatting Notes & Inserting Metadata',
+        message: vaultProgress.step,
+        progress: {
+          completed: vaultProgress.completed,
+          total: vaultProgress.total,
+          itemsPerSec: vaultProgress.itemsPerSec,
+          etaSec: vaultProgress.etaSec,
+          step: vaultProgress.step,
+        },
+      });
+    }
+  }, [vaultProgress]);
+
+  // Auto-dismiss completed or error action notice after 7 seconds
+  useEffect(() => {
+    if (!actionNotice || actionNotice.type === 'info') return;
     const timer = setTimeout(() => {
       setActionNotice(null);
     }, 7000);
@@ -201,18 +240,24 @@ export const App: React.FC = () => {
     addLog('info', `Formatting notes across output vault '${outputDir}'...`);
     setActionNotice({
       type: 'info',
-      title: 'Formatting Notes',
+      title: 'Formatting Notes & Inserting Metadata',
       message: `Scanning Markdown notes in '${outputDir}'...`,
     });
     try {
       const res = await formatNotes(outputDir, false);
-      addLog('info', `Note formatter completed: ${res.filesProcessed} notes processed.`);
+      setVaultProgress(null);
+      const metaMsg =
+        (res.frontmatterAdded || 0) > 0 || (res.fieldsBackfilled || 0) > 0
+          ? `, ${res.frontmatterAdded || 0} frontmatter added, ${res.fieldsBackfilled || 0} fields backfilled`
+          : '';
+      addLog('info', `Note formatter completed: ${res.filesProcessed} notes processed${metaMsg}.`);
       setActionNotice({
         type: 'success',
-        title: 'Note Formatting Completed',
-        message: `${res.filesProcessed} notes scanned and formatted in '${outputDir}'.`,
+        title: 'Note Formatting & Metadata Completed',
+        message: `${res.filesProcessed} notes formatted in '${outputDir}'${metaMsg}.`,
       });
     } catch (err) {
+      setVaultProgress(null);
       addLog('error', `Note formatting failed: ${err}`);
       setActionNotice({
         type: 'error',
@@ -231,6 +276,7 @@ export const App: React.FC = () => {
     });
     try {
       const res = await formatNotes(outputDir, true);
+      setVaultProgress(null);
       addLog('info', `LaTeX sanitizer completed: ${res.replacementsMade} equations repaired.`);
       setActionNotice({
         type: 'success',
@@ -238,6 +284,7 @@ export const App: React.FC = () => {
         message: `${res.replacementsMade} equations repaired across notes in '${outputDir}'.`,
       });
     } catch (err) {
+      setVaultProgress(null);
       addLog('error', `LaTeX sanitizer failed: ${err}`);
       setActionNotice({
         type: 'error',
@@ -257,6 +304,7 @@ export const App: React.FC = () => {
     try {
       const q = config.image_quality || 85;
       const res = await convertPngToJpeg(outputDir, q);
+      setVaultProgress(null);
       const savedKb = Math.round(res.bytesSaved / 1024);
       addLog(
         'info',
@@ -268,6 +316,7 @@ export const App: React.FC = () => {
         message: `${res.imagesConverted} images converted to JPEG (~${savedKb} KB disk space saved).`,
       });
     } catch (err) {
+      setVaultProgress(null);
       addLog('error', `Image migration failed: ${err}`);
       setActionNotice({
         type: 'error',
@@ -460,7 +509,7 @@ export const App: React.FC = () => {
       {actionNotice && (
         <div className="fixed bottom-6 right-6 z-50 max-w-md w-full animate-in fade-in slide-in-from-bottom-4 duration-200 pointer-events-auto">
           <div
-            className={`p-4 rounded-xl border shadow-2xl flex items-start space-x-3 ${
+            className={`p-4 rounded-xl border shadow-2xl flex flex-col space-y-2.5 ${
               actionNotice.type === 'success'
                 ? 'bg-emerald-950/95 border-emerald-500/50 text-emerald-200'
                 : actionNotice.type === 'error'
@@ -468,22 +517,67 @@ export const App: React.FC = () => {
                 : 'bg-gray-850/95 border-purple-500/50 text-gray-200'
             }`}
           >
-            <div className="flex-shrink-0 mt-0.5">
-              {actionNotice.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
-              {actionNotice.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400" />}
-              {actionNotice.type === 'info' && <Info className="w-5 h-5 text-purple-400 animate-pulse" />}
+            <div className="flex items-start space-x-3">
+              <div className="flex-shrink-0 mt-0.5">
+                {actionNotice.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
+                {actionNotice.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400" />}
+                {actionNotice.type === 'info' && <Loader2 className="w-5 h-5 text-purple-400 animate-spin" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-white flex items-center justify-between">
+                  <span>{actionNotice.title}</span>
+                  {actionNotice.progress && (
+                    <span className="text-[10px] font-mono text-purple-300">
+                      {actionNotice.progress.completed} / {actionNotice.progress.total}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] mt-0.5 opacity-90 leading-relaxed">{actionNotice.message}</div>
+              </div>
+              <button
+                onClick={() => setActionNotice(null)}
+                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-semibold text-white">{actionNotice.title}</div>
-              <div className="text-[11px] mt-0.5 opacity-90 leading-relaxed">{actionNotice.message}</div>
-            </div>
-            <button
-              onClick={() => setActionNotice(null)}
-              className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
-              title="Dismiss"
-            >
-              <X className="w-4 h-4" />
-            </button>
+
+            {/* Live Progress Bar & ETA for Image Migration / Metadata Tasks */}
+            {actionNotice.progress && actionNotice.progress.total > 0 && (
+              <div className="space-y-1.5 pt-1 border-t border-gray-700/60 font-mono text-[10px]">
+                <div className="flex items-center justify-between text-gray-300">
+                  <div className="flex items-center space-x-1 text-purple-300">
+                    <Clock className="w-3 h-3 text-purple-400" />
+                    <span>ETA: {formatVaultEta(actionNotice.progress.etaSec)}</span>
+                  </div>
+                  {actionNotice.progress.itemsPerSec > 0 && (
+                    <span className="text-gray-400">
+                      {actionNotice.progress.itemsPerSec.toFixed(1)}/s
+                    </span>
+                  )}
+                  <span className="text-purple-300 font-bold">
+                    {Math.round(
+                      (actionNotice.progress.completed / actionNotice.progress.total) * 100
+                    )}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-900/80 rounded-full h-1.5 overflow-hidden border border-gray-700/50">
+                  <div
+                    className="bg-gradient-to-r from-purple-500 to-indigo-500 h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.max(
+                          2,
+                          (actionNotice.progress.completed / actionNotice.progress.total) * 100
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

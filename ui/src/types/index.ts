@@ -20,7 +20,7 @@ export interface ConversionJob {
 }
 
 export interface ProgressPayload {
-  type: 'doc_start' | 'page_complete' | 'doc_complete' | 'log' | 'batch_summary';
+  type: 'doc_start' | 'page_complete' | 'doc_complete' | 'log' | 'batch_summary' | 'vault_progress';
   docSlug?: string;
   workerId?: number;
   page?: number;
@@ -34,9 +34,13 @@ export interface ProgressPayload {
   batchCompletedPages?: number;
   batchTotalPages?: number;
   completed?: number;
+  total?: number;
   errors?: number;
   outputDir?: string;
   outputPath?: string;
+  task?: string;
+  step?: string;
+  itemsPerSec?: number;
 }
 
 export interface BatchCompletionSummary {

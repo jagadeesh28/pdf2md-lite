@@ -23,6 +23,8 @@ param(
 
     [string]$OutputDir = 'dist\installers',
 
+    [string]$Version = '',
+
     [switch]$BuildRelease
 )
 
@@ -57,7 +59,15 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
-$Version = "0.1.0"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $cargoToml = Get-Content "Cargo.toml" -Raw
+    if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
+        $Version = $Matches[1]
+    } else {
+        $Version = "0.2.0"
+    }
+}
+Write-Host "[OK] Target installer version: v$Version" -ForegroundColor Green
 $Generated = @()
 
 # 4. Package Slim Flavor

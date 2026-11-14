@@ -19,8 +19,7 @@ use pdfmd_lite::{
     AppConfig, DomExtractionMode, DryRunReport, ImageFormat, ImageOptions, IndraScript,
     ProgressEmitter, batch::dry_run_pdf_directory, batch::dry_run_single_pdf,
     get_pdf_page_count,
-    vault::convert_vault_png_to_jpeg, vault::download_embedding_models, vault::embed_vault_in_path,
-    vault::format_notes_in_path,
+    vault::download_embedding_models, vault::embed_vault_in_path,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -87,6 +86,17 @@ pub enum ProgressEvent {
         total_pages: Option<usize>,
         #[serde(rename = "outputDir", skip_serializing_if = "Option::is_none")]
         output_dir: Option<String>,
+    },
+    #[serde(rename = "vault_progress")]
+    VaultProgress {
+        task: String,
+        step: String,
+        completed: usize,
+        total: usize,
+        #[serde(rename = "itemsPerSec")]
+        items_per_sec: f32,
+        #[serde(rename = "etaSec")]
+        eta_sec: f32,
     },
 }
 
@@ -635,15 +645,33 @@ async fn convert_handler(
 }
 
 async fn format_notes_handler(
+    State(state): State<AppState>,
     Json(req): Json<FormatNotesRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let tx = state.event_tx.clone();
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&req.vault_path);
-        let summary = format_notes_in_path(path, None, false)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let summary = pdfmd_lite::format_notes_in_path_with_progress(
+            path,
+            None,
+            false,
+            move |p| {
+                let _ = tx.send(ProgressEvent::VaultProgress {
+                    task: p.task,
+                    step: p.step,
+                    completed: p.completed,
+                    total: p.total,
+                    items_per_sec: p.items_per_sec,
+                    eta_sec: p.eta_sec,
+                });
+            },
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         Ok(Json(serde_json::json!({
             "filesProcessed": summary.files_scanned,
             "replacementsMade": summary.latex_repaired + summary.codeblocks_unwrapped + summary.banners_purged,
+            "frontmatterAdded": summary.frontmatter_added,
+            "fieldsBackfilled": summary.frontmatter_fields_backfilled,
         })))
     })
     .await
@@ -651,13 +679,29 @@ async fn format_notes_handler(
 }
 
 async fn convert_png_handler(
+    State(state): State<AppState>,
     Json(req): Json<ConvertPngRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let tx = state.event_tx.clone();
     tokio::task::spawn_blocking(move || {
         let path = Path::new(&req.vault_path);
         let q = req.quality.unwrap_or(85);
-        let summary = convert_vault_png_to_jpeg(path, q, false)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let summary = pdfmd_lite::convert_vault_png_to_jpeg_with_progress(
+            path,
+            q,
+            false,
+            move |p| {
+                let _ = tx.send(ProgressEvent::VaultProgress {
+                    task: p.task,
+                    step: p.step,
+                    completed: p.completed,
+                    total: p.total,
+                    items_per_sec: p.items_per_sec,
+                    eta_sec: p.eta_sec,
+                });
+            },
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         Ok(Json(serde_json::json!({
             "imagesConverted": summary.images_converted,
             "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),

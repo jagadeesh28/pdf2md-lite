@@ -38,21 +38,39 @@ pub struct FormatNotesSummary {
     pub figure_links_converted: usize,
 }
 
-/// Formats Markdown note(s) across a single file or directory:
-/// - Unwraps spurious codeblocks
-/// - Purges extraction banners
-/// - Normalizes LaTeX math equations and table cells
-/// - Converts figure links to Obsidian wiki-links (![[...]])
-/// - Synthesizes/backfills Obsidian YAML frontmatter
-pub fn format_notes_in_path(
+/// Progress notification emitted during retroactive vault maintenance tasks.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VaultTaskProgress {
+    pub task: String,
+    pub step: String,
+    pub completed: usize,
+    pub total: usize,
+    pub items_per_sec: f32,
+    pub eta_sec: f32,
+}
+
+/// Formats Markdown note(s) across a single file or directory with real-time progress & ETA.
+pub fn format_notes_in_path_with_progress<F>(
     path: &Path,
     output: Option<&Path>,
     dry_run: bool,
-) -> Result<FormatNotesSummary> {
+    mut on_progress: F,
+) -> Result<FormatNotesSummary>
+where
+    F: FnMut(VaultTaskProgress),
+{
     let mut summary = FormatNotesSummary::default();
 
     if path.is_file() {
         summary.files_scanned = 1;
+        on_progress(VaultTaskProgress {
+            task: "metadata_formatting".to_string(),
+            step: "Formatting note & inserting metadata (1/1)".to_string(),
+            completed: 1,
+            total: 1,
+            items_per_sec: 1.0,
+            eta_sec: 0.0,
+        });
         let content = fs::read_to_string(path)?;
         let (fixed, report) = crate::markdown::format_note_document(&content, Some(path));
 
@@ -83,17 +101,44 @@ pub fn format_notes_in_path(
     } else if path.is_dir() {
         let mut md_files = Vec::new();
         collect_md_files(path, &mut md_files);
-        summary.files_scanned = md_files.len();
+        let total = md_files.len();
+        summary.files_scanned = total;
+        let start = std::time::Instant::now();
 
-        for file in md_files {
-            let content = match fs::read_to_string(&file) {
+        for (idx, file) in md_files.iter().enumerate() {
+            let completed = idx + 1;
+            let elapsed = start.elapsed().as_secs_f32();
+            let throughput = if elapsed > 0.05 {
+                completed as f32 / elapsed
+            } else {
+                0.0
+            };
+            let remaining = total.saturating_sub(completed);
+            let eta_sec = if remaining == 0 {
+                0.0
+            } else if throughput > 0.01 {
+                remaining as f32 / throughput
+            } else {
+                (remaining as f32) * 0.05
+            };
+
+            on_progress(VaultTaskProgress {
+                task: "metadata_formatting".to_string(),
+                step: format!("Formatting notes & metadata ({completed}/{total})"),
+                completed,
+                total,
+                items_per_sec: throughput,
+                eta_sec,
+            });
+
+            let content = match fs::read_to_string(file) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!("Could not read {}: {e}", file.display());
                     continue;
                 }
             };
-            let (fixed, report) = crate::markdown::format_note_document(&content, Some(&file));
+            let (fixed, report) = crate::markdown::format_note_document(&content, Some(file));
             if report.is_changed() {
                 summary.files_modified += 1;
                 summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
@@ -132,6 +177,20 @@ pub fn format_notes_in_path(
     Ok(summary)
 }
 
+/// Formats Markdown note(s) across a single file or directory:
+/// - Unwraps spurious codeblocks
+/// - Purges extraction banners
+/// - Normalizes LaTeX math equations and table cells
+/// - Converts figure links to Obsidian wiki-links (![[...]])
+/// - Synthesizes/backfills Obsidian YAML frontmatter
+pub fn format_notes_in_path(
+    path: &Path,
+    output: Option<&Path>,
+    dry_run: bool,
+) -> Result<FormatNotesSummary> {
+    format_notes_in_path_with_progress(path, output, dry_run, |_| {})
+}
+
 /// Summary statistics for vault image format conversions.
 #[derive(Debug, Default, Clone)]
 pub struct ConvertImagesSummary {
@@ -144,20 +203,51 @@ pub struct ConvertImagesSummary {
     pub new_bytes: u64,
 }
 
-/// Converts existing PNG figures in an Obsidian vault to compressed JPEG images in-place.
-pub fn convert_vault_png_to_jpeg(
+/// Converts existing PNG figures in an Obsidian vault to compressed JPEG images in-place with progress & ETA.
+pub fn convert_vault_png_to_jpeg_with_progress<F>(
     vault_path: &Path,
     quality: u8,
     dry_run: bool,
-) -> Result<ConvertImagesSummary> {
+    mut on_progress: F,
+) -> Result<ConvertImagesSummary>
+where
+    F: FnMut(VaultTaskProgress),
+{
     let mut summary = ConvertImagesSummary::default();
 
     // 1. Scan and convert all PNG image files
     let mut png_files = Vec::new();
     collect_files_with_ext(vault_path, "png", &mut png_files);
-    summary.images_scanned = png_files.len();
+    let total_png = png_files.len();
+    summary.images_scanned = total_png;
+    let png_start = std::time::Instant::now();
 
-    for png_path in &png_files {
+    for (idx, png_path) in png_files.iter().enumerate() {
+        let completed = idx + 1;
+        let elapsed = png_start.elapsed().as_secs_f32();
+        let throughput = if elapsed > 0.05 {
+            completed as f32 / elapsed
+        } else {
+            0.0
+        };
+        let remaining = total_png.saturating_sub(completed);
+        let eta_sec = if remaining == 0 {
+            0.0
+        } else if throughput > 0.01 {
+            remaining as f32 / throughput
+        } else {
+            (remaining as f32) * 0.12
+        };
+
+        on_progress(VaultTaskProgress {
+            task: "image_migration".to_string(),
+            step: format!("Converting PNG images ({completed}/{total_png})"),
+            completed,
+            total: total_png,
+            items_per_sec: throughput,
+            eta_sec,
+        });
+
         let orig_size = match fs::metadata(png_path) {
             Ok(m) => m.len(),
             Err(_) => 0,
@@ -199,9 +289,36 @@ pub fn convert_vault_png_to_jpeg(
     // 2. Scan and update all Markdown notes
     let mut md_files = Vec::new();
     collect_files_with_ext(vault_path, "md", &mut md_files);
-    summary.notes_scanned = md_files.len();
+    let total_md = md_files.len();
+    summary.notes_scanned = total_md;
+    let md_start = std::time::Instant::now();
 
-    for md_path in &md_files {
+    for (idx, md_path) in md_files.iter().enumerate() {
+        let completed = idx + 1;
+        let elapsed = md_start.elapsed().as_secs_f32();
+        let throughput = if elapsed > 0.05 {
+            completed as f32 / elapsed
+        } else {
+            0.0
+        };
+        let remaining = total_md.saturating_sub(completed);
+        let eta_sec = if remaining == 0 {
+            0.0
+        } else if throughput > 0.01 {
+            remaining as f32 / throughput
+        } else {
+            (remaining as f32) * 0.02
+        };
+
+        on_progress(VaultTaskProgress {
+            task: "image_migration".to_string(),
+            step: format!("Updating note references ({completed}/{total_md})"),
+            completed,
+            total: total_md,
+            items_per_sec: throughput,
+            eta_sec,
+        });
+
         let content = match fs::read_to_string(md_path) {
             Ok(c) => c,
             Err(e) => {
@@ -222,6 +339,15 @@ pub fn convert_vault_png_to_jpeg(
     }
 
     Ok(summary)
+}
+
+/// Converts existing PNG figures in an Obsidian vault to compressed JPEG images in-place.
+pub fn convert_vault_png_to_jpeg(
+    vault_path: &Path,
+    quality: u8,
+    dry_run: bool,
+) -> Result<ConvertImagesSummary> {
+    convert_vault_png_to_jpeg_with_progress(vault_path, quality, dry_run, |_| {})
 }
 
 /// Summary statistics for retroactive vault embedding operations.

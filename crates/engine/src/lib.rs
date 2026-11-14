@@ -49,8 +49,9 @@ pub use progress::{
 };
 pub use telemetry::{init_telemetry, parse_log_level};
 pub use vault::{
-    ConvertImagesSummary, EmbedVaultSummary, FormatNotesSummary, convert_vault_png_to_jpeg,
-    download_embedding_models, embed_vault_in_path, format_notes_in_path,
+    ConvertImagesSummary, EmbedVaultSummary, FormatNotesSummary, VaultTaskProgress,
+    convert_vault_png_to_jpeg, convert_vault_png_to_jpeg_with_progress, download_embedding_models,
+    embed_vault_in_path, format_notes_in_path, format_notes_in_path_with_progress,
 };
 pub use watch::{WatchOptions, watch_directory};
 

@@ -67,6 +67,17 @@ pub enum DesktopProgressEvent {
         #[serde(rename = "outputDir", skip_serializing_if = "Option::is_none")]
         output_dir: Option<String>,
     },
+    #[serde(rename = "vault_progress")]
+    VaultProgress {
+        task: String,
+        step: String,
+        completed: usize,
+        total: usize,
+        #[serde(rename = "itemsPerSec")]
+        items_per_sec: f32,
+        #[serde(rename = "etaSec")]
+        eta_sec: f32,
+    },
 }
 
 pub struct BatchProgressTrackerState {
@@ -593,20 +604,68 @@ fn open_output_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn format_notes(vault_path: String, _fix_latex: bool) -> Result<serde_json::Value, String> {
+fn format_notes(
+    app: tauri::AppHandle,
+    vault_path: String,
+    _fix_latex: bool,
+) -> Result<serde_json::Value, String> {
     let path = Path::new(&vault_path);
-    let summary = format_notes_in_path(path, None, false).map_err(|e| e.to_string())?;
+    let app_handle = app.clone();
+    let summary = pdfmd_lite::format_notes_in_path_with_progress(
+        path,
+        None,
+        false,
+        move |p| {
+            let _ = app_handle.emit(
+                "conversion-progress",
+                DesktopProgressEvent::VaultProgress {
+                    task: p.task,
+                    step: p.step,
+                    completed: p.completed,
+                    total: p.total,
+                    items_per_sec: p.items_per_sec,
+                    eta_sec: p.eta_sec,
+                },
+            );
+        },
+    )
+    .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "filesProcessed": summary.files_scanned,
         "replacementsMade": summary.latex_repaired + summary.codeblocks_unwrapped + summary.banners_purged,
+        "frontmatterAdded": summary.frontmatter_added,
+        "fieldsBackfilled": summary.frontmatter_fields_backfilled,
     }))
 }
 
 #[tauri::command]
-fn convert_png_to_jpeg(vault_path: String, quality: Option<u8>) -> Result<serde_json::Value, String> {
+fn convert_png_to_jpeg(
+    app: tauri::AppHandle,
+    vault_path: String,
+    quality: Option<u8>,
+) -> Result<serde_json::Value, String> {
     let path = Path::new(&vault_path);
     let q = quality.unwrap_or(85);
-    let summary = convert_vault_png_to_jpeg(path, q, false).map_err(|e| e.to_string())?;
+    let app_handle = app.clone();
+    let summary = pdfmd_lite::convert_vault_png_to_jpeg_with_progress(
+        path,
+        q,
+        false,
+        move |p| {
+            let _ = app_handle.emit(
+                "conversion-progress",
+                DesktopProgressEvent::VaultProgress {
+                    task: p.task,
+                    step: p.step,
+                    completed: p.completed,
+                    total: p.total,
+                    items_per_sec: p.items_per_sec,
+                    eta_sec: p.eta_sec,
+                },
+            );
+        },
+    )
+    .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "imagesConverted": summary.images_converted,
         "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),

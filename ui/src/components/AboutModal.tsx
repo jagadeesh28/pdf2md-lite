@@ -24,7 +24,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
         <div className="p-6 space-y-4 text-xs text-gray-300 leading-relaxed">
           <div className="text-center pb-2">
             <h1 className="text-lg font-extrabold text-white">pdfmd-lite</h1>
-            <p className="text-purple-400 font-mono text-[11px] mt-0.5">Version 0.1.0 • Pure-Rust Architecture</p>
+            <p className="text-purple-400 font-mono text-[11px] mt-0.5">Version 0.3.0 • Pure-Rust Architecture</p>
           </div>
 
           <p>

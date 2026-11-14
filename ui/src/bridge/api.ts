@@ -166,7 +166,12 @@ export async function startConversion(payload: {
   }
 }
 
-export async function formatNotes(vaultPath: string, fixLatex: boolean): Promise<{ filesProcessed: number; replacementsMade: number }> {
+export async function formatNotes(vaultPath: string, fixLatex: boolean): Promise<{
+  filesProcessed: number;
+  replacementsMade: number;
+  frontmatterAdded?: number;
+  fieldsBackfilled?: number;
+}> {
   if (isTauri()) {
     return await invoke('format_notes', { vaultPath, fixLatex });
   }

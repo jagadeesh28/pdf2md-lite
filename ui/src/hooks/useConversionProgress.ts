@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { BatchCompletionSummary, ConversionJob, JobStatus, LogMessage, ProgressPayload } from '../types';
 import { subscribeProgress } from '../bridge/api';
 
+export interface VaultProgressInfo {
+  task: string;
+  step: string;
+  completed: number;
+  total: number;
+  itemsPerSec: number;
+  etaSec: number;
+}
+
 export function useConversionProgress() {
   const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const [logs, setLogs] = useState<LogMessage[]>([]);
@@ -12,6 +21,7 @@ export function useConversionProgress() {
   const [batchCompletedPages, setBatchCompletedPages] = useState<number | undefined>(undefined);
   const [batchTotalPages, setBatchTotalPages] = useState<number | undefined>(undefined);
   const [completionSummary, setCompletionSummary] = useState<BatchCompletionSummary | null>(null);
+  const [vaultProgress, setVaultProgress] = useState<VaultProgressInfo | null>(null);
 
   const addLog = useCallback((level: LogMessage['level'], message: string) => {
     const newLog: LogMessage = {
@@ -129,6 +139,17 @@ export function useConversionProgress() {
             )
           );
         }
+      } else if (payload.type === 'vault_progress') {
+        if (payload.task && payload.completed !== undefined && payload.total !== undefined) {
+          setVaultProgress({
+            task: payload.task,
+            step: payload.step || '',
+            completed: payload.completed,
+            total: payload.total,
+            itemsPerSec: payload.itemsPerSec ?? 0,
+            etaSec: payload.etaSec ?? 0,
+          });
+        }
       } else if (payload.type === 'batch_summary') {
         setIsRunning(false);
         setCurrentEta(undefined);
@@ -172,6 +193,8 @@ export function useConversionProgress() {
     batchTotalPages,
     completionSummary,
     dismissCompletionSummary,
+    vaultProgress,
+    setVaultProgress,
     updateJobStatus,
   };
 }
