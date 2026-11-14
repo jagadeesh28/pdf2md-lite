@@ -22,6 +22,8 @@ import {
   convertPngToJpeg,
   embedVault,
   defaultConfig,
+  onNativeFileDrop,
+  openFolderInExplorer,
 } from './bridge/api';
 
 export const App: React.FC = () => {
@@ -35,6 +37,11 @@ export const App: React.FC = () => {
     setIsRunning,
     currentEta,
     pagesPerSec,
+    activeDocSlug,
+    batchCompletedPages,
+    batchTotalPages,
+    completionSummary,
+    dismissCompletionSummary,
   } = useConversionProgress();
 
   const [activeView, setActiveView] = useState<'queue' | 'inspector'>('queue');
@@ -42,6 +49,7 @@ export const App: React.FC = () => {
   const [showConsole, setShowConsole] = useState<boolean>(false);
   const [theme, setTheme] = useState<'dark' | 'obsidian' | 'light'>('dark');
   const [config, setConfig] = useState<AppConfigData>(defaultConfig);
+  const [outputDir, setOutputDir] = useState<string>(defaultConfig.output_dir || './output');
 
   // Modals state
   const [showSettings, setShowSettings] = useState<boolean>(false);
@@ -52,7 +60,28 @@ export const App: React.FC = () => {
 
   // Initial config load
   useEffect(() => {
-    fetchConfig().then(setConfig).catch(console.error);
+    fetchConfig()
+      .then((cfg) => {
+        setConfig(cfg);
+        if (cfg.output_dir) {
+          setOutputDir(cfg.output_dir);
+        }
+      })
+      .catch(console.error);
+  }, []);
+
+  // Listen for native OS file drops
+  useEffect(() => {
+    return onNativeFileDrop((paths) => {
+      if (paths && paths.length > 0) {
+        const pdfs = paths.filter(
+          (p) => p.toLowerCase().endsWith('.pdf') || !p.includes('.')
+        );
+        if (pdfs.length > 0) {
+          handleAddFiles(pdfs);
+        }
+      }
+    });
   }, []);
 
   // Theme application
@@ -62,6 +91,18 @@ export const App: React.FC = () => {
     root.classList.add(theme);
   }, [theme]);
 
+  const handleOutputDirChange = (newDir: string) => {
+    setOutputDir(newDir);
+    const updated = { ...config, output_dir: newDir };
+    setConfig(updated);
+    saveConfig(updated).catch(console.error);
+  };
+
+  const handleOpenOutputDir = async () => {
+    addLog('info', `Opening output vault folder: ${outputDir}`);
+    await openFolderInExplorer(outputDir);
+  };
+
   const handleAddFiles = (filePaths: string[]) => {
     const newJobs: ConversionJob[] = filePaths.map((fp) => {
       const fileName = fp.split(/[\\/]/).pop() || fp;
@@ -69,7 +110,7 @@ export const App: React.FC = () => {
         id: Math.random().toString(36).substring(2, 9),
         filePath: fp,
         fileName,
-        outputDir: './output',
+        outputDir,
         status: 'idle',
       };
     });
@@ -89,12 +130,12 @@ export const App: React.FC = () => {
   const handleStartConversion = async (resume: boolean) => {
     if (jobs.length === 0 || isRunning) return;
     setIsRunning(true);
-    addLog('info', `Starting batch conversion for ${jobs.length} document(s) (Resume: ${resume})...`);
+    addLog('info', `Starting batch conversion for ${jobs.length} document(s) (Output: ${outputDir}, Resume: ${resume})...`);
     try {
       await startConversion({
         files: jobs.map((j) => j.filePath),
-        outputDir: './output',
-        config,
+        outputDir,
+        config: { ...config, output_dir: outputDir },
         resume,
       });
     } catch (err) {
@@ -110,9 +151,9 @@ export const App: React.FC = () => {
 
   const handleDryRun = async () => {
     if (jobs.length === 0) return;
-    addLog('info', 'Executing conversion dry-run simulation...');
+    addLog('info', `Executing conversion dry-run simulation for ${outputDir}...`);
     try {
-      const report = await runDryRun(jobs[0].filePath, './output');
+      const report = await runDryRun(jobs[0].filePath, outputDir);
       setDryRunReport(report);
       addLog(
         'info',
@@ -130,6 +171,9 @@ export const App: React.FC = () => {
 
   const handleSaveConfig = async (newConfig: AppConfigData) => {
     setConfig(newConfig);
+    if (newConfig.output_dir) {
+      setOutputDir(newConfig.output_dir);
+    }
     try {
       await saveConfig(newConfig);
       addLog('info', 'Configuration saved to pdfmd-lite.toml.');
@@ -139,9 +183,9 @@ export const App: React.FC = () => {
   };
 
   const handleFormatNotes = async () => {
-    addLog('info', 'Formatting notes across output vault...');
+    addLog('info', `Formatting notes across output vault '${outputDir}'...`);
     try {
-      const res = await formatNotes('./output', false);
+      const res = await formatNotes(outputDir, false);
       addLog('info', `Note formatter completed: ${res.filesProcessed} notes processed.`);
     } catch (err) {
       addLog('error', `Note formatting failed: ${err}`);
@@ -149,9 +193,9 @@ export const App: React.FC = () => {
   };
 
   const handleFixLatex = async () => {
-    addLog('info', 'Sanitizing LaTeX delimiters across notes...');
+    addLog('info', `Sanitizing LaTeX delimiters across notes in '${outputDir}'...`);
     try {
-      const res = await formatNotes('./output', true);
+      const res = await formatNotes(outputDir, true);
       addLog('info', `LaTeX sanitizer completed: ${res.replacementsMade} equations repaired.`);
     } catch (err) {
       addLog('error', `LaTeX sanitizer failed: ${err}`);
@@ -159,9 +203,9 @@ export const App: React.FC = () => {
   };
 
   const handleConvertPngToJpeg = async () => {
-    addLog('info', 'Migrating vault PNG images to JPEG format...');
+    addLog('info', `Migrating vault PNG images in '${outputDir}' to JPEG format...`);
     try {
-      const res = await convertPngToJpeg('./output', config.image_quality);
+      const res = await convertPngToJpeg(outputDir, config.image_quality);
       addLog(
         'info',
         `Image migration completed: ${res.imagesConverted} images converted (~${Math.round(
@@ -174,9 +218,9 @@ export const App: React.FC = () => {
   };
 
   const handleEmbedVault = async () => {
-    addLog('info', 'Generating semantic .embeddings.jsonl sidecars across vault...');
+    addLog('info', `Generating semantic .embeddings.jsonl sidecars across vault in '${outputDir}'...`);
     try {
-      const res = await embedVault('./output', false);
+      const res = await embedVault(outputDir, false);
       addLog(
         'info',
         `Vault embedding finished: ${res.notesProcessed} notes processed, ${res.chunksEmbedded} semantic chunks indexed.`
@@ -228,9 +272,7 @@ export const App: React.FC = () => {
         onWatchDirectory={() => {
           addLog('info', 'Directory watch mode active for input directory.');
         }}
-        onOpenVault={() => {
-          addLog('info', 'Opening output vault in Obsidian / File Explorer...');
-        }}
+        onOpenVault={handleOpenOutputDir}
         onExportMarkdown={() => {
           if (inspectedJob) {
             addLog('info', `Exported ${inspectedJob.fileName} markdown.`);
@@ -276,6 +318,14 @@ export const App: React.FC = () => {
             currentEta={currentEta}
             pagesPerSec={pagesPerSec}
             concurrencyWorkers={config.concurrency || 4}
+            outputDir={outputDir}
+            onChangeOutputDir={handleOutputDirChange}
+            onOpenOutputDir={handleOpenOutputDir}
+            activeDocSlug={activeDocSlug}
+            batchCompletedPages={batchCompletedPages}
+            batchTotalPages={batchTotalPages}
+            completionSummary={completionSummary}
+            onDismissCompletionSummary={dismissCompletionSummary}
           />
         ) : (
           <SplitPane

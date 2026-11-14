@@ -6,14 +6,19 @@ import {
   Eye,
   Trash2,
   Plus,
+  Folder,
   FolderPlus,
+  ExternalLink,
   CheckCircle2,
   AlertCircle,
   Clock,
   HardDrive,
   Cpu,
+  Zap,
+  Activity,
 } from 'lucide-react';
-import { ConversionJob, JobStatus } from '../types';
+import { BatchCompletionSummary, ConversionJob, JobStatus } from '../types';
+import { isTauri, pickFiles, pickFolder, uploadFile } from '../bridge/api';
 
 interface BatchQueueProps {
   jobs: ConversionJob[];
@@ -28,6 +33,14 @@ interface BatchQueueProps {
   currentEta?: number;
   pagesPerSec?: number;
   concurrencyWorkers: number;
+  outputDir: string;
+  onChangeOutputDir: (newDir: string) => void;
+  onOpenOutputDir: () => void;
+  activeDocSlug?: string;
+  batchCompletedPages?: number;
+  batchTotalPages?: number;
+  completionSummary?: BatchCompletionSummary | null;
+  onDismissCompletionSummary?: () => void;
 }
 
 export const BatchQueue: React.FC<BatchQueueProps> = ({
@@ -43,6 +56,14 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
   currentEta,
   pagesPerSec,
   concurrencyWorkers,
+  outputDir,
+  onChangeOutputDir,
+  onOpenOutputDir,
+  activeDocSlug,
+  batchCompletedPages,
+  batchTotalPages,
+  completionSummary,
+  onDismissCompletionSummary,
 }) => {
   const [resume, setResume] = useState<boolean>(true);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -53,6 +74,28 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
   const pendingCount = jobs.filter((j) => j.status === 'pending' || j.status === 'idle').length;
 
   const estimatedMemoryMb = 350 + concurrencyWorkers * 200;
+
+  // Calculate batch pages
+  const jobsSumCompletedPages = jobs.reduce((acc, j) => {
+    if (j.status === 'completed') return acc + (j.totalPages || 1);
+    return acc + (j.completedPages || 0);
+  }, 0);
+
+  const jobsSumTotalPages = jobs.reduce((acc, j) => acc + (j.totalPages || 0), 0);
+
+  const effectiveCompletedPages = batchCompletedPages !== undefined && batchCompletedPages > 0
+    ? batchCompletedPages
+    : jobsSumCompletedPages;
+
+  const effectiveTotalPages = batchTotalPages !== undefined && batchTotalPages > 0
+    ? batchTotalPages
+    : jobsSumTotalPages;
+
+  const overallPercent = effectiveTotalPages > 0
+    ? Math.min(100, Math.round((effectiveCompletedPages / effectiveTotalPages) * 100))
+    : jobs.length > 0
+    ? Math.min(100, Math.round((completedCount / jobs.length) * 100))
+    : 0;
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -71,8 +114,6 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
       for (let i = 0; i < e.dataTransfer.files.length; i++) {
         const file = e.dataTransfer.files[i];
         if (file.name.toLowerCase().endsWith('.pdf')) {
-          // In web environment, path might not be full filesystem path,
-          // but in Tauri it gives file.path or file.name
           files.push((file as unknown as { path?: string }).path || file.name);
         }
       }
@@ -83,10 +124,20 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
   };
 
   const formatEta = (seconds?: number) => {
-    if (seconds === undefined || seconds <= 0) return '--:--';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}m ${secs.toString().padStart(2, '0')}s`;
+    if (seconds === undefined || !Number.isFinite(seconds)) {
+      return isRunning ? 'Calculating...' : '--';
+    }
+    if (seconds <= 0.5) {
+      return isRunning ? 'Finishing...' : '--';
+    }
+    const totalSecs = Math.round(seconds);
+    const hours = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = Math.floor(totalSecs % 60);
+    if (hours > 0) {
+      return `~${hours}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+    }
+    return `~${mins}m ${secs.toString().padStart(2, '0')}s`;
   };
 
   return (
@@ -102,21 +153,35 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
       <div className="bg-gray-800/80 border-b border-gray-700/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-2">
           <button
-            onClick={() => {
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.accept = '.pdf';
-              input.multiple = true;
-              input.onchange = (e) => {
-                const target = e.target as HTMLInputElement;
-                if (target.files) {
-                  const files = Array.from(target.files).map(
-                    (f) => (f as unknown as { path?: string }).path || f.name
-                  );
-                  onAddFiles(files);
+            onClick={async () => {
+              if (isTauri()) {
+                const selected = await pickFiles();
+                if (selected && selected.length > 0) {
+                  onAddFiles(selected);
                 }
-              };
-              input.click();
+              } else {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.pdf';
+                input.multiple = true;
+                input.onchange = async (e) => {
+                  const target = e.target as HTMLInputElement;
+                  if (target.files) {
+                    const files = Array.from(target.files);
+                    const paths: string[] = [];
+                    for (const f of files) {
+                      try {
+                        const uploaded = await uploadFile(f);
+                        paths.push(uploaded);
+                      } catch {
+                        paths.push(f.name);
+                      }
+                    }
+                    if (paths.length > 0) onAddFiles(paths);
+                  }
+                };
+                input.click();
+              }
             }}
             className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs font-medium transition-colors"
           >
@@ -125,21 +190,27 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
           </button>
 
           <button
-            onClick={() => {
-              // Directory picker
-              const input = document.createElement('input');
-              input.type = 'file';
-              input.webkitdirectory = true;
-              input.onchange = (e) => {
-                const target = e.target as HTMLInputElement;
-                if (target.files) {
-                  const files = Array.from(target.files)
-                    .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-                    .map((f) => (f as unknown as { path?: string }).path || f.name);
-                  onAddFiles(files);
+            onClick={async () => {
+              if (isTauri()) {
+                const selected = await pickFolder();
+                if (selected) {
+                  onAddFiles([selected]);
                 }
-              };
-              input.click();
+              } else {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.webkitdirectory = true;
+                input.onchange = (e) => {
+                  const target = e.target as HTMLInputElement;
+                  if (target.files) {
+                    const files = Array.from(target.files)
+                      .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
+                      .map((f) => (f as unknown as { path?: string }).path || f.name);
+                    if (files.length > 0) onAddFiles(files);
+                  }
+                };
+                input.click();
+              }
             }}
             className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs font-medium transition-colors"
           >
@@ -206,6 +277,219 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
         </div>
       </div>
 
+      {/* Output Folder Bar: Clearly shown and modifiable */}
+      <div className="bg-gray-850 border-b border-gray-755 px-4 py-2 flex flex-wrap items-center justify-between text-xs gap-3">
+        <div className="flex items-center space-x-2 flex-1 min-w-[280px]">
+          <span className="text-gray-400 flex items-center space-x-1.5 flex-shrink-0 font-medium">
+            <Folder className="w-3.5 h-3.5 text-purple-400" />
+            <span>Output Folder:</span>
+          </span>
+          <input
+            type="text"
+            value={outputDir}
+            onChange={(e) => onChangeOutputDir(e.target.value)}
+            placeholder="./output"
+            className="flex-1 bg-gray-900 border border-gray-700 hover:border-gray-600 focus:border-purple-500 rounded px-2.5 py-1 text-gray-200 font-mono text-[11px] focus:outline-none transition-colors"
+            title="Target directory for converted Markdown notes, cropped figures, and vector sidecars"
+          />
+          <button
+            onClick={async () => {
+              if (isTauri()) {
+                const selected = await pickFolder();
+                if (selected) {
+                  onChangeOutputDir(selected);
+                }
+              }
+            }}
+            className="flex items-center space-x-1 px-2.5 py-1 bg-gray-750 hover:bg-gray-650 text-white rounded text-xs font-medium border border-gray-700 transition-colors flex-shrink-0"
+            title="Select output folder via file dialog"
+          >
+            <FolderPlus className="w-3.5 h-3.5 text-purple-300" />
+            <span>Browse...</span>
+          </button>
+          <button
+            onClick={onOpenOutputDir}
+            className="flex items-center space-x-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-xs border border-gray-700 transition-colors flex-shrink-0"
+            title="Open output folder in File Explorer"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>Open</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Prominent Completion Feedback Banner */}
+      {completionSummary && !isRunning && (
+        <div className={`mx-4 mt-3 mb-1 p-3.5 rounded-xl border shadow-lg transition-all duration-300 ${
+          completionSummary.errors === 0
+            ? 'bg-emerald-950/70 border-emerald-600/60 text-emerald-100 shadow-emerald-950/30'
+            : 'bg-amber-950/70 border-amber-600/60 text-amber-100 shadow-amber-950/30'
+        }`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-3">
+              <div className={`p-2 rounded-lg ${
+                completionSummary.errors === 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+              }`}>
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center space-x-2">
+                  <h4 className="text-sm font-bold tracking-tight">
+                    {jobs.length === 1
+                      ? 'Conversion Complete — Document Ready!'
+                      : `Batch Conversion Complete — ${completionSummary.completed} of ${jobs.length} Processed`}
+                  </h4>
+                  {completionSummary.errors > 0 && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-red-900/60 text-red-300 border border-red-700/60">
+                      {completionSummary.errors} error(s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-300">
+                  {jobs.length === 1
+                    ? `Successfully converted "${jobs[0]?.fileName}" into Obsidian Markdown with native LaTeX math and tables.`
+                    : `Converted ${completionSummary.completed} document(s) with full OCR, layout segmentation, and embedding sidecars.`}
+                </p>
+
+                {/* Metrics Chips */}
+                <div className="flex flex-wrap items-center gap-3 pt-1.5 text-[11px] font-mono">
+                  {completionSummary.elapsedSec !== undefined && (
+                    <span className="flex items-center space-x-1 px-2 py-0.5 rounded bg-gray-900/70 border border-gray-700/60 text-gray-200">
+                      <Clock className="w-3 h-3 text-amber-400" />
+                      <span>Duration: {completionSummary.elapsedSec.toFixed(1)}s</span>
+                    </span>
+                  )}
+                  {effectiveCompletedPages > 0 && (
+                    <span className="flex items-center space-x-1 px-2 py-0.5 rounded bg-gray-900/70 border border-gray-700/60 text-gray-200">
+                      <FileText className="w-3 h-3 text-purple-400" />
+                      <span>Pages: {effectiveCompletedPages}</span>
+                    </span>
+                  )}
+                  <span className="flex items-center space-x-1 px-2 py-0.5 rounded bg-gray-900/70 border border-gray-700/60 text-gray-200">
+                    <Folder className="w-3 h-3 text-cyan-400" />
+                    <span className="truncate max-w-[260px]">Vault: {completionSummary.outputDir || outputDir}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              <button
+                onClick={onOpenOutputDir}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition-colors"
+                title="Open destination vault folder in File Explorer"
+              >
+                <Folder className="w-3.5 h-3.5" />
+                <span>Open Folder</span>
+              </button>
+
+              {jobs.length === 1 && jobs[0]?.status === 'completed' && (
+                <button
+                  onClick={() => onInspectJob(jobs[0])}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shadow transition-colors"
+                  title="Inspect Markdown notes and extracted figures side-by-side"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Inspect Note</span>
+                </button>
+              )}
+
+              {onDismissCompletionSummary && (
+                <button
+                  onClick={onDismissCompletionSummary}
+                  className="text-gray-400 hover:text-white p-1 rounded transition-colors ml-1"
+                  title="Dismiss notification"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Visual Batch Progress Dashboard */}
+      {(isRunning || completedCount > 0 || runningCount > 0) && (
+        <div className="bg-gradient-to-r from-gray-950 via-gray-900 to-gray-950 border-b border-gray-800 px-4 py-3 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              {isRunning ? (
+                <div className="flex items-center space-x-2">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-purple-500"></span>
+                  </span>
+                  <span className="text-xs font-semibold text-purple-200">
+                    {jobs.length === 1
+                      ? (activeDocSlug ? `Converting: ${activeDocSlug}` : 'Converting document...')
+                      : (activeDocSlug ? `Converting: ${activeDocSlug}` : 'Converting batch...')}
+                  </span>
+                </div>
+              ) : completedCount === jobs.length && jobs.length > 0 ? (
+                <div className="flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-semibold text-emerald-300">
+                    {jobs.length === 1 ? 'Document Conversion Completed' : 'Batch Conversion Completed'}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2">
+                  <Activity className="w-4 h-4 text-gray-400" />
+                  <span className="text-xs font-semibold text-gray-300">
+                    {jobs.length === 1 ? 'Document Conversion Progress' : 'Batch Conversion Progress'}
+                  </span>
+                </div>
+              )}
+
+              {/* Real-time ETA pill */}
+              {isRunning && (
+                <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span>ETA: {formatEta(currentEta)}</span>
+                </span>
+              )}
+
+              {/* Speed pill */}
+              {pagesPerSec !== undefined && pagesPerSec > 0 && (
+                <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                  <Zap className="w-3 h-3 text-purple-400" />
+                  <span>{pagesPerSec.toFixed(1)} pages/sec</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-3 text-xs font-mono">
+              <span className="text-gray-400">
+                Pages: <strong className="text-white">{effectiveCompletedPages}</strong> / {effectiveTotalPages > 0 ? effectiveTotalPages : '--'}
+              </span>
+              <span className="text-gray-600">|</span>
+              <span className="text-gray-400">
+                Docs: <strong className="text-white">{completedCount}</strong> / {jobs.length}
+              </span>
+              <span className="text-gray-600">|</span>
+              <span className="text-purple-300 font-bold text-sm">
+                {overallPercent}%
+              </span>
+            </div>
+          </div>
+
+          {/* Visual Progress Bar */}
+          <div className="w-full bg-gray-800/80 rounded-full h-2.5 overflow-hidden p-0.5 border border-gray-700/60 shadow-inner">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ease-out ${
+                isRunning
+                  ? 'bg-gradient-to-r from-purple-600 via-indigo-500 to-emerald-400'
+                  : completedCount === jobs.length && jobs.length > 0
+                  ? 'bg-emerald-500'
+                  : 'bg-purple-600'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, overallPercent))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Telemetry Snapshot Banner */}
       <div className="bg-gray-950/70 border-b border-gray-800 px-4 py-2 flex items-center justify-between text-xs text-gray-400">
         <div className="flex items-center space-x-5">
@@ -245,7 +529,7 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
               {pagesPerSec.toFixed(1)} pages/sec
             </span>
           )}
-          <span className="text-amber-300">
+          <span className="text-amber-300 font-semibold">
             ETA: {formatEta(currentEta)}
           </span>
         </div>
@@ -321,45 +605,100 @@ const JobItemCard: React.FC<JobItemCardProps> = ({ job, onRemove, onInspect }) =
     }
   };
 
+  const itemTotalPages = job.totalPages && job.totalPages > 0 ? job.totalPages : 1;
+  const itemCompletedPages = job.status === 'completed'
+    ? itemTotalPages
+    : (job.completedPages ?? 0);
+  const itemPercent = Math.min(100, Math.round((itemCompletedPages / itemTotalPages) * 100));
+
   return (
-    <div className="bg-gray-800/60 hover:bg-gray-800 border border-gray-700/60 rounded-lg p-3 flex items-center justify-between transition-colors">
-      <div className="flex items-center space-x-3 overflow-hidden mr-3">
-        <FileText className="w-5 h-5 text-purple-400 flex-shrink-0" />
-        <div className="overflow-hidden">
-          <div className="text-xs font-semibold text-gray-200 truncate">{job.fileName}</div>
-          <div className="text-[11px] text-gray-400 truncate">{job.filePath}</div>
+    <div className={`bg-gray-800/60 hover:bg-gray-800 border rounded-lg p-3 transition-colors ${
+      job.status === 'running' ? 'border-purple-600/70 bg-purple-950/10' : 'border-gray-700/60'
+    }`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3 overflow-hidden mr-3">
+          <FileText className={`w-5 h-5 flex-shrink-0 ${job.status === 'running' ? 'text-purple-400 animate-pulse' : 'text-purple-400'}`} />
+          <div className="overflow-hidden">
+            <div className="text-xs font-semibold text-gray-200 truncate">{job.fileName}</div>
+            <div className="text-[11px] text-gray-400 truncate">{job.filePath}</div>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-3 flex-shrink-0">
+          {job.elapsedSec !== undefined && job.status === 'completed' && (
+            <span className="text-[11px] text-emerald-400 font-mono flex items-center space-x-1" title="Conversion duration">
+              <Clock className="w-3 h-3 text-emerald-400" />
+              <span>{job.elapsedSec.toFixed(1)}s</span>
+            </span>
+          )}
+
+          {job.totalPages !== undefined && (
+            <span className="text-xs text-gray-400 font-mono">
+              {job.status === 'completed' ? job.totalPages : (job.completedPages ?? 0)} / {job.totalPages} pgs
+            </span>
+          )}
+
+          {getStatusBadge(job.status)}
+
+          {job.status === 'completed' && (
+            <button
+              onClick={onInspect}
+              className="flex items-center space-x-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded text-xs transition-colors shadow-sm"
+              title="Inspect Markdown notes and extracted figures side-by-side"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Inspect Note</span>
+            </button>
+          )}
+
+          {job.status !== 'running' && (
+            <button
+              onClick={onRemove}
+              className="text-gray-500 hover:text-red-400 p-1 transition-colors"
+              title="Remove from queue"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center space-x-3 flex-shrink-0">
-        {job.totalPages !== undefined && (
-          <span className="text-xs text-gray-400 font-mono">
-            {job.completedPages ?? 0} / {job.totalPages} pgs
-          </span>
-        )}
+      {/* Individual Progress for Converting or In-Progress Job */}
+      {(job.status === 'running' || (job.completedPages !== undefined && job.completedPages > 0)) && (
+        <div className="mt-2.5 pt-2 border-t border-gray-700/40">
+          <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 mb-1">
+            <span className="flex items-center space-x-1.5">
+              {job.status === 'running' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping inline-block" />
+              )}
+              <span className={job.status === 'running' ? 'text-purple-300' : 'text-gray-300'}>
+                {job.status === 'running' ? 'Processing pages...' : 'Pages converted'}
+              </span>
+            </span>
+            <span className="text-gray-300 font-semibold">
+              {itemCompletedPages} / {job.totalPages ?? '?'} pgs ({itemPercent}%)
+            </span>
+          </div>
+          <div className="w-full bg-gray-700/60 rounded-full h-1.5 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-200 ${
+                job.status === 'completed'
+                  ? 'bg-emerald-500'
+                  : job.status === 'error'
+                  ? 'bg-red-500'
+                  : 'bg-purple-500'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, itemPercent))}%` }}
+            />
+          </div>
+        </div>
+      )}
 
-        {getStatusBadge(job.status)}
-
-        {job.status === 'completed' && (
-          <button
-            onClick={onInspect}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-purple-700/40 hover:bg-purple-700/60 text-purple-200 rounded text-xs transition-colors border border-purple-600/40"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>Inspect</span>
-          </button>
-        )}
-
-        {job.status !== 'running' && (
-          <button
-            onClick={onRemove}
-            className="text-gray-500 hover:text-red-400 p-1 transition-colors"
-            title="Remove from queue"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+      {job.error && (
+        <div className="mt-2 text-[11px] text-red-400 bg-red-950/40 border border-red-900/50 rounded px-2 py-1">
+          {job.error}
+        </div>
+      )}
     </div>
   );
 };

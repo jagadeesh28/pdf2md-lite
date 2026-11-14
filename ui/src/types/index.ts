@@ -11,6 +11,7 @@ export interface ConversionJob {
   error?: string;
   outputMarkdownPath?: string;
   markdownContent?: string;
+  elapsedSec?: number;
   pages?: {
     pageNumber: number;
     markdown: string;
@@ -30,6 +31,21 @@ export interface ProgressPayload {
   status?: string;
   level?: 'trace' | 'debug' | 'info' | 'warn' | 'error';
   message?: string;
+  batchCompletedPages?: number;
+  batchTotalPages?: number;
+  completed?: number;
+  errors?: number;
+  outputDir?: string;
+  outputPath?: string;
+}
+
+export interface BatchCompletionSummary {
+  completed: number;
+  errors: number;
+  elapsedSec?: number;
+  totalPages?: number;
+  outputDir?: string;
+  finishedAt: string;
 }
 
 export interface AppConfigData {
@@ -44,6 +60,7 @@ export interface AppConfigData {
   embed: boolean;
   log_level: 'trace' | 'debug' | 'info' | 'warn' | 'error';
   log_file: string | null;
+  output_dir?: string | null;
 }
 
 export interface DryRunFileReport {

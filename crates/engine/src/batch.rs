@@ -429,6 +429,9 @@ pub fn process_pdf_directory_all_with_emitter(
             let t0 = std::time::Instant::now();
             let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
             tracker.on_doc_start(0, &item.folder_slug, 1);
+            if let Some(em) = emitter.as_ref() {
+                em.on_document_start(&item.folder_slug, pages_count);
+            }
             let conv_res = crate::pipeline::process_pdf_full_with_emitter(
                 &item.pdf_path,
                 &item.target_md_path,
@@ -452,10 +455,16 @@ pub fn process_pdf_directory_all_with_emitter(
                         elapsed,
                         true,
                     );
+                    if let Some(em) = emitter.as_ref() {
+                        em.on_document_complete(&item.folder_slug, "completed");
+                    }
                     result.lock().unwrap().succeeded += 1;
                 }
                 Err(err) => {
                     tracker.on_doc_failed(0, item.index, &item.folder_slug, &err.to_string());
+                    if let Some(em) = emitter.as_ref() {
+                        em.on_document_complete(&item.folder_slug, "error");
+                    }
                     result
                         .lock()
                         .unwrap()
@@ -494,6 +503,9 @@ pub fn process_pdf_directory_all_with_emitter(
                     let t0 = std::time::Instant::now();
                     let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
                     tracker_clone.on_doc_start(worker_id, &item.folder_slug, per_doc_workers);
+                    if let Some(em) = emitter_clone.as_ref() {
+                        em.on_document_start(&item.folder_slug, pages_count);
+                    }
 
                     let conv_res = crate::pipeline::process_pdf_full_with_emitter(
                         &item.pdf_path,
@@ -520,6 +532,9 @@ pub fn process_pdf_directory_all_with_emitter(
                                 elapsed,
                                 true,
                             );
+                            if let Some(em) = emitter_clone.as_ref() {
+                                em.on_document_complete(&item.folder_slug, "completed");
+                            }
                             res_guard.succeeded += 1;
                         }
                         Err(err) => {
@@ -529,6 +544,9 @@ pub fn process_pdf_directory_all_with_emitter(
                                 &item.folder_slug,
                                 &err.to_string(),
                             );
+                            if let Some(em) = emitter_clone.as_ref() {
+                                em.on_document_complete(&item.folder_slug, "error");
+                            }
                             res_guard.failed.push((item.pdf_path, err.to_string()));
                         }
                     }

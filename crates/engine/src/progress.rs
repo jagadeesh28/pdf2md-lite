@@ -11,8 +11,11 @@ use std::time::Instant;
 
 /// Formats a duration in seconds into a human-readable ETA string (e.g. `02m 45s`, `01h 12m 30s`).
 pub fn format_eta(secs: f32) -> String {
-    if !secs.is_finite() || secs <= 0.0 {
+    if !secs.is_finite() || secs < 0.0 {
         return "--".to_string();
+    }
+    if secs <= 0.5 {
+        return "Finishing...".to_string();
     }
     let total_secs = secs.round() as u64;
     let hours = total_secs / 3600;
@@ -115,10 +118,12 @@ impl TrackerState {
         };
 
         let remaining_pages = self.total_pages.saturating_sub(self.completed_pages);
-        let eta = if throughput > 0.001 && remaining_pages > 0 {
+        let eta = if remaining_pages == 0 {
+            Some(0.0)
+        } else if throughput > 0.001 {
             Some(remaining_pages as f32 / throughput)
         } else {
-            None
+            Some((remaining_pages as f32) * 1.8)
         };
 
         (throughput, eta)
@@ -295,7 +300,8 @@ mod tests {
 
     #[test]
     fn test_format_eta_formatting() {
-        assert_eq!(format_eta(0.0), "--");
+        assert_eq!(format_eta(0.0), "Finishing...");
+        assert_eq!(format_eta(0.5), "Finishing...");
         assert_eq!(format_eta(-5.0), "--");
         assert_eq!(format_eta(f32::NAN), "--");
         assert_eq!(format_eta(45.0), "00m 45s");
