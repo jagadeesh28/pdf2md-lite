@@ -120,6 +120,14 @@ pub fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Computes the cryptographic SHA-256 digest of an in-memory byte slice.
+pub fn compute_bytes_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
 /// Results of a document conversion or text extraction run.
 #[derive(Debug, Default, Clone)]
 pub struct PdfExtractionResult {

@@ -214,6 +214,35 @@ pub fn process_pdf_directory_all(
     image_opts: ImageOptions,
     embed: bool,
 ) -> Result<BatchConversionResult> {
+    process_pdf_directory_all_with_emitter(
+        input_dir,
+        output_base_dir,
+        page_range,
+        max_depth,
+        explicit_concurrency,
+        script,
+        quiet,
+        resume,
+        image_opts,
+        embed,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn process_pdf_directory_all_with_emitter(
+    input_dir: &Path,
+    output_base_dir: &Path,
+    page_range: Option<(usize, usize)>,
+    max_depth: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    quiet: bool,
+    resume: bool,
+    image_opts: ImageOptions,
+    embed: bool,
+    emitter: Option<std::sync::Arc<dyn crate::progress::ProgressEmitter>>,
+) -> Result<BatchConversionResult> {
     let pdf_files = collect_pdf_files_with_depth(input_dir, max_depth)?;
     if pdf_files.is_empty() {
         return Err(anyhow!(
@@ -400,7 +429,7 @@ pub fn process_pdf_directory_all(
             let t0 = std::time::Instant::now();
             let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
             tracker.on_doc_start(0, &item.folder_slug, 1);
-            let conv_res = crate::pipeline::process_pdf_full(
+            let conv_res = crate::pipeline::process_pdf_full_with_emitter(
                 &item.pdf_path,
                 &item.target_md_path,
                 item.begin_page,
@@ -410,6 +439,7 @@ pub fn process_pdf_directory_all(
                 script,
                 image_opts,
                 embed,
+                emitter.as_deref(),
             );
             let elapsed = t0.elapsed().as_secs_f32();
             match conv_res {
@@ -451,6 +481,7 @@ pub fn process_pdf_directory_all(
             let queue_clone = std::sync::Arc::clone(&queue);
             let result_clone = std::sync::Arc::clone(&result);
             let tracker_clone = std::sync::Arc::clone(&tracker);
+            let emitter_clone = emitter.clone();
 
             let handle = std::thread::spawn(move || {
                 loop {
@@ -464,7 +495,7 @@ pub fn process_pdf_directory_all(
                     let pages_count = item.end_page.saturating_sub(item.begin_page) + 1;
                     tracker_clone.on_doc_start(worker_id, &item.folder_slug, per_doc_workers);
 
-                    let conv_res = crate::pipeline::process_pdf_full(
+                    let conv_res = crate::pipeline::process_pdf_full_with_emitter(
                         &item.pdf_path,
                         &item.target_md_path,
                         item.begin_page,
@@ -474,6 +505,7 @@ pub fn process_pdf_directory_all(
                         script,
                         image_opts,
                         embed,
+                        emitter_clone.as_deref(),
                     );
                     let elapsed = t0.elapsed().as_secs_f32();
 

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process;
 
+use pdfmd_lite::ModelLocator;
 use pdfmd_lite::config::AppConfig;
 use pdfmd_lite::figure::{ImageFormat, ImageOptions};
 use pdfmd_lite::vault::{
@@ -45,6 +46,8 @@ OPTIONS:
                                 or retroactively embed an existing Markdown vault
     --download-models           Download official INT8 all-MiniLM-L6-v2 ONNX model (~22MB)
                                 and tokenizer into models/embeddings/
+    --doctor                    Check presence, resolution path, and SHA-256 for all offline neural models
+    --models-dir <PATH>         Explicit path to directory containing neural model weights
     --serve [PORT]              Start local embedded Axum web server daemon (default: 127.0.0.1:3000)
     --force                     Force re-embedding of existing Markdown notes
     --convert-images-to-jpeg, --png-to-jpeg <PATH>
@@ -147,6 +150,14 @@ pub fn run() {
             eprintln!("Error provisioning models: {e:#}");
             process::exit(1);
         }
+        process::exit(0);
+    }
+
+    let doctor_mode = args
+        .iter()
+        .any(|a| a == "--doctor" || a == "doctor" || a == "check");
+    if doctor_mode {
+        run_doctor(&args);
         process::exit(0);
     }
 
@@ -375,6 +386,7 @@ pub fn run() {
     let mut log_file: Option<PathBuf> = None;
     let mut log_level: Option<String> = None;
     let mut dom_extraction: Option<pdfmd_lite::pdf::DomExtractionMode> = None;
+    let mut models_dir: Option<PathBuf> = None;
 
     let mut positional = Vec::new();
     let mut i = 0;
@@ -491,6 +503,12 @@ pub fn run() {
                 i += 2;
                 continue;
             }
+        } else if arg == "--models-dir" {
+            if i + 1 < args.len() {
+                models_dir = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+                continue;
+            }
         } else if !arg.starts_with('-') {
             positional.push(arg.clone());
         }
@@ -511,8 +529,22 @@ pub fn run() {
         end_page = positional[3].parse().ok();
     }
 
-    // Load config file if present
-    let config = AppConfig::load(config_path.as_deref()).unwrap_or_default();
+    // Load config file if present, failing loudly on parse errors
+    let config = match AppConfig::load(config_path.as_deref()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("Configuration Error: {e:#}");
+            process::exit(1);
+        }
+    };
+    let final_models_dir = models_dir.or(config.models_dir.clone());
+    if let Some(ref dir) = final_models_dir {
+        pdfmd_lite::set_global_models_dir(dir.clone());
+    }
+    if let Some(ref layout_path) = config.layout_model {
+        pdfmd_lite::figure::models::set_custom_layout_path(layout_path.clone());
+    }
+
     let final_log_file = log_file.or(config.log_file.clone());
     let final_log_level = log_level.or(config.log_level.clone());
 
@@ -757,5 +789,78 @@ pub fn run() {
             eprintln!("Error converting PDF: {err:#}");
             process::exit(1);
         }
+    }
+}
+
+fn run_doctor(args: &[String]) {
+    let custom_dir = args
+        .iter()
+        .position(|a| a == "--models-dir")
+        .and_then(|idx| args.get(idx + 1))
+        .map(PathBuf::from);
+    let locator = ModelLocator::new(custom_dir);
+    let report = locator.doctor_report();
+
+    println!("\npdfmd-lite Offline Neural Model Diagnostics");
+    println!("==========================================================================================");
+    println!(
+        "{:<32} {:<10} {:<10} {:<10} Resolution / Location",
+        "Model Name", "Type", "Size", "SHA256"
+    );
+    println!("------------------------------------------------------------------------------------------");
+
+    let mut missing_required = 0;
+    let mut missing_optional = 0;
+
+    for status in &report {
+        let presence = if status.is_embedded {
+            "[EMBEDDED STATIC SLICE]".to_string()
+        } else if let Some(ref path) = status.resolved_path {
+            format!("[FOUND] {}", path.display())
+        } else {
+            "[MISSING]".to_string()
+        };
+
+        let req_str = if status.required {
+            "REQUIRED"
+        } else {
+            "OPTIONAL"
+        };
+        let size_str = status
+            .size_bytes
+            .map(|s| format!("{:.2} MB", s as f64 / 1_048_576.0))
+            .unwrap_or_else(|| "-".to_string());
+        let hash_str = status
+            .sha256
+            .as_deref()
+            .and_then(|h| h.get(..8))
+            .unwrap_or("-");
+
+        println!(
+            "{:<32} {:<10} {:<10} {:<10} {}",
+            status.name, req_str, size_str, hash_str, presence
+        );
+
+        if !status.exists {
+            if status.required {
+                missing_required += 1;
+            } else {
+                missing_optional += 1;
+            }
+        }
+    }
+
+    println!("==========================================================================================");
+    if missing_required > 0 {
+        eprintln!(
+            "Warning: {missing_required} required model(s) are missing. Conversion will fail."
+        );
+    } else {
+        println!("All required offline neural models are provisioned.");
+    }
+    if missing_optional > 0 {
+        println!(
+            "Note: {missing_optional} optional model(s) are not provisioned (formulas, tables, or embeddings will degrade to fallbacks).\nRun 'pdfmd-lite --download-models' to fetch optional weights."
+        );
     }
 }

@@ -31,10 +31,20 @@ pub fn get_latex_engine() -> Option<Arc<RapidLatexEngine>> {
         let tok_path = crate::resolve_model_path("models/latex/tokenizer.json");
 
         if enc_path.exists() && dec_path.exists() && tok_path.exists() {
-            RapidLatexEngine::new(&enc_path, &dec_path, &tok_path)
-                .ok()
-                .map(Arc::new)
+            match RapidLatexEngine::new(&enc_path, &dec_path, &tok_path) {
+                Ok(engine) => Some(Arc::new(engine)),
+                Err(err) => {
+                    tracing::warn!("Failed to initialize RapidLaTeXOCR engine: {err:#}");
+                    None
+                }
+            }
         } else {
+            tracing::warn!(
+                "RapidLaTeXOCR models not found (checked: {}, {}, {}). Mathematical formula recognition disabled.",
+                enc_path.display(),
+                dec_path.display(),
+                tok_path.display()
+            );
             None
         }
     });

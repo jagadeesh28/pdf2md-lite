@@ -6,6 +6,7 @@ pub mod embeddings;
 pub mod figure;
 pub mod markdown;
 pub mod metadata;
+pub mod model_locator;
 pub mod pdf;
 pub mod pipeline;
 pub mod progress;
@@ -17,17 +18,20 @@ pub mod xycut;
 pub use backends::indra::{IndraEngine, IndraScript, TextLine};
 pub use batch::{
     BatchConversionResult, ConversionPlan, DryRunReport, dry_run_pdf_directory, dry_run_single_pdf,
-    process_pdf_directory, process_pdf_directory_all, process_pdf_directory_full,
-    process_pdf_directory_with_image_options, sanitize_short_slug,
+    process_pdf_directory, process_pdf_directory_all, process_pdf_directory_all_with_emitter,
+    process_pdf_directory_full, process_pdf_directory_with_image_options, sanitize_short_slug,
 };
 pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult};
 pub use markdown::{
-    DocumentMetadata, PdfExtractionResult, attach_figures_to_page_text,
-    convert_figure_links_to_obsidian, format_page_demarcation, normalize_latex_delimiters,
-    render_markdown, replace_png_links_with_jpg,
+    DocumentMetadata, PdfExtractionResult, attach_figures_to_page_text, compute_bytes_sha256,
+    compute_file_sha256, convert_figure_links_to_obsidian, format_page_demarcation,
+    normalize_latex_delimiters, render_markdown, replace_png_links_with_jpg,
+};
+pub use model_locator::{
+    KNOWN_MODELS, ModelLocator, ModelStatus, get_global_models_dir, set_global_models_dir,
 };
 pub use pdf::{
     DomExtractionMode, can_use_hybrid_dom, clean_extracted_text,
@@ -35,8 +39,9 @@ pub use pdf::{
     get_pdf_page_count, render_pages_to_images, safe_extract_text_by_pages, validate_page_range,
 };
 pub use pipeline::{
-    get_indra_engine, process_pages_stream, process_pages_stream_with_options, process_pdf,
-    process_pdf_full, process_pdf_with_options, process_pdf_with_pipeline_options,
+    ConversionOptions, format_warning_callout, get_indra_engine, process_pages_stream,
+    process_pages_stream_with_options, process_pdf, process_pdf_full,
+    process_pdf_full_with_emitter, process_pdf_with_options, process_pdf_with_pipeline_options,
     process_pdf_with_source, safe_process_single_page,
 };
 pub use progress::{
@@ -49,25 +54,13 @@ pub use vault::{
 };
 pub use watch::{WatchOptions, watch_directory};
 
-/// Helper to resolve paths to model files relative to the workspace or manifest directory.
+/// Helper to resolve paths to model files across locator discovery paths.
 pub fn resolve_model_path(subpath: impl AsRef<std::path::Path>) -> std::path::PathBuf {
     let sub = subpath.as_ref();
-    if sub.exists() {
-        return sub.to_path_buf();
+    let sub_str = sub.to_string_lossy();
+    if let Some(located) = ModelLocator::new(None).locate(&sub_str) {
+        located
+    } else {
+        sub.to_path_buf()
     }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let p = std::path::Path::new(&manifest).join(sub);
-        if p.exists() {
-            return p;
-        }
-        let p_up = std::path::Path::new(&manifest).join("../../").join(sub);
-        if p_up.exists() {
-            return p_up;
-        }
-    }
-    let p_root = std::path::Path::new("../../").join(sub);
-    if p_root.exists() {
-        return p_root;
-    }
-    sub.to_path_buf()
 }

@@ -8,8 +8,8 @@ Running multiple concurrent ONNX model instances (`det.onnx`, `rec.onnx`, `yolov
 
 ## Decision
 Dynamically calculate page worker concurrency at startup using available machine resources:
-$$\text{workers} = \max\left(1, \min\left(\text{logical cores} - 1, \frac{\text{free RAM (GB)}}{1.5\text{ GB}}\right)\right)$$
-Support explicit overrides via command-line flags (`-j`, `--concurrency`) and `pdfmd-lite.toml`, with zero dependency on environment variables. Maintain strict ascending page order using an in-memory BTreeMap reordering buffer.
+$$\text{workers} = \max\left(1, \min\left(\text{logical cores} - 1, \left\lfloor\frac{\text{free RAM (MB)} - 350\text{ MB}}{200\text{ MB}}\right\rfloor\right)\right)$$
+Accounting for a shared 350 MB base resident footprint for ONNX model sessions and 200 MB per active high-resolution worker canvas. Support explicit overrides via command-line flags (`-j`, `--concurrency`) and `pdfmd-lite.toml`, with zero dependency on environment variables. Maintain strict ascending page order using an in-memory BTreeMap reordering buffer.
 
 ## Consequences
 Prevents system memory exhaustion on memory-constrained workstations while maximizing multi-core throughput on high-spec servers, always streaming pages to disk in correct page order.

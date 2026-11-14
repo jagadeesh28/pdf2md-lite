@@ -1,8 +1,7 @@
 //! Model weight provisioning and loading for the YOLO Document Layout Engine.
 
-use anyhow::{Context, Result};
-use std::fs;
-use std::path::{Path, PathBuf};
+use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::RwLock;
 
 static CUSTOM_LAYOUT_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
@@ -15,6 +14,13 @@ static CUSTOM_LAYOUT_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 ))]
 static ORT_ENVIRONMENT: std::sync::OnceLock<std::sync::Arc<ort::environment::Environment>> =
     std::sync::OnceLock::new();
+#[cfg(any(
+    feature = "slanet-ort",
+    feature = "latex-ort",
+    feature = "gliner-ort",
+    feature = "ort"
+))]
+static ORT_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Returns a shared, process-wide ONNX Runtime Environment singleton.
 /// Only one Environment is permitted per process by ONNX Runtime.
@@ -29,15 +35,17 @@ pub fn get_shared_ort_environment() -> anyhow::Result<std::sync::Arc<ort::enviro
     if let Some(env) = ORT_ENVIRONMENT.get() {
         return Ok(env.clone());
     }
-
+    let _guard = ORT_INIT_LOCK.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if let Some(env) = ORT_ENVIRONMENT.get() {
+        return Ok(env.clone());
+    }
     let env = ort::environment::init()
         .with_name("pdfmd_lite")
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to initialize shared ORT environment: {e}"))?;
-
     let arc = std::sync::Arc::new(env);
     let _ = ORT_ENVIRONMENT.set(arc.clone());
-    Ok(ORT_ENVIRONMENT.get().unwrap().clone())
+    Ok(arc)
 }
 
 /// Sets a global custom weights path for the YOLO Document Layout Engine.
@@ -52,12 +60,6 @@ pub fn get_custom_layout_path() -> Option<PathBuf> {
     CUSTOM_LAYOUT_PATH.read().ok().and_then(|p| p.clone())
 }
 
-#[cfg(feature = "embed-models")]
-const EMBEDDED_LAYOUT: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/layout/yolov8n-doclaynet.onnx"
-));
-
 /// Provides raw ONNX bytes for the YOLO Document Layout Engine.
 pub struct LayoutModelSource {
     custom_path: Option<PathBuf>,
@@ -70,40 +72,14 @@ impl LayoutModelSource {
         Self { custom_path }
     }
 
-    /// Loads the YOLO layout detector model bytes from custom path, workspace directory, or embedded binary.
+    /// Loads the YOLO layout detector model bytes without heap duplication.
+    pub fn load_layout_bytes(&self) -> Result<std::borrow::Cow<'static, [u8]>> {
+        let locator = crate::model_locator::ModelLocator::new(self.custom_path.clone());
+        locator.load_bytes("models/layout/yolov8n-doclaynet.onnx")
+    }
+
+    /// Loads the YOLO layout detector model bytes as owned vector for backward compatibility.
     pub fn load_layout_model(&self) -> Result<Vec<u8>> {
-        // 1. Check custom override path if specified
-        if let Some(ref path) = self.custom_path
-            && path.exists()
-        {
-            return fs::read(path)
-                .with_context(|| format!("Failed to read custom layout model at {:?}", path));
-        }
-
-        // 2. Check local workspace models/layout/ directory
-        let local_path = Path::new("models/layout/yolov8n-doclaynet.onnx");
-        if local_path.exists() {
-            return fs::read(local_path)
-                .with_context(|| format!("Failed to read layout model at {:?}", local_path));
-        }
-        let workspace_path = Path::new("../../models/layout/yolov8n-doclaynet.onnx");
-        if workspace_path.exists() {
-            return fs::read(workspace_path)
-                .with_context(|| format!("Failed to read layout model at {:?}", workspace_path));
-        }
-
-        // 3. Fallback to embedded static binary slice if feature = "embed-models" is active
-        #[cfg(feature = "embed-models")]
-        {
-            Ok(EMBEDDED_LAYOUT.to_vec())
-        }
-
-        #[cfg(not(feature = "embed-models"))]
-        {
-            anyhow::bail!(
-                "YOLO Document Layout model not found at '{}' and embed-models feature is disabled",
-                local_path.display()
-            );
-        }
+        self.load_layout_bytes().map(|cow| cow.into_owned())
     }
 }

@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub concurrency: Option<usize>,
     pub max_depth: Option<usize>,
@@ -23,6 +24,7 @@ pub struct AppConfig {
     pub log_level: Option<String>,
     pub dom_extraction: Option<String>,
     pub embed: Option<bool>,
+    pub output_dir: Option<PathBuf>,
 }
 
 impl AppConfig {
@@ -64,5 +66,42 @@ impl AppConfig {
         fs::write(path, content)
             .with_context(|| format!("Failed to write configuration to {}", path.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_config_parsing() {
+        let toml_str = r#"
+            concurrency = 4
+            models_dir = "/custom/models"
+            language = "telugu"
+            image_format = "jpeg"
+            image_quality = 90
+            save_table_images = true
+            embed_images_base64 = false
+            dom_extraction = "auto"
+        "#;
+        let config: Result<AppConfig, _> = toml::from_str(toml_str);
+        assert!(config.is_ok());
+        let cfg = config.unwrap();
+        assert_eq!(cfg.concurrency, Some(4));
+        assert_eq!(cfg.language.as_deref(), Some("telugu"));
+        assert_eq!(cfg.image_quality, Some(90));
+    }
+
+    #[test]
+    fn test_deny_unknown_fields_rejection() {
+        let toml_str = r#"
+            concurrency = 4
+            unrecognized_bogus_key = "should fail"
+        "#;
+        let config: Result<AppConfig, _> = toml::from_str(toml_str);
+        assert!(config.is_err(), "Unknown fields must be rejected");
+        let err_msg = config.unwrap_err().to_string();
+        assert!(err_msg.contains("unknown field `unrecognized_bogus_key`"));
     }
 }

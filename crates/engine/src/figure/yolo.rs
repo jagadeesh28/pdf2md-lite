@@ -393,15 +393,20 @@ impl YoloLayoutDetector {
 }
 
 static YOLO_DETECTOR: std::sync::OnceLock<Arc<YoloLayoutDetector>> = std::sync::OnceLock::new();
+static YOLO_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Returns a shared, lazily initialized singleton instance of the YOLO Layout Detector.
 pub fn get_yolo_detector() -> Result<Arc<YoloLayoutDetector>> {
     if let Some(detector) = YOLO_DETECTOR.get() {
         return Ok(Arc::clone(detector));
     }
+    let _guard = YOLO_INIT_LOCK.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if let Some(detector) = YOLO_DETECTOR.get() {
+        return Ok(Arc::clone(detector));
+    }
 
     let source = crate::figure::models::LayoutModelSource::new(None);
-    let bytes = source.load_layout_model()?;
+    let bytes = source.load_layout_bytes()?;
     let detector = Arc::new(YoloLayoutDetector::new(&bytes)?);
 
     let _ = YOLO_DETECTOR.set(Arc::clone(&detector));

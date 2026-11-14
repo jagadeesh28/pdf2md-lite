@@ -65,27 +65,40 @@ impl IndraEngine {
     pub fn new(custom_path: Option<PathBuf>) -> Result<Self> {
         let source = IndraModelSource::new(custom_path);
 
-        let meta_bytes = source.load_file("meta.json")?;
+        let meta_bytes = source.load_bytes("meta.json")?;
         let vocab = IndraVocab::from_json_bytes(&meta_bytes)?;
 
-        let det_bytes = source.load_file("det.onnx")?;
+        let det_bytes = source.load_bytes("det.onnx")?;
         let detector = IndraDetector::new(&det_bytes, vocab.det_long_side)?;
 
-        let rec_bytes = source.load_file("rec.onnx")?;
+        let rec_bytes = source.load_bytes("rec.onnx")?;
         let recognizer = IndraRecognizer::new(&rec_bytes, vocab)?;
 
         // Attempt loading optional world recognizer for Telugu & Indic scripts
         let mut telugu_mask = None;
-        let world_recognizer = match source.load_file("rec_world.onnx") {
+        let world_recognizer = match source.load_bytes("rec_world.onnx") {
             Ok(rec_world_bytes) => {
-                let world_vocab = IndraVocab::from_world_json_bytes(&meta_bytes)
-                    .context("Failed to load Indra world vocabulary")?;
-                telugu_mask = Some(world_vocab.build_telugu_mask());
-                let rec = IndraRecognizer::new_world(&rec_world_bytes, world_vocab)
-                    .context("Failed to initialize Indra world recognizer")?;
-                Some(rec)
+                match IndraVocab::from_world_json_bytes(&meta_bytes) {
+                    Ok(world_vocab) => {
+                        telugu_mask = Some(world_vocab.build_telugu_mask());
+                        match IndraRecognizer::new_world(&rec_world_bytes, world_vocab) {
+                            Ok(rec) => Some(rec),
+                            Err(e) => {
+                                tracing::warn!("Failed to initialize Indra world recognizer: {e:#}");
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load Indra world vocabulary: {e:#}");
+                        None
+                    }
+                }
             }
-            Err(_) => None,
+            Err(e) => {
+                tracing::debug!("Indra world recognizer (rec_world.onnx) not loaded: {e:#}");
+                None
+            }
         };
 
         Ok(Self {

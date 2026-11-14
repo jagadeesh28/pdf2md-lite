@@ -22,7 +22,7 @@ pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
         .map(|n| n.get())
         .unwrap_or(2);
 
-    let available_ram_bytes = if let Ok(mut sys) = System::new_all() {
+    let available_ram_bytes = if let Ok(mut sys) = System::new() {
         sys.refresh_memory();
         sys.available_memory()
     } else {
@@ -53,7 +53,7 @@ pub fn resolve_concurrency(explicit_override: Option<usize>) -> usize {
     // Never exceed memory budget; cap at 1 on severely constrained hosts.
     let optimal_workers = core_budget_workers.min(memory_budget_workers).max(1);
 
-    println!(
+    tracing::info!(
         "Hardware Governor: detected {logical_cores} cores, {available_ram_gb:.2} GB available RAM -> resolved {optimal_workers} worker(s)"
     );
 

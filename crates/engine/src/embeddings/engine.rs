@@ -5,7 +5,10 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+
+#[cfg(feature = "ort")]
+use std::sync::Mutex;
 
 #[cfg(feature = "ort")]
 use ort::session::Session;
@@ -27,6 +30,7 @@ pub struct EmbeddingEngine {
 impl EmbeddingEngine {
     /// Attempts to load the embedding engine from the specified model directory or default paths.
     pub fn new(custom_models_dir: Option<&Path>) -> Result<Self> {
+        #[allow(unused_variables)]
         let (model_path, tokenizer_path) = resolve_embedding_paths(custom_models_dir)?;
 
         #[cfg(feature = "embed-models")]
@@ -85,10 +89,9 @@ impl EmbeddingEngine {
             return Ok(Vec::new());
         }
 
-        let mut all_embeddings = Vec::with_capacity(texts.len());
-
         #[cfg(all(feature = "embed-models", feature = "ort"))]
         {
+            let mut all_embeddings = Vec::with_capacity(texts.len());
             let mut session_guard = self
                 .session
                 .lock()
@@ -179,15 +182,14 @@ impl EmbeddingEngine {
 
                 all_embeddings.push(pooled);
             }
+
+            Ok(all_embeddings)
         }
 
         #[cfg(not(all(feature = "embed-models", feature = "ort")))]
         {
-            anyhow::bail!("embed-models and ort features are required to compute embeddings");
+            anyhow::bail!("embed-models and ort features are required to compute embeddings")
         }
-
-        #[allow(unreachable_code)]
-        Ok(all_embeddings)
     }
 }
 

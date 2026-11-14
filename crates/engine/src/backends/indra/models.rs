@@ -1,34 +1,8 @@
-//! Model weight provisioning and loading for Indra OCR.
+//! Model weight provisioning and loading for Indra OCR (ADR 0014).
 
-use anyhow::{Context, Result};
-use std::fs;
-use std::path::{Path, PathBuf};
-
-#[cfg(feature = "embed-models")]
-const EMBEDDED_DET: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/indra/det.onnx"
-));
-#[cfg(feature = "embed-models")]
-const EMBEDDED_REC: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/indra/rec.onnx"
-));
-#[cfg(feature = "embed-models")]
-const EMBEDDED_REC_WORLD: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/indra/rec_world.onnx"
-));
-#[cfg(feature = "embed-models")]
-const EMBEDDED_ORDER: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/indra/order.onnx"
-));
-#[cfg(feature = "embed-models")]
-const EMBEDDED_META: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../models/indra/meta.json"
-));
+use anyhow::Result;
+use std::borrow::Cow;
+use std::path::PathBuf;
 
 /// Provides raw ONNX bytes and metadata for the Indra OCR pipeline.
 pub struct IndraModelSource {
@@ -41,49 +15,15 @@ impl IndraModelSource {
         Self { custom_path }
     }
 
-    /// Retrieves byte slice or owned vector for a model file.
+    /// Loads model bytes as a zero-copy static slice (if embedded) or owned vector.
+    pub fn load_bytes(&self, file_name: &str) -> Result<Cow<'static, [u8]>> {
+        let subpath = format!("models/indra/{file_name}");
+        let locator = crate::model_locator::ModelLocator::new(self.custom_path.clone());
+        locator.load_bytes(&subpath)
+    }
+
+    /// Retrieves byte slice or owned vector for a model file for backward compatibility.
     pub fn load_file(&self, file_name: &str) -> Result<Vec<u8>> {
-        // 1. Check custom path override first if provided
-        if let Some(ref dir) = self.custom_path {
-            let path = dir.join(file_name);
-            if path.exists() {
-                return fs::read(&path)
-                    .with_context(|| format!("Failed to read custom weight file at {:?}", path));
-            }
-        }
-
-        // 2. Check local workspace models/indra/ directory
-        let local_path = Path::new("models").join("indra").join(file_name);
-        if local_path.exists() {
-            return fs::read(&local_path)
-                .with_context(|| format!("Failed to read local weight file at {:?}", local_path));
-        }
-        let workspace_path = Path::new("../../models").join("indra").join(file_name);
-        if workspace_path.exists() {
-            return fs::read(&workspace_path).with_context(|| {
-                format!(
-                    "Failed to read workspace weight file at {:?}",
-                    workspace_path
-                )
-            });
-        }
-
-        // 3. Check embedded models if enabled
-        #[cfg(feature = "embed-models")]
-        {
-            match file_name {
-                "det.onnx" => return Ok(EMBEDDED_DET.to_vec()),
-                "rec.onnx" => return Ok(EMBEDDED_REC.to_vec()),
-                "rec_world.onnx" => return Ok(EMBEDDED_REC_WORLD.to_vec()),
-                "order.onnx" => return Ok(EMBEDDED_ORDER.to_vec()),
-                "meta.json" => return Ok(EMBEDDED_META.to_vec()),
-                _ => {}
-            }
-        }
-
-        anyhow::bail!(
-            "Model file '{}' not found in custom path, local 'models/indra/', or embedded binary.",
-            file_name
-        )
+        self.load_bytes(file_name).map(|cow| cow.into_owned())
     }
 }

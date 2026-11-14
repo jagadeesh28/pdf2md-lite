@@ -3,11 +3,12 @@
 //! Orchestrates YOLOv8n three-way layout routing, Indra OCR, geometric table extraction,
 //! LaTeX math normalization, and page indexing with ascending concurrency.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+#[allow(unused_imports)]
 use image::GenericImageView;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
@@ -21,15 +22,100 @@ use crate::markdown::{
 use crate::pdf::{safe_extract_text_by_pages, validate_page_range};
 
 static INDRA_ENGINE: std::sync::OnceLock<IndraEngine> = std::sync::OnceLock::new();
+static INDRA_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Returns a lazily initialized static reference to the pure-Rust Indra OCR engine.
 pub fn get_indra_engine() -> Result<&'static IndraEngine> {
     if let Some(engine) = INDRA_ENGINE.get() {
         return Ok(engine);
     }
+    let _guard = INDRA_INIT_LOCK.lock().map_err(|e| anyhow!("{e}"))?;
+    if let Some(engine) = INDRA_ENGINE.get() {
+        return Ok(engine);
+    }
     let engine = IndraEngine::new(None)?;
     let _ = INDRA_ENGINE.set(engine);
     Ok(INDRA_ENGINE.get().expect("IndraEngine initialized"))
+}
+
+/// Formats a standardized Obsidian warning callout for incomplete or failed page processing.
+pub fn format_warning_callout(
+    page_num: usize,
+    reason: &str,
+    raw_page_text: Option<&str>,
+) -> String {
+    let page_demarcation = format_page_demarcation(page_num);
+    let mut warning_block = format!(
+        "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
+         > {reason}\n\n"
+    );
+    if let Some(txt) = raw_page_text
+        && !txt.trim().is_empty()
+    {
+        warning_block.push_str("### Recovered Stream Text\n\n");
+        warning_block.push_str(txt.trim());
+        warning_block.push_str("\n\n");
+    }
+    warning_block
+}
+
+/// Comprehensive execution options for converting a PDF document into Obsidian Markdown.
+#[derive(Debug, Clone)]
+pub struct ConversionOptions {
+    pub begin_page: usize,
+    pub end_page: usize,
+    pub explicit_concurrency: Option<usize>,
+    pub source_label: Option<String>,
+    pub script: IndraScript,
+    pub image_opts: crate::figure::ImageOptions,
+    pub embed: bool,
+    pub models_dir: Option<PathBuf>,
+}
+
+impl ConversionOptions {
+    /// Creates conversion options for the given page range with default settings.
+    pub fn new(begin_page: usize, end_page: usize) -> Self {
+        Self {
+            begin_page,
+            end_page,
+            explicit_concurrency: None,
+            source_label: None,
+            script: IndraScript::default(),
+            image_opts: crate::figure::ImageOptions::default(),
+            embed: false,
+            models_dir: None,
+        }
+    }
+
+    pub fn with_concurrency(mut self, concurrency: Option<usize>) -> Self {
+        self.explicit_concurrency = concurrency;
+        self
+    }
+
+    pub fn with_source_label(mut self, label: impl Into<String>) -> Self {
+        self.source_label = Some(label.into());
+        self
+    }
+
+    pub fn with_script(mut self, script: IndraScript) -> Self {
+        self.script = script;
+        self
+    }
+
+    pub fn with_image_opts(mut self, opts: crate::figure::ImageOptions) -> Self {
+        self.image_opts = opts;
+        self
+    }
+
+    pub fn with_embed(mut self, embed: bool) -> Self {
+        self.embed = embed;
+        self
+    }
+
+    pub fn with_models_dir(mut self, dir: PathBuf) -> Self {
+        self.models_dir = Some(dir);
+        self
+    }
 }
 
 /// Converts a single PDF file into an Obsidian Markdown document with companion assets using default script.
@@ -131,7 +217,36 @@ pub fn process_pdf_full(
     image_opts: crate::figure::ImageOptions,
     embed: bool,
 ) -> Result<()> {
+    process_pdf_full_with_emitter(
+        input_path,
+        output_path,
+        begin_page,
+        end_page,
+        explicit_concurrency,
+        source_label,
+        script,
+        image_opts,
+        embed,
+        None,
+    )
+}
+
+/// Converts a single PDF file with full pipeline, image options, progress emitter, and optional embedding generation.
+#[allow(clippy::too_many_arguments)]
+pub fn process_pdf_full_with_emitter(
+    input_path: &Path,
+    output_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    explicit_concurrency: Option<usize>,
+    source_label: Option<&str>,
+    script: IndraScript,
+    image_opts: crate::figure::ImageOptions,
+    embed: bool,
+    emitter: Option<&dyn crate::progress::ProgressEmitter>,
+) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
+    let total_pages_in_doc = end_page.saturating_sub(begin_page) + 1;
 
     let pdf_stem = input_path
         .file_stem()
@@ -140,11 +255,20 @@ pub fn process_pdf_full(
     let short_slug = sanitize_short_slug(pdf_stem);
     let images_folder_name = format!("{short_slug}_images");
 
+    let resolved_target = if output_path.is_dir() || output_path.extension().is_none() {
+        output_path.join(format!("{short_slug}.md"))
+    } else {
+        output_path.to_path_buf()
+    };
+    let output_path = resolved_target.as_path();
     let output_dir = output_path.parent().unwrap_or_else(|| Path::new("."));
     let image_output_dir = output_dir.join(&images_folder_name);
 
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
+
+    let pdf_bytes = fs::read(input_path)
+        .with_context(|| format!("failed to read PDF input file at {}", input_path.display()))?;
 
     // Extract PDF document properties for Obsidian frontmatter via DOM-first gating
     let mut metadata = crate::pdf::extract_pdf_metadata(input_path);
@@ -152,7 +276,7 @@ pub fn process_pdf_full(
         metadata.title = Some(pdf_stem.to_string());
     }
     if metadata.pdf_sha256.is_none() {
-        metadata.pdf_sha256 = crate::markdown::compute_file_sha256(input_path).ok();
+        metadata.pdf_sha256 = Some(crate::markdown::compute_bytes_sha256(&pdf_bytes));
     }
 
     // DOM-First Fallback Gating: If author, publication date, organization, journal, volume, DOI, or keywords are missing, extract from document header slice
@@ -164,13 +288,9 @@ pub fn process_pdf_full(
         || metadata.doi.is_none()
         || metadata.keywords.is_none()
     {
-        let header_slice = if let Ok(bytes) = fs::read(input_path) {
-            crate::pdf::safe_extract_text_by_pages(&bytes)
-                .and_then(|pages| pages.into_iter().next())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let header_slice = crate::pdf::safe_extract_text_by_pages(&pdf_bytes)
+            .and_then(|pages| pages.into_iter().next())
+            .unwrap_or_default();
 
         if !header_slice.trim().is_empty() {
             #[cfg(feature = "gliner-ort")]
@@ -273,6 +393,9 @@ pub fn process_pdf_full(
         script,
         image_opts,
         |page_num, page_md| {
+            if let Some(em) = emitter {
+                em.on_page_complete(&short_slug, page_num, total_pages_in_doc);
+            }
             // For the first processed page, if metadata fields are still missing (e.g. scanned PDF where
             // initial header_slice had no digital text), attempt extraction from the OCR text of page 1.
             if page_num == begin_page
@@ -437,12 +560,11 @@ where
     }
 
     let pdf_bytes = fs::read(input_path).ok();
+    // Parse lopdf::Document once in memory per document to avoid redundant per-page file reads
+    let lopdf_doc = Arc::new(pdf_bytes.as_ref().and_then(|b| lopdf::Document::load_mem(b).ok()));
     let pdf_pages = pdf_bytes
         .as_ref()
         .and_then(|bytes| safe_extract_text_by_pages(bytes));
-
-    // Parse lopdf::Document once per document to avoid redundant per-page file reads and DOM parsing
-    let lopdf_doc = Arc::new(lopdf::Document::load(input_path).ok());
 
     let concurrency = resolve_concurrency(explicit_concurrency);
     let total_pages = end_page.saturating_sub(begin_page) + 1;
@@ -450,7 +572,7 @@ where
     // Zero-disk Pipelined Streaming: Dedicated rendering thread streams DynamicImages into a bounded channel
     let channel_bound = concurrency.clamp(2, 4);
     let (raster_tx, raster_rx) =
-        mpsc::sync_channel::<Result<(usize, image::DynamicImage)>>(channel_bound);
+        mpsc::sync_channel::<(usize, Result<image::DynamicImage>)>(channel_bound);
     let pdf_path_for_render = input_path.to_path_buf();
 
     let render_thread = thread::spawn(move || {
@@ -458,24 +580,35 @@ where
     });
 
     if concurrency <= 1 || total_pages <= 1 {
-        while let Ok(msg) = raster_rx.recv() {
-            let (page_num, page_img) = msg?;
+        while let Ok((page_num, img_res)) = raster_rx.recv() {
             let raw_page_text = pdf_pages
                 .as_ref()
                 .and_then(|pages| pages.get(page_num - 1))
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
 
-            let page_md = safe_process_single_page_image_with_doc_and_options(
-                lopdf_doc.as_ref().as_ref(),
-                Some(input_path),
-                &page_img,
-                image_output_dir,
-                page_num,
-                raw_page_text.as_deref(),
-                script,
-                image_opts,
-            );
+            let page_md = match img_res {
+                Ok(page_img) => safe_process_single_page_image_with_doc_and_options(
+                    lopdf_doc.as_ref().as_ref(),
+                    Some(input_path),
+                    &page_img,
+                    image_output_dir,
+                    page_num,
+                    raw_page_text.as_deref(),
+                    script,
+                    image_opts,
+                ),
+                Err(err) => {
+                    tracing::warn!(
+                        "Page {page_num} rasterization failed ({err:#}). Emitting warning callout."
+                    );
+                    format_warning_callout(
+                        page_num,
+                        &format!("An error occurred during page rasterization: {err:#}"),
+                        raw_page_text.as_deref(),
+                    )
+                }
+            };
             on_page(page_num, page_md)?;
         }
         let _ = render_thread.join();
@@ -503,16 +636,8 @@ where
                         rx.recv().ok()
                     };
 
-                    let Some(res) = item else {
+                    let Some((page_num, img_res)) = item else {
                         break;
-                    };
-
-                    let (page_num, page_img) = match res {
-                        Ok(pair) => pair,
-                        Err(err) => {
-                            tracing::warn!("Rasterization error: {err:#}");
-                            continue;
-                        }
                     };
 
                     let raw_page_text = pdf_pages_clone
@@ -522,16 +647,28 @@ where
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
 
-                    let page_md = safe_process_single_page_image_with_doc_and_options(
-                        lopdf_doc_clone.as_ref().as_ref(),
-                        Some(&input_path_clone),
-                        &page_img,
-                        &img_out_dir,
-                        page_num,
-                        raw_page_text.as_deref(),
-                        script,
-                        image_opts,
-                    );
+                    let page_md = match img_res {
+                        Ok(page_img) => safe_process_single_page_image_with_doc_and_options(
+                            lopdf_doc_clone.as_ref().as_ref(),
+                            Some(&input_path_clone),
+                            &page_img,
+                            &img_out_dir,
+                            page_num,
+                            raw_page_text.as_deref(),
+                            script,
+                            image_opts,
+                        ),
+                        Err(err) => {
+                            tracing::warn!(
+                                "Page {page_num} rasterization failed ({err:#}). Emitting warning callout."
+                            );
+                            format_warning_callout(
+                                page_num,
+                                &format!("An error occurred during page rasterization: {err:#}"),
+                                raw_page_text.as_deref(),
+                            )
+                        }
+                    };
 
                     if result_tx_clone.send((page_num, page_md)).is_err() {
                         break;
@@ -690,35 +827,19 @@ pub fn safe_process_single_page_image_with_doc_and_options(
             tracing::warn!(
                 "Page {page_num} processing failed ({err:#}). Emitting warning callout."
             );
-            let page_demarcation = format_page_demarcation(page_num);
-            let mut warning_block = format!(
-                "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
-                 > An error occurred during page transcription: {err:#}\n\n"
-            );
-            if let Some(txt) = raw_page_text
-                && !txt.trim().is_empty()
-            {
-                warning_block.push_str("### Recovered Stream Text\n\n");
-                warning_block.push_str(txt.trim());
-                warning_block.push_str("\n\n");
-            }
-            warning_block
+            format_warning_callout(
+                page_num,
+                &format!("An error occurred during page transcription: {err:#}"),
+                raw_page_text,
+            )
         }
         Err(_) => {
             tracing::warn!("Page {page_num} processing panicked. Emitting warning callout.");
-            let page_demarcation = format_page_demarcation(page_num);
-            let mut warning_block = format!(
-                "{page_demarcation}> [!WARNING] Page {page_num} Processing Incomplete\n\
-                 > An unexpected panic occurred while decoding or processing page {page_num}.\n\n"
-            );
-            if let Some(txt) = raw_page_text
-                && !txt.trim().is_empty()
-            {
-                warning_block.push_str("### Recovered Stream Text\n\n");
-                warning_block.push_str(txt.trim());
-                warning_block.push_str("\n\n");
-            }
-            warning_block
+            format_warning_callout(
+                page_num,
+                &format!("An unexpected panic occurred while decoding or processing page {page_num}."),
+                raw_page_text,
+            )
         }
     }
 }

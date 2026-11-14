@@ -75,7 +75,7 @@ pub fn stream_rendered_pages(
     pdf_path: &Path,
     begin_page: usize,
     end_page: usize,
-    tx: std::sync::mpsc::SyncSender<Result<(usize, image::DynamicImage)>>,
+    tx: std::sync::mpsc::SyncSender<(usize, Result<image::DynamicImage>)>,
 ) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
     let pdf_bytes = fs::read(pdf_path)
@@ -113,15 +113,21 @@ pub fn stream_rendered_pages(
         .take(end_page - begin_page + 1)
     {
         let page_num = index + 1;
-        let pixmap = hayro::render(
-            page,
-            &cache,
-            &interpreter_settings,
-            &render_settings,
-            &pixmap_settings,
-        );
-        let dynamic_image = pixmap_to_dynamic_image(&pixmap);
-        if tx.send(Ok((page_num, dynamic_image))).is_err() {
+        let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let pixmap = hayro::render(
+                page,
+                &cache,
+                &interpreter_settings,
+                &render_settings,
+                &pixmap_settings,
+            );
+            pixmap_to_dynamic_image(&pixmap)
+        }));
+        let img_result = match render_res {
+            Ok(dynamic_image) => Ok(dynamic_image),
+            Err(_) => Err(anyhow!("Panic during page rasterization")),
+        };
+        if tx.send((page_num, img_result)).is_err() {
             // Receiver closed channel early (e.g. error or pipeline abort)
             break;
         }
@@ -194,15 +200,41 @@ pub fn render_pages_to_images(
     Ok(page_paths)
 }
 
+std::thread_local! {
+    static SUPPRESS_PANIC_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+static PANIC_HOOK_INITIALIZED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Initializes a process-wide panic hook that honors thread-local suppression.
+pub fn init_process_panic_hook() {
+    PANIC_HOOK_INITIALIZED.get_or_init(|| {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let suppressed = SUPPRESS_PANIC_HOOK.with(|flag| flag.get());
+            if !suppressed {
+                default_hook(info);
+            }
+        }));
+    });
+}
+
 /// Safely extracts text by pages from PDF memory, catching and suppressing any panics
 /// caused by malformed/unsupported font encoding tables inside pdf-extract.
 pub fn safe_extract_text_by_pages(bytes: &[u8]) -> Option<Vec<String>> {
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
+    init_process_panic_hook();
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            SUPPRESS_PANIC_HOOK.with(|flag| flag.set(false));
+        }
+    }
+    SUPPRESS_PANIC_HOOK.with(|flag| flag.set(true));
+    let _guard = Guard;
+
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_extract::extract_text_from_mem_by_pages(bytes).ok()
     }));
-    std::panic::set_hook(prev_hook);
     res.ok().flatten()
 }
 
@@ -211,17 +243,17 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
     let pdf_bytes = fs::read(pdf_path)
         .with_context(|| format!("failed to read PDF file {}", pdf_path.display()))?;
 
-    if let Ok(document) = Pdf::new(pdf_bytes.clone()) {
-        let count = document.pages().len();
-        if count > 0 {
-            return Ok(count);
-        }
-    }
-
     if let Some(pages) = safe_extract_text_by_pages(&pdf_bytes)
         && !pages.is_empty()
     {
         return Ok(pages.len());
+    }
+
+    if let Ok(document) = Pdf::new(pdf_bytes) {
+        let count = document.pages().len();
+        if count > 0 {
+            return Ok(count);
+        }
     }
 
     Err(anyhow!(

@@ -1,6 +1,5 @@
 //! Build script for pdfmd-lite.
-//! 1. Detects host hardware extensions (AVX2, AVX-512, FMA, NEON) for SIMD acceleration.
-//! 2. Validates that offline neural model weights are present in `models/`.
+//! Validates that offline neural model weights are present in `models/`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -17,36 +16,7 @@ const INDRA_FILES: &[&str] = &[
 const LAYOUT_FILES: &[&str] = &["yolov8n-doclaynet.onnx"];
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(has_avx2)");
-    println!("cargo::rustc-check-cfg=cfg(has_fma)");
-    println!("cargo::rustc-check-cfg=cfg(has_avx512)");
-    println!("cargo::rustc-check-cfg=cfg(has_neon)");
-
-    detect_hardware_features();
     check_model_weights();
-}
-
-fn detect_hardware_features() {
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let host = std::env::var("HOST").unwrap_or_default();
-    let target = std::env::var("TARGET").unwrap_or_default();
-
-    if target_arch == "x86_64" && host == target {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("avx2") {
-                println!("cargo:rustc-cfg=has_avx2");
-            }
-            if is_x86_feature_detected!("fma") {
-                println!("cargo:rustc-cfg=has_fma");
-            }
-            if is_x86_feature_detected!("avx512f") {
-                println!("cargo:rustc-cfg=has_avx512");
-            }
-        }
-    } else if target_arch == "aarch64" {
-        println!("cargo:rustc-cfg=has_neon");
-    }
 }
 
 fn check_model_weights() {

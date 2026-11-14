@@ -34,10 +34,19 @@ pub fn get_slanet_engine() -> Option<Arc<SlaNetEngine>> {
         let model_path = crate::resolve_model_path("models/layout/slanet.onnx");
         let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
         if model_path.exists() && dict_path.exists() {
-            SlaNetEngine::new(&model_path, &dict_path)
-                .ok()
-                .map(Arc::new)
+            match SlaNetEngine::new(&model_path, &dict_path) {
+                Ok(engine) => Some(Arc::new(engine)),
+                Err(err) => {
+                    tracing::warn!("Failed to initialize SLANet table engine: {err:#}");
+                    None
+                }
+            }
         } else {
+            tracing::warn!(
+                "SLANet table models not found (checked: {}, {}). Neural table structure recognition disabled.",
+                model_path.display(),
+                dict_path.display()
+            );
             None
         }
     });

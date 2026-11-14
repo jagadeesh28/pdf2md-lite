@@ -40,13 +40,26 @@ pub fn get_gliner_engine() -> Option<Arc<GlinerEngine>> {
         let model_path = crate::resolve_model_path("models/metadata/gliner_small.onnx");
 
         if model_path.exists() {
-            GlinerEngine::new(&model_path).ok().map(Arc::new)
+            match GlinerEngine::new(&model_path) {
+                Ok(engine) => Some(Arc::new(engine)),
+                Err(err) => {
+                    tracing::warn!("Failed to initialize GLiNER engine: {err:#}");
+                    None
+                }
+            }
         } else {
+            tracing::warn!(
+                "GLiNER metadata model not found (checked: {}). Neural metadata entity extraction disabled.",
+                model_path.display()
+            );
             None
         }
     });
     engine.as_ref().cloned()
 }
+
+#[cfg(not(feature = "gliner-ort"))]
+pub struct GlinerEngine;
 
 #[cfg(not(feature = "gliner-ort"))]
 pub fn get_gliner_engine() -> Option<()> {

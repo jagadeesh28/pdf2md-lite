@@ -160,3 +160,11 @@ _Avoid_: Markdown-only preview, external PDF reader, detached viewer
 **Unified Event Bridge**:
 A polymorphic frontend communication layer that consumes native Tauri IPC window events on the desktop and Axum WebSocket event streams in the browser through a unified reactive telemetry hook.
 _Avoid_: Polling status checker, fragmented event handler, dual telemetry clients
+
+**Model Locator**:
+A unified cascading asset resolution service that discovers and streams offline neural model weights across explicit CLI overrides, configuration settings, executable-adjacent directories, platform app data paths, and embedded static memory slices without copying static bytes to the heap.
+_Avoid_: Hardcoded model path, CARGO_MANIFEST_DIR loader, ambient directory search
+
+**Conversion Options**:
+A consolidated pipeline configuration structure encapsulating hardware concurrency limits, language script selections, layout and image configurations, DOM extraction gating, and model paths into an immutable execution contract.
+_Avoid_: Parameter soup, sprawling wrapper arguments, scattered configuration flags
