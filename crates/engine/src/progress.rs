@@ -38,6 +38,10 @@ pub trait ProgressEmitter: Send + Sync {
     fn on_document_complete(&self, doc_slug: &str, status: &str);
     /// Emitted for general diagnostic log messages.
     fn on_message(&self, level: &str, message: &str);
+    /// Checks whether cancellation has been requested by the user.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// A no-op progress emitter for quiet/silent execution or tests.

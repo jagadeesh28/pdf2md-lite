@@ -143,12 +143,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, on
                 <select
                   value={formData.image_format}
                   onChange={(e) =>
-                    setFormData({ ...formData, image_format: e.target.value as 'jpeg' | 'png' })
+                    setFormData({ ...formData, image_format: e.target.value as 'jpeg' | 'png' | 'webp' })
                   }
                   className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 focus:outline-none focus:border-purple-500"
                 >
                   <option value="jpeg">JPEG (Compressed ~70% smaller)</option>
                   <option value="png">PNG (Lossless)</option>
+                  <option value="webp">WebP (Modern high-efficiency compression)</option>
                 </select>
               </div>
 

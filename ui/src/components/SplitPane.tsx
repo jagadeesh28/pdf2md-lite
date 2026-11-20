@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,9 +8,11 @@ import {
   Eye,
   Download,
   FileText,
+  Loader2,
 } from 'lucide-react';
 import { ConversionJob } from '../types';
 import { MarkdownViewer } from './MarkdownViewer';
+import { fetchPagePreview } from '../bridge/api';
 
 interface SplitPaneProps {
   job: ConversionJob | null;
@@ -21,6 +23,43 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [viewMode, setViewMode] = useState<'rendered' | 'raw'>('rendered');
   const [copied, setCopied] = useState<boolean>(false);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const markdownPaneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!job) return;
+    let active = true;
+    setLoadingPreview(true);
+
+    const targetFile = job.filePath || job.fileName;
+    fetchPagePreview(targetFile, currentPage)
+      .then((url) => {
+        if (active) {
+          setPreviewSrc(url);
+          setLoadingPreview(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load page preview:', err);
+        if (active) {
+          setLoadingPreview(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [job, currentPage]);
+
+  useEffect(() => {
+    if (markdownPaneRef.current) {
+      const anchor = markdownPaneRef.current.querySelector(`#page-anchor-${currentPage}`);
+      if (anchor) {
+        anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }, [currentPage]);
 
   if (!job) {
     return (
@@ -156,19 +195,24 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
             <span className="font-mono text-[10px] text-gray-500">Page {currentPage}</span>
           </div>
 
-          <div className="flex-1 overflow-auto p-4 flex items-center justify-center">
-            {activePage.previewUrl ? (
+          <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-gray-950/80">
+            {loadingPreview ? (
+              <div className="text-center text-gray-500 p-6 flex flex-col items-center">
+                <Loader2 className="w-8 h-8 text-purple-500 animate-spin mb-2" />
+                <p className="text-xs">Rasterizing Page {currentPage} Preview...</p>
+              </div>
+            ) : previewSrc || activePage.previewUrl ? (
               <img
-                src={activePage.previewUrl}
+                src={previewSrc || activePage.previewUrl}
                 alt={`Page ${currentPage}`}
-                className="max-h-full max-w-full object-contain rounded shadow-lg border border-gray-800"
+                className="max-h-full max-w-full object-contain rounded shadow-2xl border border-gray-800"
               />
             ) : (
               <div className="text-center text-gray-500 p-6">
                 <FileText className="w-12 h-12 text-gray-700 mx-auto mb-2" />
                 <p className="text-xs">Direct PDF canvas preview</p>
                 <p className="text-[11px] text-gray-600 mt-1">
-                  Rasterized at 300 DPI during pipeline processing
+                  Rasterized at 1.5× scale via hayro in-memory engine
                 </p>
               </div>
             )}
@@ -182,7 +226,7 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
             <span className="font-mono text-[10px] text-purple-400">LaTeX & Tables</span>
           </div>
 
-          <div className="flex-1 overflow-auto">
+          <div ref={markdownPaneRef} className="flex-1 overflow-auto">
             {viewMode === 'rendered' ? (
               <MarkdownViewer content={activePage.markdown} />
             ) : (

@@ -24,7 +24,9 @@ pub use batch::{
 pub use concurrency::resolve_concurrency;
 pub use config::AppConfig;
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
-pub use figure::{CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult};
+pub use figure::{
+    CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult, encode_image_to_base64_data_uri,
+};
 pub use markdown::{
     DocumentMetadata, PdfExtractionResult, attach_figures_to_page_text, compute_bytes_sha256,
     compute_file_sha256, convert_figure_links_to_obsidian, format_page_demarcation,

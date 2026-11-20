@@ -55,7 +55,7 @@ export interface BatchCompletionSummary {
 export interface AppConfigData {
   language: string;
   dom_extraction: 'auto' | 'always' | 'never';
-  image_format: 'jpeg' | 'png';
+  image_format: 'jpeg' | 'png' | 'webp';
   image_quality: number;
   embed_images_base64: boolean;
   extract_tables: boolean;

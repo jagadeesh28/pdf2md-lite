@@ -29,6 +29,70 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content }) => {
       }
     });
 
+    // 2.5 Page Demarcation Anchors: <!-- Page N -->
+    html = html.replace(
+      /<!-- Page (\d+) -->/g,
+      '<div id="page-anchor-$1" class="my-6 pt-2 border-b border-dashed border-gray-700/80 flex items-center justify-between">' +
+        '<span class="text-[10px] uppercase tracking-widest text-gray-500 font-mono">Page Demarcation</span>' +
+        '<span class="text-[10px] font-mono font-bold text-purple-400 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded shadow-sm">Page $1</span>' +
+      '</div>'
+    );
+
+    // 2.6 Render Obsidian Callouts (> [!type][+-]? Title)
+    html = html.replace(
+      /^>[ \t]*\[!([a-zA-Z0-9_-]+)\]([+-]?)(?:[ \t]+([^\n]*))?\n((?:>[ \t]*.*\n?)*)/gim,
+      (_match, rawType, collapse, title, body) => {
+        const type = rawType.toLowerCase();
+        const displayTitle = title?.trim() || type.toUpperCase();
+        const cleanBody = body
+          .split('\n')
+          .map((line: string) => line.replace(/^>[ \t]?/, ''))
+          .join('\n')
+          .trim();
+
+        const colorMap: Record<string, { border: string; bg: string; text: string; icon: string }> = {
+          note: { border: 'border-blue-500/60', bg: 'bg-blue-950/30', text: 'text-blue-300', icon: 'ℹ️' },
+          info: { border: 'border-cyan-500/60', bg: 'bg-cyan-950/30', text: 'text-cyan-300', icon: '💡' },
+          tip: { border: 'border-emerald-500/60', bg: 'bg-emerald-950/30', text: 'text-emerald-300', icon: '🔥' },
+          important: { border: 'border-indigo-500/60', bg: 'bg-indigo-950/30', text: 'text-indigo-300', icon: '⚡' },
+          warning: { border: 'border-amber-500/60', bg: 'bg-amber-950/30', text: 'text-amber-300', icon: '⚠️' },
+          caution: { border: 'border-amber-600/60', bg: 'bg-amber-950/40', text: 'text-amber-400', icon: '🛑' },
+          danger: { border: 'border-red-500/60', bg: 'bg-red-950/40', text: 'text-red-300', icon: '🚨' },
+          error: { border: 'border-red-600/60', bg: 'bg-red-950/50', text: 'text-red-400', icon: '❌' },
+          table: { border: 'border-teal-500/60', bg: 'bg-teal-950/30', text: 'text-teal-300', icon: '📊' },
+          figure: { border: 'border-purple-500/60', bg: 'bg-purple-950/30', text: 'text-purple-300', icon: '🖼️' },
+        };
+
+        const theme = colorMap[type] || {
+          border: 'border-purple-500/60',
+          bg: 'bg-gray-850/60',
+          text: 'text-purple-300',
+          icon: '📝',
+        };
+
+        const isCollapsible = collapse === '-' || collapse === '+';
+        const defaultOpen = collapse !== '-';
+
+        if (isCollapsible) {
+          return `<details ${defaultOpen ? 'open' : ''} class="my-4 rounded-lg border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
+            <summary class="font-bold cursor-pointer select-none ${theme.text} flex items-center space-x-2">
+              <span>${theme.icon}</span>
+              <span>${displayTitle}</span>
+            </summary>
+            <div class="mt-2 text-gray-200 leading-relaxed border-t border-gray-800/80 pt-2">${cleanBody}</div>
+          </details>`;
+        }
+
+        return `<div class="my-4 rounded-lg border-l-4 border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
+          <div class="font-bold ${theme.text} flex items-center space-x-2 mb-1.5">
+            <span>${theme.icon}</span>
+            <span>${displayTitle}</span>
+          </div>
+          <div class="text-gray-200 leading-relaxed">${cleanBody}</div>
+        </div>`;
+      }
+    );
+
     // 3. Render code blocks ```...```
     html = html.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_match, lang, code) => {
       return `<pre class="bg-gray-800 text-gray-200 p-4 rounded-lg my-3 overflow-x-auto text-sm font-mono border border-gray-700"><code class="language-${lang}">${escapeHtml(
@@ -77,8 +141,12 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content }) => {
     html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold text-gray-100 border-b border-gray-800 pb-1 mt-6 mb-3">$1</h2>');
     html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-extrabold text-white mt-8 mb-4">$1</h1>');
 
-    // 6. Obsidian and Markdown images
+    // 6. Obsidian and Markdown images & Wikilinks
     html = html.replace(/!\[\[(.*?)\]\]/g, '<div class="my-3 p-3 bg-gray-800/60 rounded border border-gray-700 text-sm text-purple-300">🖼️ Image: $1</div>');
+    html = html.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
+      const label = alias?.trim() || target.trim();
+      return `<span class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-xs font-medium bg-purple-950/50 text-purple-300 hover:text-purple-200 border border-purple-700/50 cursor-pointer transition-colors" title="Wikilink to: ${target.trim()}"><span>🔗</span><span>${label}</span></span>`;
+    });
     html = html.replace(/!\[(.*?)\]\((.*?)\)/g, (_match, alt, src) => {
       return `<figure class="my-4 text-center">
         <img src="${src}" alt="${alt}" class="max-w-full h-auto rounded border border-gray-700 mx-auto shadow-md" />

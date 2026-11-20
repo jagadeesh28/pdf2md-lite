@@ -212,7 +212,13 @@ impl ProgressEmitter for TauriProgressEmitter {
             },
         );
     }
+
+    fn is_cancelled(&self) -> bool {
+        CANCEL_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
+
+static CANCEL_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     let dom_mode = match config.dom_extraction.as_deref() {
@@ -223,6 +229,7 @@ fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     ImageOptions {
         format: match config.image_format.as_deref() {
             Some("png") => ImageFormat::Png,
+            Some("webp") => ImageFormat::Webp,
             _ => ImageFormat::Jpeg,
         },
         quality: config.image_quality.unwrap_or(85),
@@ -419,8 +426,19 @@ async fn start_conversion(
         let mut errors = 0;
         let batch_start = Instant::now();
 
+        CANCEL_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
         let run_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             for file in &files {
+                if CANCEL_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = app_handle.emit(
+                        "conversion-progress",
+                        DesktopProgressEvent::Log {
+                            level: "warn".to_string(),
+                            message: "Batch conversion halted due to cancellation request.".to_string(),
+                        },
+                    );
+                    break;
+                }
                 let path_opt = resolve_document_path(file);
                 let path_ref = path_opt.as_deref().unwrap_or_else(|| Path::new(file));
                 let raw_slug = path_ref
@@ -744,6 +762,26 @@ async fn download_models() -> Result<serde_json::Value, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn cancel_conversion() -> Result<(), String> {
+    CANCEL_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_page_preview(file_path: String, page: usize) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = PathBuf::from(&file_path);
+        let resolved = resolve_document_path(&file_path).unwrap_or(path);
+        let dynamic_img = pdfmd_lite::pdf::render_single_page_image(&resolved, page.max(1), 1.5)
+            .map_err(|e| format!("Failed to render page: {e:#}"))?;
+        pdfmd_lite::encode_image_to_base64_data_uri(&dynamic_img, ImageFormat::Jpeg, 85)
+            .map_err(|e| format!("Failed to encode data URI: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         let msg = match info.payload().downcast_ref::<&str>() {
@@ -778,6 +816,8 @@ fn main() {
             save_config,
             dry_run,
             start_conversion,
+            cancel_conversion,
+            get_page_preview,
             pick_files,
             pick_folder,
             open_output_folder,

@@ -394,6 +394,9 @@ pub fn process_pdf_full_with_emitter(
         image_opts,
         |page_num, page_md| {
             if let Some(em) = emitter {
+                if em.is_cancelled() {
+                    return Err(anyhow::anyhow!("Operation cancelled by user"));
+                }
                 em.on_page_complete(&short_slug, page_num, total_pages_in_doc);
             }
             // For the first processed page, if metadata fields are still missing (e.g. scanned PDF where

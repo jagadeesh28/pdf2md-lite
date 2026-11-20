@@ -4501,6 +4501,7 @@ dependencies = [
  "anyhow",
  "axum",
  "futures",
+ "image",
  "pdfmd-lite",
  "serde",
  "serde_json",

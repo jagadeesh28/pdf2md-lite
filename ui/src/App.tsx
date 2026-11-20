@@ -23,6 +23,7 @@ import {
   convertPngToJpeg,
   embedVault,
   defaultConfig,
+  cancelConversion,
   onNativeFileDrop,
   openFolderInExplorer,
 } from './bridge/api';
@@ -198,9 +199,10 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleStopConversion = () => {
+  const handleStopConversion = async () => {
     setIsRunning(false);
-    addLog('warn', 'Conversion stopped by user.');
+    addLog('warn', 'Halting conversion. Notifying backend cancellation token...');
+    await cancelConversion();
   };
 
   const handleDryRun = async () => {

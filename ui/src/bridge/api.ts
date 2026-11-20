@@ -297,3 +297,34 @@ export function onNativeFileDrop(callback: (paths: string[]) => void): () => voi
   }
   return () => {};
 }
+
+export async function cancelConversion(): Promise<void> {
+  if (isTauri()) {
+    try {
+      await invoke('cancel_conversion');
+      return;
+    } catch (err) {
+      console.warn('Tauri cancel_conversion error:', err);
+    }
+  }
+  try {
+    await fetch('/api/cancel', { method: 'POST' });
+  } catch (err) {
+    console.warn('Web daemon cancel error:', err);
+  }
+}
+
+export async function fetchPagePreview(filePath: string, pageNumber: number): Promise<string> {
+  if (isTauri()) {
+    try {
+      const dataUri = await invoke<string>('get_page_preview', {
+        filePath,
+        page: pageNumber,
+      });
+      if (dataUri) return dataUri;
+    } catch (err) {
+      console.warn('Tauri get_page_preview error:', err);
+    }
+  }
+  return `/api/page-preview?slug=${encodeURIComponent(filePath)}&page=${pageNumber}`;
+}

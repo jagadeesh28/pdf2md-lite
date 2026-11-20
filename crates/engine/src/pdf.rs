@@ -136,6 +136,49 @@ pub fn stream_rendered_pages(
     Ok(())
 }
 
+/// Renders a single page of a PDF document directly into an in-memory `DynamicImage` (RGBA8)
+/// at the specified scale factor without intermediate disk writes (ADR 0013 & ADR 0015).
+pub fn render_single_page_image(
+    pdf_path: &Path,
+    page_num: usize,
+    scale: f32,
+) -> Result<image::DynamicImage> {
+    let pdf_bytes = fs::read(pdf_path)
+        .with_context(|| format!("failed to read PDF for rendering: {}", pdf_path.display()))?;
+    let document = Pdf::new(pdf_bytes).map_err(|error| {
+        anyhow!(
+            "failed to parse PDF for rendering {}: {error:?}",
+            pdf_path.display()
+        )
+    })?;
+
+    let total_pages = document.pages().len();
+    if page_num == 0 || page_num > total_pages {
+        return Err(anyhow!(
+            "page {page_num} is outside document's {total_pages} pages"
+        ));
+    }
+
+    let page = &document.pages()[page_num - 1];
+    let cache = hayro::RenderCache::new();
+    let interpreter_settings = InterpreterSettings::default();
+    let render_settings = hayro::RenderSettings::default();
+    let pixmap_settings = hayro::PixmapSettings {
+        x_scale: scale.max(0.5),
+        y_scale: scale.max(0.5),
+        bg_color: hayro::vello_cpu::color::palette::css::WHITE,
+    };
+
+    let pixmap = hayro::render(
+        page,
+        &cache,
+        &interpreter_settings,
+        &render_settings,
+        &pixmap_settings,
+    );
+    Ok(pixmap_to_dynamic_image(&pixmap))
+}
+
 /// Renders PDF pages into PNG images within a `pages` directory under `temp_dir`.
 pub fn render_pages_to_images(
     pdf_path: &Path,

@@ -107,14 +107,55 @@ pub struct ServerProgressState {
     pub rolling_history: VecDeque<(Instant, usize)>,
 }
 
+/// An LRU In-Memory Ring Buffer holding rendered source PDF page previews (ADR 0015).
+#[derive(Default)]
+pub struct PagePreviewCache {
+    entries: std::collections::HashMap<(String, usize), Vec<u8>>,
+    order: VecDeque<(String, usize)>,
+    capacity: usize,
+}
+
+impl PagePreviewCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            order: VecDeque::with_capacity(capacity),
+            capacity: capacity.max(5),
+        }
+    }
+
+    pub fn get(&self, key: &(String, usize)) -> Option<Vec<u8>> {
+        self.entries.get(key).cloned()
+    }
+
+    pub fn insert(&mut self, key: (String, usize), data: Vec<u8>) {
+        if let std::collections::hash_map::Entry::Occupied(mut e) = self.entries.entry(key.clone()) {
+            e.insert(data);
+            return;
+        }
+        if self.entries.len() >= self.capacity
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.entries.remove(&oldest);
+        }
+        self.order.push_back(key.clone());
+        self.entries.insert(key, data);
+    }
+}
+
 /// A `ProgressEmitter` implementation that broadcasts events over a Tokio channel.
 pub struct BroadcastProgressEmitter {
     tx: broadcast::Sender<ProgressEvent>,
     state: Mutex<ServerProgressState>,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl BroadcastProgressEmitter {
-    pub fn new(tx: broadcast::Sender<ProgressEvent>, total_pages: usize) -> Self {
+    pub fn new(
+        tx: broadcast::Sender<ProgressEvent>,
+        total_pages: usize,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             tx,
             state: Mutex::new(ServerProgressState {
@@ -123,6 +164,7 @@ impl BroadcastProgressEmitter {
                 completed_pages: 0,
                 rolling_history: VecDeque::with_capacity(64),
             }),
+            cancel_flag,
         }
     }
 }
@@ -221,6 +263,10 @@ impl ProgressEmitter for BroadcastProgressEmitter {
             message: message.to_string(),
         });
     }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel_flag.load(Ordering::SeqCst)
+    }
 }
 
 /// Shared application state for Axum web handlers.
@@ -228,6 +274,8 @@ impl ProgressEmitter for BroadcastProgressEmitter {
 pub struct AppState {
     pub event_tx: broadcast::Sender<ProgressEvent>,
     pub is_running: Arc<AtomicBool>,
+    pub cancel_requested: Arc<AtomicBool>,
+    pub preview_cache: Arc<Mutex<PagePreviewCache>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +328,7 @@ fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     ImageOptions {
         format: match config.image_format.as_deref() {
             Some("png") => ImageFormat::Png,
+            Some("webp") => ImageFormat::Webp,
             _ => ImageFormat::Jpeg,
         },
         quality: config.image_quality.unwrap_or(85),
@@ -348,6 +397,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/embed-vault", post(embed_vault_handler))
         .route("/download-models", post(download_models_handler))
         .route("/upload", post(upload_handler))
+        .route("/page-preview", get(page_preview_handler))
+        .route("/cancel", post(cancel_handler))
         .route("/events", get(ws_handler))
         .with_state(state);
 
@@ -369,6 +420,8 @@ pub async fn start_server(bind_addr: &str) -> Result<()> {
     let state = AppState {
         event_tx,
         is_running: Arc::new(AtomicBool::new(false)),
+        cancel_requested: Arc::new(AtomicBool::new(false)),
+        preview_cache: Arc::new(Mutex::new(PagePreviewCache::new(30))),
     };
 
     let router = create_router(state);
@@ -477,6 +530,8 @@ async fn convert_handler(
     }
 
     let is_running = state.is_running.clone();
+    let cancel_requested = state.cancel_requested.clone();
+    cancel_requested.store(false, Ordering::SeqCst);
     let event_tx = state.event_tx.clone();
 
     tokio::task::spawn_blocking(move || {
@@ -516,6 +571,7 @@ async fn convert_handler(
         let emitter = std::sync::Arc::new(BroadcastProgressEmitter::new(
             event_tx.clone(),
             total_batch_pages,
+            cancel_requested.clone(),
         ));
 
         let _ = event_tx.send(ProgressEvent::Log {
@@ -532,6 +588,13 @@ async fn convert_handler(
         let batch_start = Instant::now();
 
         for file in &req.files {
+            if cancel_requested.load(Ordering::SeqCst) {
+                let _ = event_tx.send(ProgressEvent::Log {
+                    level: "warn".to_string(),
+                    message: "Batch conversion halted due to cancellation request.".to_string(),
+                });
+                break;
+            }
             let path_opt = resolve_document_path(file);
             let path_ref = path_opt.as_deref().unwrap_or_else(|| Path::new(file));
             let raw_slug = path_ref
@@ -639,6 +702,7 @@ async fn convert_handler(
             output_dir: Some(out_dir.to_string_lossy().to_string()),
         });
         is_running.store(false, Ordering::SeqCst);
+        cancel_requested.store(false, Ordering::SeqCst);
     });
 
     Ok(StatusCode::ACCEPTED)
@@ -783,16 +847,40 @@ async fn upload_handler(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
     {
-        let file_name = field
+        let raw_name = field
             .file_name()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "upload.pdf".to_string());
+
+        // Sandboxed Upload Guard: Sanitize filename to eliminate path-traversal risk
+        let file_stem = Path::new(&raw_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("document.pdf");
+        let sanitized_name: String = file_stem
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+            .collect();
+        let sanitized_name = if sanitized_name.is_empty() {
+            "document.pdf".to_string()
+        } else {
+            sanitized_name
+        };
+
         let data = field
             .bytes()
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let dest_path = upload_dir.join(&file_name);
+        // Sandboxed Upload Guard: Validate %PDF magic bytes
+        if !data.starts_with(b"%PDF-") {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("File '{sanitized_name}' rejected: missing %PDF- magic bytes header"),
+            ));
+        }
+
+        let dest_path = upload_dir.join(&sanitized_name);
         tokio::fs::write(&dest_path, data)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -803,6 +891,96 @@ async fn upload_handler(
     Ok(Json(serde_json::json!({
         "files": saved_paths
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PagePreviewQuery {
+    pub slug: Option<String>,
+    pub file: Option<String>,
+    pub page: usize,
+}
+
+async fn page_preview_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<PagePreviewQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let doc_identifier = query.slug.or(query.file).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Missing 'slug' or 'file' query parameter".to_string(),
+        )
+    })?;
+    let page_num = query.page.max(1);
+
+    // 1. Check in-memory LRU ring buffer
+    let cache_key = (doc_identifier.clone(), page_num);
+    {
+        let cache = state.preview_cache.lock().unwrap();
+        if let Some(bytes) = cache.get(&cache_key) {
+            return Ok((
+                [(axum::http::header::CONTENT_TYPE, "image/jpeg")],
+                bytes,
+            ));
+        }
+    }
+
+    // 2. Resolve document filesystem path
+    let doc_path = resolve_document_path(&doc_identifier).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Document '{doc_identifier}' not found"),
+        )
+    })?;
+
+    // 3. Render page in memory via hayro (scale 1.5 for crisp preview without excessive RAM)
+    let dynamic_img = tokio::task::spawn_blocking(move || {
+        pdfmd_lite::pdf::render_single_page_image(&doc_path, page_num, 1.5)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to render page preview: {e:#}"),
+        )
+    })?;
+
+    // 4. Encode to JPEG in memory
+    let mut jpeg_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+    dynamic_img
+        .to_rgb8()
+        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to encode JPEG preview: {e:#}"),
+            )
+        })?;
+
+    // 5. Store in LRU cache
+    {
+        let mut cache = state.preview_cache.lock().unwrap();
+        cache.insert(cache_key, jpeg_bytes.clone());
+    }
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "image/jpeg")],
+        jpeg_bytes,
+    ))
+}
+
+async fn cancel_handler(State(state): State<AppState>) -> StatusCode {
+    if state.is_running.load(Ordering::SeqCst) {
+        state.cancel_requested.store(true, Ordering::SeqCst);
+        let _ = state.event_tx.send(ProgressEvent::Log {
+            level: "warn".to_string(),
+            message: "Cancellation signal received. Halting batch execution...".to_string(),
+        });
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
