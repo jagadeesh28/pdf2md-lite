@@ -8,7 +8,9 @@ use image::{DynamicImage, GenericImageView};
 #[cfg(feature = "slanet-ort")]
 use std::path::Path;
 #[cfg(feature = "slanet-ort")]
-use std::sync::{Arc, Mutex};
+use crate::figure::session_pool::SessionPool;
+#[cfg(feature = "slanet-ort")]
+use std::sync::Arc;
 
 /// A recognized table cell with spatial coordinates and text.
 #[derive(Debug, Clone)]
@@ -19,7 +21,7 @@ pub struct TableCell {
 
 #[cfg(feature = "slanet-ort")]
 pub struct SlaNetEngine {
-    session: Mutex<ort::session::Session>,
+    session_pool: SessionPool<ort::session::Session>,
     vocab: Vec<String>,
 }
 
@@ -64,12 +66,18 @@ impl SlaNetEngine {
     pub fn new<P: AsRef<Path>>(model_path: P, dict_path: P) -> anyhow::Result<Self> {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
-        let session = ort::session::Session::builder(&env)
-            .map_err(|e| anyhow::anyhow!("Failed to create session builder: {e}"))?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow::anyhow!("Failed to set optimization level: {e}"))?
-            .commit_from_file(model_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to commit model from file: {e}"))?;
+        let create_session = || -> anyhow::Result<ort::session::Session> {
+            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), false)?;
+            builder
+                .commit_from_file(model_path.as_ref())
+                .map_err(|e| anyhow::anyhow!("Failed to commit SLANet model from file: {e}"))
+        };
+
+        // Bounded session pool: provision 2 sessions to allow concurrent page execution without mutex contention
+        let mut sessions = vec![create_session()?];
+        if let Ok(second) = create_session() {
+            sessions.push(second);
+        }
 
         let dict_content = std::fs::read_to_string(dict_path.as_ref())?;
         let mut vocab = Vec::new();
@@ -81,7 +89,7 @@ impl SlaNetEngine {
         vocab.push("eos".to_string());
 
         Ok(Self {
-            session: Mutex::new(session),
+            session_pool: SessionPool::new(sessions),
             vocab,
         })
     }
@@ -125,10 +133,7 @@ impl SlaNetEngine {
             input_tensor.into_boxed_slice(),
         ))?;
         let inputs = ort::inputs!["x" => tensor];
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|e| anyhow::anyhow!("SLANet mutex poisoned: {e}"))?;
+        let mut session = self.session_pool.acquire()?;
         let outputs = session.run(inputs)?;
 
         // Output 0: loc_preds [1, seq_len, 4]

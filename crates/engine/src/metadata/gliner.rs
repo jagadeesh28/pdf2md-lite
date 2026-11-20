@@ -72,10 +72,7 @@ impl GlinerEngine {
     pub fn new<P: AsRef<Path>>(model_path: P) -> anyhow::Result<Self> {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
-        let session = ort::session::Session::builder(&env)
-            .map_err(|e| anyhow::anyhow!("Failed to create GLiNER session builder: {e}"))?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow::anyhow!("Failed to set GLiNER optimization level: {e}"))?
+        let session = crate::figure::models::create_optimized_session_builder(&env, Some(1), true)?
             .commit_from_file(model_path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to load GLiNER model: {e}"))?;
 

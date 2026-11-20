@@ -360,8 +360,10 @@ fn decode_pdf_string(obj: &lopdf::Object) -> Option<String> {
         lopdf::Object::String(bytes, _) => {
             if bytes.starts_with(&[0xfe, 0xff]) {
                 let u16_chars: Vec<u16> = bytes[2..]
-                    .chunks_exact(2)
-                    .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|chunk| u16::from_be_bytes(*chunk))
                     .collect();
                 Some(String::from_utf16_lossy(&u16_chars).trim().to_string())
             } else {
@@ -440,11 +442,7 @@ pub fn can_use_hybrid_dom(doc: &lopdf::Document, page_num: usize, mode: DomExtra
 
             // Verify content stream exists and is non-empty
             let content_bytes = doc.get_page_content(page_id);
-            if content_bytes.is_empty() {
-                return false;
-            }
-
-            true
+            !content_bytes.is_empty()
         }
     }
 }
@@ -499,8 +497,10 @@ fn is_box_overlapping(a: &TextBoundingBox, b: &FigureRect) -> bool {
 fn decode_bytes_to_string(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xfe, 0xff]) {
         let u16_chars: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_be_bytes(*chunk))
             .collect();
         String::from_utf16_lossy(&u16_chars)
     } else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {

@@ -8,12 +8,14 @@ use std::collections::HashMap;
 #[cfg(feature = "latex-ort")]
 use std::path::Path;
 #[cfg(feature = "latex-ort")]
-use std::sync::{Arc, Mutex};
+use crate::figure::session_pool::SessionPool;
+#[cfg(feature = "latex-ort")]
+use std::sync::Arc;
 
 #[cfg(feature = "latex-ort")]
 pub struct RapidLatexEngine {
-    encoder: Mutex<ort::session::Session>,
-    decoder: Mutex<ort::session::Session>,
+    encoder_pool: SessionPool<ort::session::Session>,
+    decoder_pool: SessionPool<ort::session::Session>,
     vocab: HashMap<i64, String>,
 }
 
@@ -66,19 +68,30 @@ impl RapidLatexEngine {
     ) -> anyhow::Result<Self> {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
-        let encoder = ort::session::Session::builder(&env)
-            .map_err(|e| anyhow::anyhow!("Failed to create encoder session builder: {e}"))?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow::anyhow!("Failed to set encoder optimization level: {e}"))?
-            .commit_from_file(encoder_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to load encoder model: {e}"))?;
+        let create_encoder = || -> anyhow::Result<ort::session::Session> {
+            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
+            builder
+                .commit_from_file(encoder_path.as_ref())
+                .map_err(|e| anyhow::anyhow!("Failed to load encoder model: {e}"))
+        };
 
-        let decoder = ort::session::Session::builder(&env)
-            .map_err(|e| anyhow::anyhow!("Failed to create decoder session builder: {e}"))?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow::anyhow!("Failed to set decoder optimization level: {e}"))?
-            .commit_from_file(decoder_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to load decoder model: {e}"))?;
+        let create_decoder = || -> anyhow::Result<ort::session::Session> {
+            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
+            builder
+                .commit_from_file(decoder_path.as_ref())
+                .map_err(|e| anyhow::anyhow!("Failed to load decoder model: {e}"))
+        };
+
+        // Bounded session pool: provision 2 sessions to allow concurrent page execution without mutex contention
+        let mut encoders = vec![create_encoder()?];
+        if let Ok(second_enc) = create_encoder() {
+            encoders.push(second_enc);
+        }
+
+        let mut decoders = vec![create_decoder()?];
+        if let Ok(second_dec) = create_decoder() {
+            decoders.push(second_dec);
+        }
 
         let tok_str = std::fs::read_to_string(tokenizer_path.as_ref())?;
         let tok_json: serde_json::Value = serde_json::from_str(&tok_str)?;
@@ -97,8 +110,8 @@ impl RapidLatexEngine {
         }
 
         Ok(Self {
-            encoder: Mutex::new(encoder),
-            decoder: Mutex::new(decoder),
+            encoder_pool: SessionPool::new(encoders),
+            decoder_pool: SessionPool::new(decoders),
             vocab,
         })
     }
@@ -182,10 +195,7 @@ impl RapidLatexEngine {
                 tensor_buf.into_boxed_slice(),
             ))?;
             let enc_inputs = ort::inputs!["input" => enc_input];
-            let mut encoder_session = self
-                .encoder
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Encoder mutex poisoned: {e}"))?;
+            let mut encoder_session = self.encoder_pool.acquire()?;
             let enc_outputs = encoder_session.run(enc_inputs)?;
 
             let (ctx_shape, ctx_slice) = enc_outputs[0]
@@ -226,14 +236,11 @@ impl RapidLatexEngine {
                 "context" => ctx_tensor
             ];
 
-            // Fine-grained mutex lock: scoped strictly to the single ~1-2ms ONNX evaluation step (ADR 0011).
-            // This prevents holding the lock across the full 128-iteration loop, allowing other worker threads
-            // to interleave decoding steps concurrently with zero extra RAM.
+            // Fine-grained session pool checkout: scoped strictly to the single ~1-2ms ONNX evaluation step (ADRs 0011 & 0015).
+            // This prevents holding a session across the full 128-iteration loop, allowing other worker threads
+            // to interleave decoding steps concurrently with zero contention.
             let step_logits = {
-                let mut decoder_session = self
-                    .decoder
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("Decoder mutex poisoned: {e}"))?;
+                let mut decoder_session = self.decoder_pool.acquire()?;
                 let dec_outputs = decoder_session.run(dec_inputs)?;
                 let (out_shape, logits_slice) = dec_outputs[0]
                     .try_extract_tensor::<f32>()

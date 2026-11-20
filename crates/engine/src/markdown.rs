@@ -1249,17 +1249,12 @@ fn is_display_equation_line(line: &str) -> bool {
         }
     }
 
-    if has_latex_math
+    has_latex_math
         && (trimmed.contains(r"\frac")
             || trimmed.contains(r"\sum")
             || trimmed.contains(r"\int")
             || trimmed.contains(r"\sqrt"))
         && prose_word_count == 0
-    {
-        return true;
-    }
-
-    false
 }
 
 /// Returns true if the text looks like an ordinary prose sentence rather than a mathematical formula.
@@ -1327,12 +1322,7 @@ pub fn is_likely_prose_sentence(text: &str) -> bool {
         "enthalpy",
         "dimensionless",
     ];
-    let has_sentence_marker = words.iter().any(|&w| sentence_markers.contains(&w));
-    if has_sentence_marker {
-        return true;
-    }
-
-    false
+    words.iter().any(|&w| sentence_markers.contains(&w))
 }
 
 /// Returns true if a formula candidate represents an inline formula or short token rather than a display equation block.

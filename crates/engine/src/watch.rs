@@ -28,15 +28,10 @@ pub fn is_candidate_pdf(path: &Path) -> bool {
     };
 
     // Filter out temporary files created by editors, downloaders, or OS
-    if filename.starts_with('.')
+    !(filename.starts_with('.')
         || filename.starts_with("~$")
         || filename.ends_with(".tmp")
-        || filename.ends_with(".crdownload")
-    {
-        return false;
-    }
-
-    true
+        || filename.ends_with(".crdownload"))
 }
 
 /// Computes the target Markdown file path in the output directory, preserving

@@ -2,6 +2,7 @@ pub mod caption;
 pub mod latex;
 pub mod models;
 pub mod pdf_stream;
+pub mod session_pool;
 pub mod slanet;
 pub mod table;
 pub mod yolo;
@@ -100,7 +101,7 @@ pub fn flatten_to_rgb(img: &DynamicImage) -> image::RgbImage {
             let (w, h) = rgba.dimensions();
             let rgba_raw = rgba.into_raw();
             let mut rgb_raw = vec![0u8; (w as usize) * (h as usize) * 3];
-            for (dst_chunk, src_chunk) in rgb_raw.chunks_exact_mut(3).zip(rgba_raw.chunks(4)) {
+            for (dst_chunk, src_chunk) in rgb_raw.as_chunks_mut::<3>().0.iter_mut().zip(rgba_raw.chunks(4)) {
                 let alpha = src_chunk[3] as f32 / 255.0;
                 dst_chunk[0] =
                     ((src_chunk[0] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;

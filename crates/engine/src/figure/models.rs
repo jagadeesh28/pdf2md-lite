@@ -48,6 +48,43 @@ pub fn get_shared_ort_environment() -> anyhow::Result<std::sync::Arc<ort::enviro
     Ok(arc)
 }
 
+/// Configures and returns an optimized ONNX Runtime SessionBuilder configured with
+/// `GraphOptimizationLevel::Level3`, explicit thread budgeting, and
+/// DirectML hardware acceleration on Windows with automatic zero-failure fallback to CPU.
+#[cfg(any(
+    feature = "slanet-ort",
+    feature = "latex-ort",
+    feature = "gliner-ort",
+    feature = "ort"
+))]
+pub fn create_optimized_session_builder(
+    env: &std::sync::Arc<ort::environment::Environment>,
+    intra_threads: Option<usize>,
+    allow_directml: bool,
+) -> anyhow::Result<ort::session::builder::SessionBuilder> {
+    let mut builder = ort::session::Session::builder(env)
+        .map_err(|e| anyhow::anyhow!("Failed to create ORT session builder: {e}"))?
+        .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+        .map_err(|e| anyhow::anyhow!("Failed to set ORT optimization level Level3: {e}"))?
+        .with_inter_threads(1)
+        .map_err(|e| anyhow::anyhow!("Failed to set ORT inter_threads: {e}"))?;
+
+    let intra = intra_threads.unwrap_or(2);
+    builder = builder
+        .with_intra_threads(intra)
+        .map_err(|e| anyhow::anyhow!("Failed to set ORT intra_threads ({intra}): {e}"))?;
+
+    #[cfg(all(target_os = "windows", feature = "directml"))]
+    if allow_directml {
+        // DirectML acceleration with automatic silent fallback to CPU
+        builder = builder
+            .with_execution_providers([ort::ep::DirectML::default().build().fail_silently()])
+            .map_err(|e| anyhow::anyhow!("Failed to configure DirectML execution provider: {e}"))?;
+    }
+
+    Ok(builder)
+}
+
 /// Sets a global custom weights path for the YOLO Document Layout Engine.
 pub fn set_custom_layout_path(path: PathBuf) {
     if let Ok(mut lock) = CUSTOM_LAYOUT_PATH.write() {

@@ -52,10 +52,7 @@ impl EmbeddingEngine {
         #[cfg(feature = "ort")]
         let session = {
             let env = crate::figure::models::get_shared_ort_environment()?;
-            let s = Session::builder(&env)
-                .map_err(|e| anyhow::anyhow!("Failed to create embedding session builder: {e}"))?
-                .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)
-                .map_err(|e| anyhow::anyhow!("Failed to set embedding optimization level: {e}"))?
+            let s = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?
                 .commit_from_file(&model_path)
                 .map_err(|e| {
                     anyhow::anyhow!(
