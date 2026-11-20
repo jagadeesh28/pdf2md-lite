@@ -168,3 +168,32 @@ _Avoid_: Hardcoded model path, CARGO_MANIFEST_DIR loader, ambient directory sear
 **Conversion Options**:
 A consolidated pipeline configuration structure encapsulating hardware concurrency limits, language script selections, layout and image configurations, DOM extraction gating, and model paths into an immutable execution contract.
 _Avoid_: Parameter soup, sprawling wrapper arguments, scattered configuration flags
+
+**Accelerated Execution Provider**:
+A runtime hardware dispatch layer within the ONNX Runtime engine that routes neural tensor evaluation across DirectX 12 DirectML (GPU/NPU) and optimized CPU backends with automatic zero-failure fallback.
+_Avoid_: Hardcoded CUDA backend, GPU-only dependency, manual device selector
+
+**Source Canvas Streaming**:
+An on-demand image delivery channel serving rendered PDF page rasters from memory to the desktop Split-Pane Inspector and web clients via typed IPC commands and HTTP endpoints without temporary disk spooling.
+_Avoid_: Client-side PDF.js rendering, disk-spooled preview cache, standalone PDF viewer
+
+**Bounded Session Pool**:
+An in-process concurrency structure maintaining a bounded queue of pre-allocated neural model sessions checked out by worker threads during inference to eliminate global mutex serialization.
+_Avoid_: Global session mutex, per-thread session clone, unconstrained session pool
+
+**LRU Page Raster Cache**:
+A fixed-capacity in-memory ring buffer storing the most recently rendered 150 DPI page JPEG rasters for instant Split-Pane Inspector preview with lazy re-rendering fallback for evicted pages.
+_Avoid_: Full-document raster cache, disk preview directory, detached PDF viewer
+
+**Sandboxed Upload Guard**:
+A temporary file management layer that isolates uploaded documents into UUID-named sandboxes, validates PDF magic bytes, and automatically purges files upon job completion.
+_Avoid_: Raw filename upload, persistent temp directory, memory-only PDF buffer
+
+**Page-Demarcation Synchronization**:
+A bidirectional scroll-coupling mechanism in the Split-Pane Inspector that pairs rendered PDF canvas pages with output Markdown `<!-- Page N -->` anchors.
+_Avoid_: Uncoupled viewer, manual page scroller, detached editor
+
+**Companion HTML Table Callout**:
+An extended Obsidian Markdown callout embedding both the visual table crop and an exact HTML `<table>` with `rowspan`/`colspan` attributes to preserve complex merged cell geometry alongside clean GFM tables.
+_Avoid_: Raw HTML markdown dump, flattened table text, stripped merged cells
+

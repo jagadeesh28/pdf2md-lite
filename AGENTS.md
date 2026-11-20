@@ -62,6 +62,8 @@ Consult individual ADRs only when working within that specific subsystem:
 - **Baseline-Aware Hybrid DOM Extraction**: [ADR 0012](./docs/adr/0012-baseline-aware-hybrid-dom-extraction.md)
 - **Unified Desktop & Web Server Shell**: [ADR 0013](./docs/adr/0013-tauri-axum-unified-desktop-web-architecture.md)
 - **Cascading Model Locator & Zero-Copy Provisioning**: [ADR 0014](./docs/adr/0014-cascading-model-locator.md)
+- **Hybrid Dual-Runtime & DirectML Acceleration**: [ADR 0015](./docs/adr/0015-hybrid-dual-runtime-and-directml-acceleration.md)
+- **Hybrid Table Serialization & Span Reconstruction**: [ADR 0016](./docs/adr/0016-hybrid-table-serialization-and-span-reconstruction.md)
 
 *For historical implementation milestones, tasks, and verifications across Phases 0–5, refer to [`implementedphases.md`](./implementedphases.md).*
 
