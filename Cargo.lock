@@ -4472,7 +4472,6 @@ dependencies = [
  "pdfmd-lite-server",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

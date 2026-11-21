@@ -236,8 +236,38 @@ impl IndraEngine {
                     }
                 }
             }
-            IndraScript::Telugu | IndraScript::World | IndraScript::Auto => {
-                // Per-line recognition required for script selection / masking.
+            IndraScript::Telugu | IndraScript::World => {
+                // Batched World/Indic inference: routes non-Latin documents through
+                // multi-line bucketed plans, eliminating per-line dispatch serialization (P1 recommendation).
+                if let Some(ref world_rec) = self.world_recognizer {
+                    let mask = if script == IndraScript::Telugu {
+                        self.telugu_mask.as_deref()
+                    } else {
+                        None
+                    };
+                    let batch_results = world_rec.recognize_lines_batch(gray, &boxes, mask)?;
+                    for (bbox, (text, _conf)) in boxes.iter().zip(batch_results.iter()) {
+                        if !text.trim().is_empty() {
+                            recognized_lines.push(TextLine {
+                                bbox: *bbox,
+                                text: text.clone(),
+                            });
+                        }
+                    }
+                } else {
+                    let batch_results = self.recognizer.recognize_lines_batch(gray, &boxes, None)?;
+                    for (bbox, (text, _conf)) in boxes.iter().zip(batch_results.iter()) {
+                        if !text.trim().is_empty() {
+                            recognized_lines.push(TextLine {
+                                bbox: *bbox,
+                                text: text.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            IndraScript::Auto => {
+                // Per-line recognition for Auto script selection and dynamic script masking.
                 for bbox in boxes {
                     let (text, _conf) = self.transcribe_line(gray, &bbox, script)?;
 
