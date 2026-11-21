@@ -240,8 +240,8 @@ static CANCEL_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     let dom_mode = match config.dom_extraction.as_deref() {
         Some("always") => DomExtractionMode::Always,
-        Some("never") => DomExtractionMode::Never,
-        _ => DomExtractionMode::Auto,
+        Some("auto") => DomExtractionMode::Auto,
+        _ => DomExtractionMode::Never,
     };
     ImageOptions {
         format: match config.image_format.as_deref() {
@@ -374,7 +374,7 @@ fn get_config() -> Result<AppConfig, String> {
         config.language = Some("en".to_string());
     }
     if config.dom_extraction.is_none() {
-        config.dom_extraction = Some("auto".to_string());
+        config.dom_extraction = Some("never".to_string());
     }
     Ok(config)
 }

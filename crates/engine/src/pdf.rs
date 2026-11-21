@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use hayro::hayro_interpret::InterpreterSettings;
 use hayro::hayro_syntax::Pdf;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,13 +14,12 @@ use crate::markdown::{DocumentMetadata, PdfExtractionResult};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DomExtractionMode {
-    /// Automatically validates font CMaps and text density; uses hybrid extraction on clean vector PDFs
-    /// while falling back to pure vision OCR on scanned or unmapped-font documents (default).
-    #[default]
+    /// Automatically validates font CMaps and text density when explicitly requested.
     Auto,
     /// Unconditionally forces digital DOM text stream extraction.
     Always,
-    /// Bypasses DOM stream extraction and uses pure Indra neural vision OCR exclusively.
+    /// Bypasses DOM stream extraction and uses pure Indra neural vision OCR exclusively (default).
+    #[default]
     Never,
 }
 
@@ -481,6 +481,17 @@ pub fn can_use_hybrid_dom(doc: &lopdf::Document, page_num: usize, mode: DomExtra
                     // Specialized math font lacking Unicode CMap -> safe fallback to Indra OCR
                     return false;
                 }
+
+                // If subsetted or Type0 font lacks ToUnicode, fallback to Indra OCR in Auto mode
+                let subtype = font_dict
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|o| o.as_name().ok())
+                    .unwrap_or(b"");
+                let is_subset_or_type0 = base_font_name.contains('+') || subtype == b"Type0";
+                if is_subset_or_type0 && font_dict.get(b"ToUnicode").is_err() {
+                    return false;
+                }
             }
 
             // Verify content stream exists and is non-empty
@@ -537,6 +548,241 @@ fn is_box_overlapping(a: &TextBoundingBox, b: &FigureRect) -> bool {
     a.x < b_x2 && a_x2 > b.x && a.y < b_y2 && a_y2 > b.y
 }
 
+/// Represents a parsed PDF font decoder with `/ToUnicode` CMap and multi-byte support.
+#[derive(Debug, Clone, Default)]
+pub struct PdfFontDecoder {
+    /// Maps character codes (single byte or 2-byte CID) to decoded Unicode text.
+    pub cmap: HashMap<u32, String>,
+    /// Whether this font uses 2-byte character codes (e.g., Type0 / Identity-H).
+    pub is_two_byte: bool,
+}
+
+impl PdfFontDecoder {
+    /// Decodes raw PDF string bytes into clean Unicode text.
+    pub fn decode(&self, bytes: &[u8]) -> String {
+        if bytes.starts_with(&[0xfe, 0xff]) {
+            let u16_chars: Vec<u16> = bytes[2..]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_be_bytes(*chunk))
+                .collect();
+            return String::from_utf16_lossy(&u16_chars);
+        } else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+            return String::from_utf8_lossy(&bytes[3..]).to_string();
+        }
+
+        if !self.cmap.is_empty() {
+            let mut out = String::new();
+            if self.is_two_byte {
+                let mut i = 0;
+                while i + 1 < bytes.len() {
+                    let code = ((bytes[i] as u32) << 8) | (bytes[i + 1] as u32);
+                    if let Some(s) = self.cmap.get(&code) {
+                        out.push_str(s);
+                    } else if bytes[i] == 0 && (32..=126).contains(&bytes[i + 1]) {
+                        out.push(bytes[i + 1] as char);
+                    }
+                    i += 2;
+                }
+                if i < bytes.len() {
+                    let code = bytes[i] as u32;
+                    if let Some(s) = self.cmap.get(&code) {
+                        out.push_str(s);
+                    }
+                }
+            } else {
+                for &b in bytes {
+                    let code = b as u32;
+                    if let Some(s) = self.cmap.get(&code) {
+                        out.push_str(s);
+                    } else if (32..=126).contains(&b) {
+                        out.push(b as char);
+                    }
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+
+        // Standard Latin-1 / ASCII decoding, sanitizing non-printable control characters
+        bytes
+            .iter()
+            .filter_map(|&b| {
+                if (32..=126).contains(&b) || b == b'\t' || b == b'\n' || b >= 160 {
+                    Some(b as char)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+/// Parses a PDF `/ToUnicode` CMap stream into a character-code to Unicode mapping.
+pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
+    let mut map = HashMap::new();
+
+    let parse_hex_code = |s: &str| -> Option<u32> {
+        let trimmed = s.trim().trim_start_matches('<').trim_end_matches('>');
+        u32::from_str_radix(trimmed, 16).ok()
+    };
+
+    let parse_dst_utf16 = |s: &str| -> Option<String> {
+        let trimmed = s.trim().trim_start_matches('<').trim_end_matches('>');
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut hex_padded = trimmed.to_string();
+        if !hex_padded.len().is_multiple_of(4) {
+            while !hex_padded.len().is_multiple_of(4) {
+                hex_padded = format!("0{hex_padded}");
+            }
+        }
+        let mut u16_units = Vec::new();
+        let bytes = hex_padded.as_bytes();
+        for chunk in bytes.as_chunks::<4>().0 {
+            let chunk_str = std::str::from_utf8(chunk).ok()?;
+            let val = u16::from_str_radix(chunk_str, 16).ok()?;
+            u16_units.push(val);
+        }
+        Some(String::from_utf16_lossy(&u16_units))
+    };
+
+    // 1. Process `beginbfchar` ... `endbfchar` blocks
+    let mut rest = cmap;
+    while let Some(start_pos) = rest.find("beginbfchar") {
+        let block_start = start_pos + "beginbfchar".len();
+        let after_start = &rest[block_start..];
+        let end_pos = after_start.find("endbfchar").unwrap_or(after_start.len());
+        let block = &after_start[..end_pos];
+
+        let mut tokens = block.split_whitespace();
+        while let Some(src_tok) = tokens.next() {
+            if let Some(dst_tok) = tokens.next()
+                && let (Some(code), Some(text)) = (parse_hex_code(src_tok), parse_dst_utf16(dst_tok))
+            {
+                map.insert(code, text);
+            }
+        }
+
+        rest = &after_start[end_pos..];
+    }
+
+    // 2. Process `beginbfrange` ... `endbfrange` blocks
+    let mut rest_range = cmap;
+    while let Some(start_pos) = rest_range.find("beginbfrange") {
+        let block_start = start_pos + "beginbfrange".len();
+        let after_start = &rest_range[block_start..];
+        let end_pos = after_start.find("endbfrange").unwrap_or(after_start.len());
+        let block = &after_start[..end_pos];
+
+        let mut tokens = block.split_whitespace();
+        while let Some(start_tok) = tokens.next() {
+            let Some(end_tok) = tokens.next() else { break };
+            let Some(dst_tok) = tokens.next() else { break };
+
+            let Some(start_code) = parse_hex_code(start_tok) else { continue };
+            let Some(end_code) = parse_hex_code(end_tok) else { continue };
+
+            if dst_tok.starts_with('[') {
+                let mut current_code = start_code;
+                let first_elem = dst_tok.trim_start_matches('[');
+                if !first_elem.is_empty() && first_elem != "]"
+                    && let Some(text) = parse_dst_utf16(first_elem)
+                {
+                    map.insert(current_code, text);
+                    current_code += 1;
+                }
+                for elem in tokens.by_ref() {
+                    if elem.ends_with(']') {
+                        let inner = elem.trim_end_matches(']');
+                        if !inner.is_empty() && current_code <= end_code
+                            && let Some(text) = parse_dst_utf16(inner)
+                        {
+                            map.insert(current_code, text);
+                        }
+                        break;
+                    }
+                    if current_code <= end_code
+                        && let Some(text) = parse_dst_utf16(elem)
+                    {
+                        map.insert(current_code, text);
+                        current_code += 1;
+                    }
+                }
+            } else if let Some(dst_start_code) = parse_hex_code(dst_tok) {
+                let count = end_code.saturating_sub(start_code);
+                for i in 0..=count {
+                    let code = start_code + i;
+                    let dst = dst_start_code + i;
+                    if let Some(c) = char::from_u32(dst) {
+                        map.insert(code, c.to_string());
+                    }
+                }
+            }
+        }
+
+        rest_range = &after_start[end_pos..];
+    }
+
+    map
+}
+
+/// Extracts and parses font encodings and `/ToUnicode` CMaps for a page.
+pub fn build_page_font_decoders(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+) -> HashMap<Vec<u8>, PdfFontDecoder> {
+    let mut decoders = HashMap::new();
+    let Ok(fonts) = doc.get_page_fonts(page_id) else {
+        return decoders;
+    };
+
+    for (font_name, font_dict) in fonts {
+        let mut decoder = PdfFontDecoder::default();
+
+        let subtype = font_dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .unwrap_or(b"");
+        let encoding_name = font_dict
+            .get(b"Encoding")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .unwrap_or(b"");
+        if subtype == b"Type0" || encoding_name == b"Identity-H" || encoding_name == b"Identity-V" {
+            decoder.is_two_byte = true;
+        }
+
+        if let Ok(to_unicode_obj) = font_dict.get(b"ToUnicode") {
+            let stream = match to_unicode_obj {
+                lopdf::Object::Reference(id) => {
+                    doc.get_object(*id).ok().and_then(|o| o.as_stream().ok())
+                }
+                lopdf::Object::Stream(s) => Some(s),
+                _ => None,
+            };
+            if let Some(stream) = stream {
+                let stream_bytes = stream
+                    .decompressed_content()
+                    .unwrap_or_else(|_| stream.content.clone());
+                let cmap_str = String::from_utf8_lossy(&stream_bytes);
+                decoder.cmap = parse_cmap_str(&cmap_str);
+                if !decoder.cmap.is_empty() {
+                    decoder.is_two_byte = decoder.cmap.keys().any(|&k| k > 255) || decoder.is_two_byte;
+                }
+            }
+        }
+
+        decoders.insert(font_name.clone(), decoder);
+    }
+
+    decoders
+}
+
 fn decode_bytes_to_string(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xfe, 0xff]) {
         let u16_chars: Vec<u16> = bytes[2..]
@@ -549,8 +795,17 @@ fn decode_bytes_to_string(bytes: &[u8]) -> String {
     } else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         String::from_utf8_lossy(&bytes[3..]).to_string()
     } else {
-        // Standard Latin-1 / ASCII decoding
-        bytes.iter().map(|&b| b as char).collect()
+        // Standard Latin-1 / ASCII decoding, sanitizing control characters
+        bytes
+            .iter()
+            .filter_map(|&b| {
+                if (32..=126).contains(&b) || b == b'\t' || b == b'\n' || b >= 160 {
+                    Some(b as char)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 
@@ -575,6 +830,23 @@ pub fn parse_content_text_lines(
     page_h_pts: f32,
     regions_to_exclude: &[FigureRect],
 ) -> Vec<TextLine> {
+    parse_content_text_lines_with_fonts(
+        content,
+        scale,
+        page_h_pts,
+        regions_to_exclude,
+        &HashMap::new(),
+    )
+}
+
+/// Parses decoded PDF content operations into spatial `TextLine` structures with font CMap resolution and baseline tracking.
+pub fn parse_content_text_lines_with_fonts(
+    content: &lopdf::content::Content,
+    scale: f32,
+    page_h_pts: f32,
+    regions_to_exclude: &[FigureRect],
+    fonts: &HashMap<Vec<u8>, PdfFontDecoder>,
+) -> Vec<TextLine> {
     let mut lines = Vec::new();
 
     let mut matrix = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -584,6 +856,7 @@ pub fn parse_content_text_lines(
     let mut line_baseline_y = 0.0f32;
     let mut leading = 14.0f32;
     let mut rise = 0.0f32;
+    let mut current_font: Vec<u8> = Vec::new();
 
     let mut current_line_text = String::new();
     let mut line_start_x = 0.0f32;
@@ -600,31 +873,38 @@ pub fn parse_content_text_lines(
                       active: &mut bool| {
         let trimmed = text.trim();
         if !trimmed.is_empty() && *active {
-            let w_pts = (char_count as f32 * base_fs * 0.52).max(10.0);
-            let h_pts = base_fs * 1.2;
+            let sanitized: String = trimmed
+                .chars()
+                .filter(|&c| !c.is_control() || c == '\t')
+                .collect();
+            let clean = sanitized.trim();
+            if !clean.is_empty() {
+                let w_pts = (char_count as f32 * base_fs * 0.52).max(10.0);
+                let h_pts = base_fs * 1.2;
 
-            let x_px = (x_pts * scale).max(0.0) as u32;
-            let y_px = (((page_h_pts - y_pts - h_pts) * scale).max(0.0)) as u32;
-            let w_px = (w_pts * scale) as u32;
-            let h_px = (h_pts * scale) as u32;
+                let x_px = (x_pts * scale).max(0.0) as u32;
+                let y_px = (((page_h_pts - y_pts - h_pts) * scale).max(0.0)) as u32;
+                let w_px = (w_pts * scale) as u32;
+                let h_px = (h_pts * scale) as u32;
 
-            let bbox = TextBoundingBox {
-                x: x_px,
-                y: y_px,
-                width: w_px,
-                height: h_px,
-                score: 0.99,
-            };
+                let bbox = TextBoundingBox {
+                    x: x_px,
+                    y: y_px,
+                    width: w_px,
+                    height: h_px,
+                    score: 0.99,
+                };
 
-            // Only retain line if it does not fall inside an excluded layout region (formula/table/picture)
-            if !regions_to_exclude
-                .iter()
-                .any(|r| is_box_overlapping(&bbox, r))
-            {
-                lines.push(TextLine {
-                    bbox,
-                    text: trimmed.to_string(),
-                });
+                // Only retain line if it does not fall inside an excluded layout region (formula/table/picture)
+                if !regions_to_exclude
+                    .iter()
+                    .any(|r| is_box_overlapping(&bbox, r))
+                {
+                    lines.push(TextLine {
+                        bbox,
+                        text: clean.to_string(),
+                    });
+                }
             }
         }
         text.clear();
@@ -650,6 +930,9 @@ pub fn parse_content_text_lines(
                 );
             }
             "Tf" if op.operands.len() >= 2 => {
+                if let Ok(font_name) = op.operands[0].as_name() {
+                    current_font = font_name.to_vec();
+                }
                 if let Some(fs) = obj_to_f32(&op.operands[1]) {
                     font_size = fs.abs().max(1.0);
                 }
@@ -773,7 +1056,11 @@ pub fn parse_content_text_lines(
             }
             "Tj" => {
                 if let Some(lopdf::Object::String(bytes, _)) = op.operands.first() {
-                    let decoded = decode_bytes_to_string(bytes);
+                    let decoded = if let Some(decoder) = fonts.get(&current_font) {
+                        decoder.decode(bytes)
+                    } else {
+                        decode_bytes_to_string(bytes)
+                    };
                     if !decoded.is_empty() {
                         let delta_y = (matrix[5] - line_baseline_y) + rise;
                         let is_reduced_size = font_size < 0.88 * base_font_size;
@@ -801,7 +1088,11 @@ pub fn parse_content_text_lines(
                     for item in items {
                         match item {
                             lopdf::Object::String(bytes, _) => {
-                                let decoded = decode_bytes_to_string(bytes);
+                                let decoded = if let Some(decoder) = fonts.get(&current_font) {
+                                    decoder.decode(bytes)
+                                } else {
+                                    decode_bytes_to_string(bytes)
+                                };
                                 if !decoded.is_empty() {
                                     let delta_y = (matrix[5] - line_baseline_y) + rise;
                                     let is_reduced_size = font_size < 0.88 * base_font_size;
@@ -884,7 +1175,14 @@ pub fn extract_baseline_aware_dom_text_lines(
         }
     };
 
-    let lines = parse_content_text_lines(&content, scale, page_h_pts, regions_to_exclude);
+    let font_decoders = build_page_font_decoders(doc, page_id);
+    let lines = parse_content_text_lines_with_fonts(
+        &content,
+        scale,
+        page_h_pts,
+        regions_to_exclude,
+        &font_decoders,
+    );
     Ok(lines)
 }
 
@@ -915,6 +1213,67 @@ mod tests {
             Some(DomExtractionMode::Never)
         );
         assert_eq!(DomExtractionMode::from_str_loose("unknown"), None);
+        assert_eq!(DomExtractionMode::default(), DomExtractionMode::Never);
+    }
+
+    #[test]
+    fn test_font_cmap_parsing_and_decoding() {
+        let cmap_sample = r#"
+            /CIDInit /ProcSet findresource begin
+            12 dict begin
+            begincmap
+            1 begincodespacerange
+            <0000> <FFFF>
+            endcodespacerange
+            5 beginbfchar
+            <003a> <0057>
+            <0044> <0061>
+            <0057> <0074>
+            <0046> <0063>
+            <004b> <0068>
+            endbfchar
+            endcmap
+        "#;
+
+        let map = parse_cmap_str(cmap_sample);
+        assert_eq!(map.len(), 5);
+        assert_eq!(map.get(&0x003a), Some(&"W".to_string()));
+        assert_eq!(map.get(&0x0044), Some(&"a".to_string()));
+        assert_eq!(map.get(&0x0057), Some(&"t".to_string()));
+        assert_eq!(map.get(&0x0046), Some(&"c".to_string()));
+        assert_eq!(map.get(&0x004b), Some(&"h".to_string()));
+
+        let mut decoder = PdfFontDecoder {
+            cmap: map,
+            is_two_byte: true,
+        };
+
+        // Decodes 2-byte CIDs [0x00, 0x3a, 0x00, 0x44, 0x00, 0x57, 0x00, 0x46, 0x00, 0x4b] -> "Watch"
+        let raw_cids = [0x00, 0x3a, 0x00, 0x44, 0x00, 0x57, 0x00, 0x46, 0x00, 0x4b];
+        assert_eq!(decoder.decode(&raw_cids), "Watch");
+
+        // When single-byte mode
+        decoder.is_two_byte = false;
+        let single_byte_cids = [0x3a, 0x44, 0x57, 0x46, 0x4b];
+        assert_eq!(decoder.decode(&single_byte_cids), "Watch");
+    }
+
+    #[test]
+    fn test_cmap_decoding_on_subset_font_pdf() {
+        let pdf_path = Path::new(r"F:\Jag\AI\cornell\statistics\CORE521OD1_lesson-transcript.pdf");
+        if !pdf_path.exists() {
+            return;
+        }
+
+        let doc = lopdf::Document::load(pdf_path).expect("Failed to load PDF");
+        let lines = extract_baseline_aware_dom_text_lines(&doc, 8, 2.0, &[])
+            .expect("DOM extraction should succeed");
+
+        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+        // Ensure that decoded text has "Watch" and "Four Levels of Measurement", NOT ":DWFK"
+        assert!(full_text.contains("Watch"), "Text must contain 'Watch', got: {}", &full_text[..full_text.len().min(200)]);
+        assert!(full_text.contains("Four Levels of Measurement"), "Text must contain 'Four Levels of Measurement'");
+        assert!(!full_text.contains(":DWFK"), "Text must not contain garbled ':DWFK'");
     }
 
     #[test]
