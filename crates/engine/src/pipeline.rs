@@ -1163,6 +1163,7 @@ fn process_single_page_image_with_doc(
 
     for (table_rect, fig) in &layout.tables {
         let mut table_md_opt = None;
+        let mut table_html_opt = None;
         let mut raw_lines: Vec<String> = Vec::new();
 
         #[cfg(feature = "slanet-ort")]
@@ -1173,11 +1174,12 @@ fn process_single_page_image_with_doc(
                 table_rect.width,
                 table_rect.height,
             );
-            if let Ok(md) =
-                slanet.predict_table_markdown(&crop, &table_input_lines, table_rect.x, table_rect.y)
-                && !md.trim().is_empty()
+            if let Ok(res) =
+                slanet.predict_table_hybrid(&crop, &table_input_lines, table_rect.x, table_rect.y)
+                && !res.markdown.trim().is_empty()
             {
-                table_md_opt = Some(md);
+                table_md_opt = Some(res.markdown);
+                table_html_opt = res.html;
                 raw_lines = text_lines
                     .iter()
                     .filter(|l| {
@@ -1195,29 +1197,46 @@ fn process_single_page_image_with_doc(
 
         // Fall back to pure geometric table grid extraction if SLANet not used or yields empty/degenerate output
         if table_md_opt.is_none()
-            && let Some((geom_md, geom_lines)) =
-                figure::table::extract_table_with_lines(table_rect, &table_input_lines)
+            && let Some((geom_md, geom_html, geom_lines)) =
+                figure::table::extract_table_with_lines_and_html(table_rect, &table_input_lines)
         {
             table_md_opt = Some(geom_md);
+            table_html_opt = Some(geom_html);
             raw_lines = geom_lines;
         }
 
         if let Some(table_md) = table_md_opt {
-            let callout = if image_opts.save_table_images {
-                let img_tag = if let Some(ref data_uri) = fig.data_uri {
-                    let alt = fig.caption.as_deref().unwrap_or(&fig.figure_label);
-                    format!("![{}]({data_uri})", alt.replace('\n', " "))
+            let callout = {
+                let mut callout_lines = Vec::new();
+                let caption_desc = fig.caption.as_deref().unwrap_or(&fig.figure_label);
+                callout_lines.push(format!("> [!table]- Original Table & Structure: {}", fig.figure_label));
+
+                if image_opts.save_table_images {
+                    let img_tag = if let Some(ref data_uri) = fig.data_uri {
+                        let alt = fig.caption.as_deref().unwrap_or(&fig.figure_label);
+                        format!("![{}]({data_uri})", alt.replace('\n', " "))
+                    } else {
+                        let dir_name = fig.images_dir_name();
+                        format!("![[{dir_name}/{}]]", fig.filename)
+                    };
+                    callout_lines.push(format!("> {img_tag}"));
+                    callout_lines.push(format!("> *{}*", caption_desc));
+                }
+
+                if let Some(ref html) = table_html_opt {
+                    if image_opts.save_table_images {
+                        callout_lines.push(">".to_string());
+                    }
+                    for line in html.lines() {
+                        callout_lines.push(format!("> {line}"));
+                    }
+                }
+
+                if callout_lines.len() > 1 {
+                    Some(callout_lines.join("\n"))
                 } else {
-                    let dir_name = fig.images_dir_name();
-                    format!("![[{dir_name}/{}]]", fig.filename)
-                };
-                Some(format!(
-                    "> [!table]- Original Crop: {}\n> {img_tag}\n> *{}*",
-                    fig.figure_label,
-                    fig.caption.as_deref().unwrap_or(&fig.figure_label)
-                ))
-            } else {
-                None
+                    None
+                }
             };
 
             formatted_text = figure::table::integrate_table_into_markdown(

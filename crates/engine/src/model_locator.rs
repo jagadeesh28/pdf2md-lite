@@ -87,6 +87,10 @@ pub const KNOWN_MODELS: &[(&str, &str, bool)] = &[
     ("GLiNER Metadata Extractor", "models/metadata/gliner_small.onnx", false),
     ("MiniLM Embedding Model", "models/embeddings/model.onnx", false),
     ("MiniLM Embedding Tokenizer", "models/embeddings/tokenizer.json", false),
+    // Next-Gen Quantized Models (ADR 0014, ADR 0015, ADR 0016)
+    ("PP-StructureV2 SLANet_Plus", "models/layout/slanet_plus.onnx", false),
+    ("UniMERNet Formula OCR", "models/latex/unimernet.onnx", false),
+    ("BGE-Small Embeddings (INT8)", "models/embeddings/bge_small_int8.onnx", false),
 ];
 
 /// Unified Model Locator resolving offline model weights.

@@ -61,6 +61,46 @@ impl TableGrid {
 
         out
     }
+
+    /// Formats the table grid into an exact HTML table preserving column structure.
+    pub fn to_html(&self) -> String {
+        if self.rows.is_empty() || self.num_cols == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("<table>\n");
+        for (i, row) in self.rows.iter().enumerate() {
+            if row.iter().all(|c| c.trim().is_empty()) {
+                continue;
+            }
+
+            out.push_str("  <tr>\n");
+            let tag = if i == 0 { "th" } else { "td" };
+            for c in 0..self.num_cols {
+                let cell = row.get(c).map(|s| s.trim()).unwrap_or("");
+                out.push_str(&format!("    <{tag}>{}</{tag}>\n", html_escape(cell)));
+            }
+            out.push_str("  </tr>\n");
+        }
+        out.push_str("</table>");
+        out
+    }
+}
+
+/// Minimal HTML character entity escaper for table cell content.
+pub fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Formats table cell content, escaping markdown pipes and properly wrapping inline LaTeX expressions.
@@ -152,11 +192,21 @@ pub fn extract_table_with_lines(
     table_rect: &FigureRect,
     text_lines: &[TextLine],
 ) -> Option<(String, Vec<String>)> {
+    let (md, _, lines) = extract_table_with_lines_and_html(table_rect, text_lines)?;
+    Some((md, lines))
+}
+
+/// Extracts a structured Markdown table, exact HTML table, and raw text lines inside table bounds.
+pub fn extract_table_with_lines_and_html(
+    table_rect: &FigureRect,
+    text_lines: &[TextLine],
+) -> Option<(String, String, Vec<String>)> {
     let grid = extract_table_grid(table_rect, text_lines)?;
     let md = grid.to_markdown();
     if md.trim().is_empty() {
         return None;
     }
+    let html = grid.to_html();
 
     let margin = 6i32;
     let min_x = (table_rect.x as i32 - margin).max(0) as u32;
@@ -175,7 +225,7 @@ pub fn extract_table_with_lines(
         .filter(|t| !t.is_empty())
         .collect();
 
-    Some((md, inside_texts))
+    Some((md, html, inside_texts))
 }
 
 /// Substitutes raw unstructured table lines in `body_text` with the structured Markdown table and optional callout.
@@ -668,5 +718,23 @@ mod tests {
         let md = grid.to_markdown();
         assert!(md.contains("$Re$"));
         assert!(md.contains("= Reynolds number"));
+    }
+
+    #[test]
+    fn test_table_grid_to_html() {
+        let grid = TableGrid {
+            rows: vec![
+                vec!["Header 1".to_string(), "Header 2 & 3".to_string()],
+                vec!["Value <1>".to_string(), "Value \"2\"".to_string()],
+            ],
+            num_cols: 2,
+        };
+        let html = grid.to_html();
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<th>Header 1</th>"));
+        assert!(html.contains("<th>Header 2 &amp; 3</th>"));
+        assert!(html.contains("<td>Value &lt;1&gt;</td>"));
+        assert!(html.contains("<td>Value &quot;2&quot;</td>"));
+        assert!(html.ends_with("</table>"));
     }
 }

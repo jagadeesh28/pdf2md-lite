@@ -19,6 +19,30 @@ pub struct TableCell {
     pub text: String,
 }
 
+/// Result of neural table structure extraction containing both Markdown and exact HTML representations.
+#[derive(Debug, Clone)]
+pub struct TableExtractionResult {
+    /// Portable GitHub Flavored Markdown table.
+    pub markdown: String,
+    /// Exact HTML `<table>` representation preserving rowspan, colspan, and exact tags.
+    pub html: Option<String>,
+    /// Whether multi-row or multi-column cell spans were present.
+    pub has_spans: bool,
+}
+
+fn extract_span_num(attrs: &str, span_type: &str) -> Option<usize> {
+    if let Some(pos) = attrs.find(span_type) {
+        let after = &attrs[pos + span_type.len()..];
+        if let Some(eq) = after.find('=') {
+            let rest = after[eq + 1..].trim_start();
+            let trimmed = rest.trim_matches(|c| c == '"' || c == '\'');
+            let num_str: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return num_str.parse().ok();
+        }
+    }
+    None
+}
+
 #[cfg(feature = "slanet-ort")]
 pub struct SlaNetEngine {
     session_pool: SessionPool<ort::session::Session>,
@@ -33,7 +57,14 @@ static SLANET_ENGINE: std::sync::OnceLock<Option<Arc<SlaNetEngine>>> = std::sync
 #[cfg(feature = "slanet-ort")]
 pub fn get_slanet_engine() -> Option<Arc<SlaNetEngine>> {
     let engine = SLANET_ENGINE.get_or_init(|| {
-        let model_path = crate::resolve_model_path("models/layout/slanet.onnx");
+        let model_path = {
+            let plus = crate::resolve_model_path("models/layout/slanet_plus.onnx");
+            if plus.exists() {
+                plus
+            } else {
+                crate::resolve_model_path("models/layout/slanet.onnx")
+            }
+        };
         let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
         if model_path.exists() && dict_path.exists() {
             match SlaNetEngine::new(&model_path, &dict_path) {
@@ -103,9 +134,26 @@ impl SlaNetEngine {
         crop_offset_x: u32,
         crop_offset_y: u32,
     ) -> anyhow::Result<String> {
+        let res = self.predict_table_hybrid(table_crop, ocr_lines, crop_offset_x, crop_offset_y)?;
+        Ok(res.markdown)
+    }
+
+    /// Predicts both clean GitHub Flavored Markdown and exact HTML `<table>` representations,
+    /// implementing Hybrid Table Serialization (ADR 0016).
+    pub fn predict_table_hybrid(
+        &self,
+        table_crop: &DynamicImage,
+        ocr_lines: &[TextLine],
+        crop_offset_x: u32,
+        crop_offset_y: u32,
+    ) -> anyhow::Result<TableExtractionResult> {
         let (orig_w, orig_h) = table_crop.dimensions();
         if orig_w == 0 || orig_h == 0 {
-            return Ok(String::new());
+            return Ok(TableExtractionResult {
+                markdown: String::new(),
+                html: None,
+                has_spans: false,
+            });
         }
 
         // 1. Preprocess: Resize to 488x488 RGB, ImageNet normalization
@@ -217,12 +265,59 @@ impl SlaNetEngine {
             cells_with_text.push(TableCell { bbox: *bbox, text });
         }
 
-        // 5. Reconstruct rows into Markdown table
+        // 5. Reconstruct rows into Markdown table (with replicated spans) and exact HTML table
         let mut rows: Vec<Vec<String>> = Vec::new();
         let mut current_row: Vec<String> = Vec::new();
         let mut cell_idx = 0;
+        let mut in_td = false;
+        let mut current_td_attrs = String::new();
+        let mut has_spans = false;
+
+        let mut html_out = String::from("<table>\n");
+        let mut cell_idx_html = 0;
+        let mut in_td_html = false;
+        let mut current_td_attrs_html = String::new();
 
         for tag in &predicted_tags {
+            // HTML reconstruction
+            if tag == "<tr>" {
+                html_out.push_str("  <tr>\n");
+            } else if tag == "</tr>" {
+                html_out.push_str("  </tr>\n");
+            } else if tag == "<td>" {
+                let text = if cell_idx_html < cells_with_text.len() {
+                    &cells_with_text[cell_idx_html].text
+                } else {
+                    ""
+                };
+                cell_idx_html += 1;
+                html_out.push_str(&format!(
+                    "    <td>{}</td>\n",
+                    crate::figure::table::html_escape(text)
+                ));
+            } else if tag == "<td" {
+                in_td_html = true;
+                current_td_attrs_html.clear();
+            } else if in_td_html && (tag.contains("colspan") || tag.contains("rowspan")) {
+                current_td_attrs_html.push(' ');
+                current_td_attrs_html.push_str(tag.trim());
+            } else if in_td_html && tag.contains('>') {
+                let text = if cell_idx_html < cells_with_text.len() {
+                    &cells_with_text[cell_idx_html].text
+                } else {
+                    ""
+                };
+                cell_idx_html += 1;
+                html_out.push_str(&format!(
+                    "    <td{}>{}</td>\n",
+                    current_td_attrs_html,
+                    crate::figure::table::html_escape(text)
+                ));
+                in_td_html = false;
+                current_td_attrs_html.clear();
+            }
+
+            // GFM row reconstruction with span replication (ADR 0016)
             if tag == "<tr>" {
                 current_row.clear();
             } else if tag == "</tr>" {
@@ -230,7 +325,7 @@ impl SlaNetEngine {
                     rows.push(current_row.clone());
                     current_row.clear();
                 }
-            } else if tag == "<td>" || tag.starts_with("<td") {
+            } else if tag == "<td>" {
                 let text = if cell_idx < cells_with_text.len() {
                     cells_with_text[cell_idx].text.clone()
                 } else {
@@ -239,6 +334,27 @@ impl SlaNetEngine {
                 cell_idx += 1;
                 let formatted = crate::figure::table::format_table_cell_with_latex(&text);
                 current_row.push(formatted);
+            } else if tag == "<td" {
+                in_td = true;
+                current_td_attrs.clear();
+            } else if in_td && (tag.contains("colspan") || tag.contains("rowspan")) {
+                has_spans = true;
+                current_td_attrs.push(' ');
+                current_td_attrs.push_str(tag.trim());
+            } else if in_td && tag.contains('>') {
+                let text = if cell_idx < cells_with_text.len() {
+                    cells_with_text[cell_idx].text.clone()
+                } else {
+                    String::new()
+                };
+                cell_idx += 1;
+                let formatted = crate::figure::table::format_table_cell_with_latex(&text);
+                let col_span = extract_span_num(&current_td_attrs, "colspan").unwrap_or(1);
+                for _ in 0..col_span {
+                    current_row.push(formatted.clone());
+                }
+                in_td = false;
+                current_td_attrs.clear();
             }
         }
 
@@ -247,14 +363,24 @@ impl SlaNetEngine {
         }
 
         if rows.is_empty() {
-            return Ok(String::new());
+            return Ok(TableExtractionResult {
+                markdown: String::new(),
+                html: None,
+                has_spans: false,
+            });
         }
 
         let max_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
         if max_cols <= 1 {
             // Reject degenerate 1-column tables from SLANet so pipeline falls back to geometric extraction
-            return Ok(String::new());
+            return Ok(TableExtractionResult {
+                markdown: String::new(),
+                html: None,
+                has_spans: false,
+            });
         }
+
+        html_out.push_str("</table>");
 
         // Format as GitHub Flavored Markdown table
         let mut md = String::new();
@@ -277,7 +403,11 @@ impl SlaNetEngine {
             }
         }
 
-        Ok(md)
+        Ok(TableExtractionResult {
+            markdown: md,
+            html: Some(html_out),
+            has_spans,
+        })
     }
 }
 
