@@ -1,7 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="pdfmd-lite"
-           Manufacturer="pdfmd-lite Contributors"
-           Version="0.3.0"
+           Manufacturer="Jagadeesh"
+           Version="0.4.0"
            UpgradeCode="5B7316B7-4DE3-4EFA-9CF7-512E4A7D0D8F">
     <MajorUpgrade DowngradeErrorMessage="A newer version of pdfmd-lite is already installed." />
 
