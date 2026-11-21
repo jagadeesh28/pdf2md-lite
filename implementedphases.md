@@ -353,3 +353,44 @@ flowchart TD
   - `cargo test --workspace`: 96/96 unit and integration tests passed.
   - `cargo clippy --all-targets -- -D warnings`: Passed with zero warnings.
   - `target\debug\pdfmd-lite.exe --doctor`: Successfully ran and verified offline model resolutions and SHA-256 hashes.
+
+
+---
+
+### Phase 7: Hardware Acceleration, Split-Pane Inspector & Next-Gen Pipeline (Audit 2026-11-19)
+
+#### Milestone 7.1: Accelerated Execution Provider & Bounded Session Pools (ADR 0015)
+- **Tasks**:
+  1. Enabled `directml = ["ort/directml"]` feature in `crates/engine/Cargo.toml` and wired `create_optimized_session_builder` in `crates/engine/src/figure/models.rs` with `GraphOptimizationLevel::Level3`, `inter_threads(1)`, and core-aware intra-thread budgeting.
+  2. Implemented generic `SessionPool<T>` with RAII `SessionGuard` in `crates/engine/src/figure/session_pool.rs` using bounded FIFO sync channels.
+  3. Converted RapidLaTeXOCR encoder/decoder to `SessionPool<Session>` on DirectML EP, and SLANet to `SessionPool<Session>` on Level3 CPU EP (preventing dynamic loop operator incompatibility).
+  4. Applied optimized session builders to GLiNER and in-process sentence embeddings.
+
+#### Milestone 7.2: Split-Pane Source Canvas Streaming, In-Memory Preview Cache & UX
+- **Tasks**:
+  1. Implemented in-memory `render_single_page_image(pdf_path, page_num, scale)` in `crates/engine/src/pdf.rs` using `hayro 0.9.0` without intermediary disk raster files.
+  2. Added `PagePreviewCache` LRU ring buffer in `crates/server/src/lib.rs` and exposed `GET /api/page-preview?slug=...&page=...`.
+  3. Implemented Sandboxed Upload Guard in `upload_handler` with `%PDF-` magic-byte validation, secure UUID temp files, and path traversal sanitization.
+  4. Added cancellation signals (`CancellationToken`) across engine (`ProgressEmitter::is_cancelled`), server (`POST /api/cancel`), desktop Tauri IPC (`cancel_conversion`), and UI `handleStopConversion`.
+  5. Wired WebP format support into `SettingsModal` and server option resolution.
+  6. Updated `MarkdownViewer.tsx` to render Obsidian callouts (`> [!table]-`, `> [!note]`, `> [!warning]`, etc.), Wikilinks `[[...]]`, and page anchors `<!-- Page N -->`.
+  7. Connected `SplitPane.tsx` source canvas to live raster preview with bidirectional scroll synchronization.
+
+#### Milestone 7.3: CLI Clap Derive Migration & Batched Indic/World Recognition
+- **Tasks**:
+  1. Migrated `crates/cli/src/cli.rs` from an 866-line hand-rolled argument parser to `clap::Parser` (`CliArgs`), maintaining 100% backwards compatibility for all flags, aliases, short options, and subcommands (`serve`, `doctor`, `convert-images-to-jpeg`, `format-notes`, `dry-run`, `watch`, `resume`, `embed`, etc.).
+  2. Routed `IndraScript::Telugu` and `IndraScript::World` through multi-line bucketed SIMD batch recognition (`world_rec.recognize_lines_batch`) in `backends/indra/engine.rs`.
+
+#### Milestone 7.4: Hybrid Table Serialization, Span Reconstruction & Next-Gen Model Manifest (ADR 0016)
+- **Tasks**:
+  1. Implemented `TableGrid::to_html(&self)` and `html_escape` in `crates/engine/src/figure/table.rs`.
+  2. Added `TableExtractionResult` and `predict_table_hybrid` in `crates/engine/src/figure/slanet.rs`, preserving `rowspan` and `colspan` attributes in an exact HTML `<table>` while replicating spanned cell text across covered cells in standard GFM Markdown tables.
+  3. Upgraded `pipeline.rs` table processing to emit collapsible Obsidian Companion Table Callouts (`> [!table]- Original Table & Structure`) containing both high-resolution visual crops and exact HTML tables.
+  4. Updated `KNOWN_MODELS` in `crates/engine/src/model_locator.rs` with drop-in manifests for next-gen quantized models (`slanet_plus.onnx`, `unimernet.onnx`, `bge_small_int8.onnx`).
+
+- **Verification**:
+  - `cargo check --all-targets`: Passed with 0 errors.
+  - `cargo check --benches`: Passed with 0 errors.
+  - `cargo clippy --all-targets -- -D warnings`: Passed with 0 warnings.
+  - `cargo test --workspace`: 98/98 unit and integration tests passed.
+  - `npm --prefix ui run build`: Passed cleanly with 0 TypeScript or bundle errors.
