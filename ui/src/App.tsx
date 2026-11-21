@@ -110,10 +110,17 @@ export const App: React.FC = () => {
 
   // Floating notification toast & OS notification when conversion completes
   useEffect(() => {
-    if (!completionSummary) return;
     const isSingle = jobs.length === 1;
     const singleJob = jobs[0];
-    const isSuccess = completionSummary.errors === 0;
+
+    // Trigger on either completionSummary or when a single job finishes
+    if (!completionSummary && !(isSingle && singleJob?.status === 'completed')) {
+      return;
+    }
+
+    const isSuccess = completionSummary
+      ? completionSummary.errors === 0
+      : singleJob?.status === 'completed';
 
     const title = isSingle
       ? isSuccess
@@ -121,18 +128,17 @@ export const App: React.FC = () => {
         : 'Document Conversion Failed'
       : isSuccess
       ? 'Batch Conversion Completed'
-      : `Batch Conversion Completed (${completionSummary.errors} failed)`;
+      : `Batch Conversion Completed (${completionSummary?.errors ?? 0} failed)`;
 
+    const elapsed = completionSummary?.elapsedSec ?? singleJob?.elapsedSec;
     const elapsedStr =
-      completionSummary.elapsedSec !== undefined
-        ? ` in ${completionSummary.elapsedSec.toFixed(1)}s`
-        : '';
+      elapsed !== undefined ? ` in ${elapsed.toFixed(1)}s` : '';
 
     const message = isSingle
       ? isSuccess
         ? `Successfully converted "${singleJob?.fileName || 'Document'}" into Obsidian Markdown${elapsedStr}.`
         : `Failed to convert "${singleJob?.fileName || 'Document'}".`
-      : `Converted ${completionSummary.completed} of ${jobs.length} document(s)${elapsedStr}.`;
+      : `Converted ${completionSummary?.completed ?? 0} of ${jobs.length} document(s)${elapsedStr}.`;
 
     setActionNotice({
       type: isSuccess ? 'success' : 'error',
@@ -162,7 +168,7 @@ export const App: React.FC = () => {
         // Notification permission API not supported in some webview environments
       }
     }
-  }, [completionSummary]);
+  }, [completionSummary, jobs]);
 
   // Auto-dismiss completed or error action notice after 7 seconds
   useEffect(() => {
