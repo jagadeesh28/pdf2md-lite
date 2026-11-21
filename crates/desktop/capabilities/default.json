@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the main window: grants the frontend access to the Tauri core IPC layer (invoke, event listen/emit) so progress events and commands work.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

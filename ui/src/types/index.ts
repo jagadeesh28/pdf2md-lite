@@ -12,11 +12,21 @@ export interface ConversionJob {
   outputMarkdownPath?: string;
   markdownContent?: string;
   elapsedSec?: number;
+  /** Marks per-file result rows created from a folder batch (not directly convertible). */
+  isResult?: boolean;
   pages?: {
     pageNumber: number;
     markdown: string;
     previewUrl?: string;
   }[];
+}
+
+export interface PlannedDocument {
+  fileName: string;
+  sourcePath: string;
+  outputPath: string;
+  totalPages: number;
+  status: string;
 }
 
 export interface ProgressPayload {
@@ -41,6 +51,7 @@ export interface ProgressPayload {
   task?: string;
   step?: string;
   itemsPerSec?: number;
+  documents?: PlannedDocument[];
 }
 
 export interface BatchCompletionSummary {

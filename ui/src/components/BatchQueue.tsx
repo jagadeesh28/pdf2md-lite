@@ -737,7 +737,8 @@ const JobItemCard: React.FC<JobItemCardProps> = ({ job, onRemove, onInspect }) =
 
           {getStatusBadge(job.status)}
 
-          {job.status === 'completed' && (
+          {job.status === 'completed' &&
+            (job.isResult || job.outputMarkdownPath || job.markdownContent) && (
             <button
               onClick={onInspect}
               className="flex items-center space-x-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded text-xs transition-colors shadow-sm"

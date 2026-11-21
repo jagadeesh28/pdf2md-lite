@@ -7,7 +7,6 @@ use image::{GrayImage, Luma};
 use pdfmd_lite::backends::indra::recognize::IndraRecognizer;
 use pdfmd_lite::backends::indra::vocab::IndraVocab;
 use pdfmd_lite::backends::indra::{IndraEngine, IndraScript};
-use std::path::Path;
 
 const BUCKET_WIDTHS: [usize; 7] = [160, 320, 480, 640, 800, 1024, 1536];
 

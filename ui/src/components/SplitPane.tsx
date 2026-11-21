@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { ConversionJob } from '../types';
 import { MarkdownViewer } from './MarkdownViewer';
-import { fetchPagePreview } from '../bridge/api';
+import { fetchPagePreview, readMarkdown } from '../bridge/api';
 
 interface SplitPaneProps {
   job: ConversionJob | null;
@@ -25,6 +25,8 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
   const [copied, setCopied] = useState<boolean>(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const [markdownContent, setMarkdownContent] = useState<string | null>(null);
+  const [loadingMarkdown, setLoadingMarkdown] = useState<boolean>(false);
   const markdownPaneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,6 +63,44 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
     }
   }, [currentPage]);
 
+  // Load the generated Markdown note for the selected completed document.
+  useEffect(() => {
+    if (!job) {
+      setMarkdownContent(null);
+      setLoadingMarkdown(false);
+      return;
+    }
+    if (job.markdownContent) {
+      setMarkdownContent(job.markdownContent);
+      setLoadingMarkdown(false);
+      return;
+    }
+    const sourcePath = job.outputMarkdownPath;
+    if (!sourcePath) {
+      setMarkdownContent(null);
+      setLoadingMarkdown(false);
+      return;
+    }
+    let active = true;
+    setLoadingMarkdown(true);
+    readMarkdown(sourcePath)
+      .then((content) => {
+        if (active) {
+          setMarkdownContent(content);
+          setLoadingMarkdown(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load generated markdown:', err);
+        if (active) {
+          setLoadingMarkdown(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [job?.id, job?.outputMarkdownPath, job?.markdownContent]);
+
   if (!job) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-gray-900 text-gray-400 p-8">
@@ -79,12 +119,18 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
     );
   }
 
-  const pages = job.pages || [
-    {
-      pageNumber: 1,
-      markdown: job.markdownContent || '# Sample Note\n\nNo page breakdown available.',
-    },
-  ];
+  const resolvedMarkdown = markdownContent ?? job.markdownContent ?? '';
+  const pages =
+    job.pages && job.pages.length > 0
+      ? job.pages
+      : resolvedMarkdown
+      ? splitMarkdownIntoPages(resolvedMarkdown)
+      : [
+          {
+            pageNumber: 1,
+            markdown: '# Sample Note\n\nNo page breakdown available.',
+          },
+        ];
 
   const totalPages = pages.length;
   const activePage = pages[currentPage - 1] || pages[0];
@@ -227,7 +273,12 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
           </div>
 
           <div ref={markdownPaneRef} className="flex-1 overflow-auto">
-            {viewMode === 'rendered' ? (
+            {loadingMarkdown ? (
+              <div className="h-full flex flex-col items-center justify-center text-gray-500 p-6">
+                <Loader2 className="w-8 h-8 text-purple-500 animate-spin mb-2" />
+                <p className="text-xs">Loading generated Markdown...</p>
+              </div>
+            ) : viewMode === 'rendered' ? (
               <MarkdownViewer content={activePage.markdown} />
             ) : (
               <pre className="p-4 text-xs font-mono text-gray-300 whitespace-pre-wrap select-text leading-relaxed">
@@ -240,3 +291,43 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
     </div>
   );
 };
+
+/**
+ * Splits a generated note into per-page segments using the engine's
+ * `<!-- Page N -->` demarcation markers so the inspector can page through
+ * the PDF canvas and the Markdown side-by-side. Any content preceding the
+ * first marker (e.g. YAML frontmatter and the document title) is folded into
+ * page 1.
+ */
+function splitMarkdownIntoPages(
+  content: string
+): NonNullable<ConversionJob['pages']> {
+  const markerRegex = /<!--\s*Page\s+(\d+)\s*-->/gi;
+  const markers: { index: number; page: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = markerRegex.exec(content)) !== null) {
+    markers.push({
+      index: match.index,
+      page: Number.parseInt(match[1], 10) || markers.length + 1,
+    });
+    if (match.index === markerRegex.lastIndex) {
+      markerRegex.lastIndex++;
+    }
+  }
+
+  if (markers.length === 0) {
+    return [{ pageNumber: 1, markdown: content.trim() }];
+  }
+
+  const pages: NonNullable<ConversionJob['pages']> = [];
+  let cursor = 0;
+  for (let i = 0; i < markers.length; i++) {
+    const nextStart = i + 1 < markers.length ? markers[i + 1].index : content.length;
+    pages.push({
+      pageNumber: markers[i].page,
+      markdown: content.slice(cursor, nextStart).trim(),
+    });
+    cursor = nextStart;
+  }
+  return pages;
+}

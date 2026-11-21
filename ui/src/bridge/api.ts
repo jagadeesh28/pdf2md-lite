@@ -328,3 +328,15 @@ export async function fetchPagePreview(filePath: string, pageNumber: number): Pr
   }
   return `/api/page-preview?slug=${encodeURIComponent(filePath)}&page=${pageNumber}`;
 }
+
+/**
+ * Reads a generated Markdown note from disk so the Split-Pane inspector can render
+ * the real converted content. Only available in the desktop (Tauri) runtime; the
+ * bundled web daemon has no note-read endpoint and falls back to placeholder content.
+ */
+export async function readMarkdown(path: string): Promise<string> {
+  if (isTauri()) {
+    return await invoke<string>('read_markdown', { path });
+  }
+  return '';
+}

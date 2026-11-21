@@ -26,6 +26,8 @@ import {
   cancelConversion,
   onNativeFileDrop,
   openFolderInExplorer,
+  pickFiles,
+  pickFolder,
 } from './bridge/api';
 
 function formatVaultEta(seconds?: number): string {
@@ -263,12 +265,13 @@ export const App: React.FC = () => {
   };
 
   const handleStartConversion = async (resume: boolean) => {
-    if (jobs.length === 0 || isRunning) return;
+    const convertible = jobs.filter((j) => !j.isResult);
+    if (convertible.length === 0 || isRunning) return;
     setIsRunning(true);
-    addLog('info', `Starting batch conversion for ${jobs.length} document(s) (Output: ${outputDir}, Resume: ${resume})...`);
+    addLog('info', `Starting batch conversion for ${convertible.length} document(s) (Output: ${outputDir}, Resume: ${resume})...`);
     try {
       await startConversion({
-        files: jobs.map((j) => j.filePath),
+        files: convertible.map((j) => j.filePath),
         outputDir,
         config: { ...config, output_dir: outputDir },
         resume,
@@ -301,7 +304,9 @@ export const App: React.FC = () => {
   };
 
   const handleInspectJob = (job: ConversionJob) => {
-    setInspectedJob(job);
+    // Prefer the freshest job state (status/output path) from the queue.
+    const latest = jobs.find((j) => j.id === job.id) ?? job;
+    setInspectedJob(latest);
     setActiveView('inspector');
   };
 
@@ -479,36 +484,17 @@ export const App: React.FC = () => {
     <div className="w-screen h-screen flex flex-col bg-gray-900 text-gray-100 overflow-hidden font-sans">
       {/* In-Window Hierarchical Menu Bar */}
       <MenuBar
-        onOpenPdf={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.accept = '.pdf';
-          input.multiple = true;
-          input.onchange = (e) => {
-            const target = e.target as HTMLInputElement;
-            if (target.files) {
-              const files = Array.from(target.files).map(
-                (f) => (f as unknown as { path?: string }).path || f.name
-              );
-              handleAddFiles(files);
-            }
-          };
-          input.click();
+        onOpenPdf={async () => {
+          const files = await pickFiles();
+          if (files.length > 0) {
+            handleAddFiles(files);
+          }
         }}
-        onOpenDirectory={() => {
-          const input = document.createElement('input');
-          input.type = 'file';
-          input.webkitdirectory = true;
-          input.onchange = (e) => {
-            const target = e.target as HTMLInputElement;
-            if (target.files) {
-              const files = Array.from(target.files)
-                .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-                .map((f) => (f as unknown as { path?: string }).path || f.name);
-              handleAddFiles(files);
-            }
-          };
-          input.click();
+        onOpenDirectory={async () => {
+          const folder = await pickFolder();
+          if (folder) {
+            handleAddFiles([folder]);
+          }
         }}
         onWatchDirectory={() => {
           addLog('info', 'Directory watch mode active for input directory.');

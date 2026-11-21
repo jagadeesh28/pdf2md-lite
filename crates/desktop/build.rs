@@ -20,32 +20,31 @@ fn should_rebuild_ui(ui_dir: &Path, dist_index: &Path) -> bool {
             return false;
         }
         if path.is_file() {
-            if let Ok(meta) = path.metadata() {
-                if let Ok(mtime) = meta.modified() {
-                    return mtime > dist_mtime;
-                }
+            if let Ok(meta) = path.metadata()
+                && let Ok(mtime) = meta.modified()
+            {
+                return mtime > dist_mtime;
             }
             return false;
         }
-        if path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    let name = entry.file_name();
-                    if name == "node_modules" || name == "dist" || name == ".git" {
-                        continue;
+        if path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(path)
+        {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                let name = entry.file_name();
+                if name == "node_modules" || name == "dist" || name == ".git" {
+                    continue;
+                }
+                if entry_path.is_dir() {
+                    if is_newer(&entry_path, dist_mtime) {
+                        return true;
                     }
-                    if entry_path.is_dir() {
-                        if is_newer(&entry_path, dist_mtime) {
-                            return true;
-                        }
-                    } else if let Ok(meta) = entry.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            if mtime > dist_mtime {
-                                return true;
-                            }
-                        }
-                    }
+                } else if let Ok(meta) = entry.metadata()
+                    && let Ok(mtime) = meta.modified()
+                    && mtime > dist_mtime
+                {
+                    return true;
                 }
             }
         }

@@ -164,6 +164,27 @@ export function useConversionProgress() {
           finishedAt: new Date().toLocaleTimeString(),
         };
         setCompletionSummary(summary);
+        if (payload.documents && payload.documents.length > 0) {
+          const docs = payload.documents;
+          setJobs((prev) => {
+            const known = new Set(prev.map((j) => j.filePath));
+            const children: ConversionJob[] = docs
+              .filter((d) => d.sourcePath && d.outputPath && !known.has(d.sourcePath))
+              .map((d) => ({
+                id: `result:${d.sourcePath}`,
+                filePath: d.sourcePath,
+                fileName:
+                  d.fileName || d.sourcePath.split(/[\\/]/).pop() || d.sourcePath,
+                outputDir: payload.outputDir ?? '',
+                status: (d.status === 'completed' ? 'completed' : 'error') as JobStatus,
+                totalPages: d.totalPages,
+                completedPages: d.totalPages,
+                outputMarkdownPath: d.outputPath,
+                isResult: true,
+              }));
+            return children.length > 0 ? [...prev, ...children] : prev;
+          });
+        }
         addLog(
           (payload.errors ?? 0) === 0 ? 'info' : 'warn',
           `Conversion complete: ${payload.completed ?? 0} converted, ${payload.errors ?? 0} error(s)${

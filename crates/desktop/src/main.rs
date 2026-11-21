@@ -14,6 +14,21 @@ use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Emitter;
 
+/// Describes a single document produced by a folder (directory) batch conversion
+/// so the frontend can surface per-file completion and "Inspect Note" actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannedDocument {
+    #[serde(rename = "fileName")]
+    pub file_name: String,
+    #[serde(rename = "sourcePath")]
+    pub source_path: String,
+    #[serde(rename = "outputPath")]
+    pub output_path: String,
+    #[serde(rename = "totalPages")]
+    pub total_pages: usize,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DesktopProgressEvent {
@@ -65,6 +80,8 @@ pub enum DesktopProgressEvent {
         total_pages: Option<usize>,
         #[serde(rename = "outputDir", skip_serializing_if = "Option::is_none")]
         output_dir: Option<String>,
+        #[serde(rename = "documents", skip_serializing_if = "Option::is_none")]
+        documents: Option<Vec<PlannedDocument>>,
     },
     #[serde(rename = "vault_progress")]
     VaultProgress {
@@ -237,6 +254,59 @@ fn resolve_image_options(config: &AppConfig) -> ImageOptions {
         embed_base64: config.embed_images_base64.unwrap_or(false),
         dom_mode,
     }
+}
+
+/// Computes the per-file conversion plan for a folder (source PDF -> generated `.md`)
+/// using the exact same short-slug layout the batch converter writes to, so the UI can
+/// expose per-file completion and "Inspect Note" actions for folder conversions.
+#[allow(clippy::too_many_arguments)]
+fn plan_directory_documents(
+    input_dir: &Path,
+    output_base_dir: &Path,
+    max_depth: usize,
+    explicit_concurrency: Option<usize>,
+    script: IndraScript,
+    resume: bool,
+    image_opts: ImageOptions,
+    embed: bool,
+) -> Vec<PlannedDocument> {
+    let Ok(report) = dry_run_pdf_directory(
+        input_dir,
+        output_base_dir,
+        None,
+        max_depth,
+        explicit_concurrency,
+        script,
+        resume,
+        image_opts,
+        embed,
+    ) else {
+        return Vec::new();
+    };
+
+    report
+        .plans
+        .into_iter()
+        .map(|plan| {
+            let file_name = plan
+                .input_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| plan.input_path.to_string_lossy().to_string());
+            let status = if plan.target_md_path.is_file() {
+                "completed".to_string()
+            } else {
+                "error".to_string()
+            };
+            PlannedDocument {
+                file_name,
+                source_path: plan.input_path.to_string_lossy().to_string(),
+                output_path: plan.target_md_path.to_string_lossy().to_string(),
+                total_pages: plan.total_pages,
+                status,
+            }
+        })
+        .collect()
 }
 
 /// Attempts to locate a document by path, falling back to looking under `input/`
@@ -424,6 +494,7 @@ async fn start_conversion(
 
         let mut completed = 0;
         let mut errors = 0;
+        let mut completed_documents: Vec<PlannedDocument> = Vec::new();
         let batch_start = Instant::now();
 
         CANCEL_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -515,6 +586,16 @@ async fn start_conversion(
                             Ok(res) => {
                                 completed += res.succeeded;
                                 errors += res.failed.len();
+                                completed_documents.extend(plan_directory_documents(
+                                    path,
+                                    out_dir,
+                                    config.max_depth.unwrap_or(3),
+                                    config.concurrency,
+                                    script,
+                                    resume,
+                                    image_opts,
+                                    embed,
+                                ));
                             }
                             Err(e) => {
                                 errors += 1;
@@ -583,6 +664,11 @@ async fn start_conversion(
                 elapsed_sec: Some(batch_elapsed),
                 total_pages: Some(total_batch_pages),
                 output_dir: Some(out_dir.to_string_lossy().to_string()),
+                documents: if completed_documents.is_empty() {
+                    None
+                } else {
+                    Some(completed_documents)
+                },
             },
         );
     });
@@ -782,6 +868,24 @@ async fn get_page_preview(file_path: String, page: usize) -> Result<String, Stri
     .map_err(|e| e.to_string())?
 }
 
+/// Reads a generated Markdown note from disk so the split-pane inspector can render
+/// the real converted content instead of a placeholder.
+#[tauri::command]
+async fn read_markdown(path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let candidate = PathBuf::from(&path);
+        let resolved = if candidate.is_file() {
+            candidate
+        } else {
+            resolve_document_path(&path).ok_or_else(|| format!("Markdown output not found: {path}"))?
+        };
+        std::fs::read_to_string(&resolved)
+            .map_err(|e| format!("Failed to read '{}': {e}", resolved.display()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         let msg = match info.payload().downcast_ref::<&str>() {
@@ -818,6 +922,7 @@ fn main() {
             start_conversion,
             cancel_conversion,
             get_page_preview,
+            read_markdown,
             pick_files,
             pick_folder,
             open_output_folder,
