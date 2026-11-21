@@ -75,7 +75,7 @@ if ($Flavor -eq 'Slim' -or $Flavor -eq 'All') {
     $SlimMsi = Join-Path $OutputDir "pdfmd-lite-v$Version-x64-slim.msi"
     Write-Host "`n[*] Building Slim MSI installer: $SlimMsi..." -ForegroundColor Yellow
 
-    & wix.exe build -d "SourceDir=target\release" -o $SlimMsi wix\main.wxs
+    & wix.exe build -ext WixToolset.UI.wixext/5.0.2 -d "SourceDir=target\release" -o $SlimMsi wix\main.wxs
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to build Slim MSI installer."
     }
@@ -98,7 +98,7 @@ if ($Flavor -eq 'Full' -or $Flavor -eq 'All') {
     $FullMsi = Join-Path $OutputDir "pdfmd-lite-v$Version-x64-full-offline.msi"
     Write-Host "`n[*] Building Full Offline MSI installer (with models/): $FullMsi..." -ForegroundColor Yellow
 
-    & wix.exe build -d "SourceDir=target\release" -d "ModelsDir=models" -o $FullMsi wix\full.wxs
+    & wix.exe build -ext WixToolset.UI.wixext/5.0.2 -d "SourceDir=target\release" -d "ModelsDir=models" -o $FullMsi wix\full.wxs
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to build Full Offline MSI installer."
     }

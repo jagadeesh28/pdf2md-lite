@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="pdfmd-lite (Full Offline Edition)"
            Manufacturer="Jagadeesh"
            Version="0.4.0"
@@ -6,6 +7,10 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of pdfmd-lite is already installed." />
 
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- UI: Destination directory selection, progress bar, completion message -->
+    <WixVariable Id="WixUILicenseRtf" Value="wix\license.rtf" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="pdfmd-lite">
@@ -42,7 +47,7 @@
           </RegistryKey>
         </Component>
 
-        <!-- Models Directory -->
+        <!-- Models Directory (All Offline Neural Models) -->
         <Directory Id="ModelsDir" Name="models">
           <!-- models/indra -->
           <Directory Id="ModelsIndraDir" Name="indra">
@@ -51,6 +56,7 @@
               <File Id="IndraRec" Source="$(var.ModelsDir)\indra\rec.onnx" />
               <File Id="IndraRecWorld" Source="$(var.ModelsDir)\indra\rec_world.onnx" />
               <File Id="IndraOrder" Source="$(var.ModelsDir)\indra\order.onnx" />
+              <File Id="IndraScript" Source="$(var.ModelsDir)\indra\script.onnx" />
               <File Id="IndraMeta" Source="$(var.ModelsDir)\indra\meta.json" />
               <File Id="IndraConfig" Source="$(var.ModelsDir)\indra\config.json" />
             </Component>
@@ -73,6 +79,21 @@
               <File Id="LayoutTableDict" Source="$(var.ModelsDir)\layout\table_structure_dict.txt" />
             </Component>
           </Directory>
+
+          <!-- models/embeddings -->
+          <Directory Id="ModelsEmbeddingsDir" Name="embeddings">
+            <Component Id="EmbeddingsModels" Guid="A3E8799C-E994-43C1-B733-4EB107D5A912">
+              <File Id="EmbeddingsModel" Source="$(var.ModelsDir)\embeddings\model.onnx" KeyPath="yes" />
+              <File Id="EmbeddingsTokenizer" Source="$(var.ModelsDir)\embeddings\tokenizer.json" />
+            </Component>
+          </Directory>
+
+          <!-- models/metadata -->
+          <Directory Id="ModelsMetadataDir" Name="metadata">
+            <Component Id="MetadataModels" Guid="5BC71932-841A-4CD1-8A19-94D2513B44EE">
+              <File Id="MetadataGliner" Source="$(var.ModelsDir)\metadata\gliner_small.onnx" KeyPath="yes" />
+            </Component>
+          </Directory>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -87,6 +108,8 @@
       <ComponentRef Id="IndraModels" />
       <ComponentRef Id="LatexModels" />
       <ComponentRef Id="LayoutModels" />
+      <ComponentRef Id="EmbeddingsModels" />
+      <ComponentRef Id="MetadataModels" />
     </Feature>
   </Package>
 </Wix>
