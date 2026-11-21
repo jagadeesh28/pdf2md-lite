@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, AlertCircle, X, Clock, Loader2 } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X, Clock, Loader2, ArrowRight } from 'lucide-react';
 import { MenuBar } from './components/MenuBar';
 import { BatchQueue } from './components/BatchQueue';
 import { SplitPane } from './components/SplitPane';
@@ -74,6 +74,10 @@ export const App: React.FC = () => {
     type: 'success' | 'error' | 'info';
     title: string;
     message: string;
+    action?: {
+      label: string;
+      onClick: () => void;
+    };
     progress?: {
       completed: number;
       total: number;
@@ -103,6 +107,62 @@ export const App: React.FC = () => {
       });
     }
   }, [vaultProgress]);
+
+  // Floating notification toast & OS notification when conversion completes
+  useEffect(() => {
+    if (!completionSummary) return;
+    const isSingle = jobs.length === 1;
+    const singleJob = jobs[0];
+    const isSuccess = completionSummary.errors === 0;
+
+    const title = isSingle
+      ? isSuccess
+        ? 'Document Conversion Completed'
+        : 'Document Conversion Failed'
+      : isSuccess
+      ? 'Batch Conversion Completed'
+      : `Batch Conversion Completed (${completionSummary.errors} failed)`;
+
+    const elapsedStr =
+      completionSummary.elapsedSec !== undefined
+        ? ` in ${completionSummary.elapsedSec.toFixed(1)}s`
+        : '';
+
+    const message = isSingle
+      ? isSuccess
+        ? `Successfully converted "${singleJob?.fileName || 'Document'}" into Obsidian Markdown${elapsedStr}.`
+        : `Failed to convert "${singleJob?.fileName || 'Document'}".`
+      : `Converted ${completionSummary.completed} of ${jobs.length} document(s)${elapsedStr}.`;
+
+    setActionNotice({
+      type: isSuccess ? 'success' : 'error',
+      title,
+      message,
+      action:
+        isSingle && isSuccess && singleJob
+          ? {
+              label: 'Inspect Note',
+              onClick: () => handleInspectJob(singleJob),
+            }
+          : undefined,
+    });
+
+    if ('Notification' in window) {
+      try {
+        if (Notification.permission === 'granted') {
+          new Notification(title, { body: message });
+        } else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then((permission) => {
+            if (permission === 'granted') {
+              new Notification(title, { body: message });
+            }
+          });
+        }
+      } catch {
+        // Notification permission API not supported in some webview environments
+      }
+    }
+  }, [completionSummary]);
 
   // Auto-dismiss completed or error action notice after 7 seconds
   useEffect(() => {
@@ -174,12 +234,26 @@ export const App: React.FC = () => {
   };
 
   const handleRemoveJob = (id: string) => {
+    const job = jobs.find((j) => j.id === id);
     setJobs((prev) => prev.filter((j) => j.id !== id));
+    if (job) {
+      addLog('info', `Removed "${job.fileName}" from queue.`);
+      setActionNotice({
+        type: 'info',
+        title: 'Document Closed',
+        message: `Removed "${job.fileName}" from the conversion queue.`,
+      });
+    }
   };
 
   const handleClearJobs = () => {
     setJobs([]);
     addLog('info', 'Batch queue cleared.');
+    setActionNotice({
+      type: 'info',
+      title: 'Queue Cleared',
+      message: 'All documents removed from the conversion queue.',
+    });
   };
 
   const handleStartConversion = async (resume: boolean) => {
@@ -223,6 +297,17 @@ export const App: React.FC = () => {
   const handleInspectJob = (job: ConversionJob) => {
     setInspectedJob(job);
     setActiveView('inspector');
+  };
+
+  const handleBackToQueue = () => {
+    if (inspectedJob) {
+      setActionNotice({
+        type: 'info',
+        title: 'Viewer Closed',
+        message: `Closed side-by-side inspection for "${inspectedJob.fileName}".`,
+      });
+    }
+    setActiveView('queue');
   };
 
   const handleSaveConfig = async (newConfig: AppConfigData) => {
@@ -481,7 +566,7 @@ export const App: React.FC = () => {
         ) : (
           <SplitPane
             job={inspectedJob}
-            onBackToQueue={() => setActiveView('queue')}
+            onBackToQueue={handleBackToQueue}
           />
         )}
       </main>
@@ -603,6 +688,22 @@ export const App: React.FC = () => {
                     }}
                   />
                 </div>
+              </div>
+            )}
+
+            {/* Quick Action Button (e.g. Inspect Note) */}
+            {actionNotice.action && (
+              <div className="pt-2 flex justify-end">
+                <button
+                  onClick={() => {
+                    actionNotice.action?.onClick();
+                    setActionNotice(null);
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow transition-colors flex items-center space-x-1.5"
+                >
+                  <span>{actionNotice.action.label}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
           </div>
