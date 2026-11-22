@@ -15,7 +15,7 @@ This document records the completed implementation phases and technical mileston
 | **Phase 5** | Unified Desktop & Web Application | Workspace monorepo decoupling, React 19 + Tailwind SPA, Axum localhost daemon (`--serve`), Tauri v2 desktop shell, and WiX v5 MSI packaging. |
 | **Phase 6** | Reliability, Zero-Copy Model Locator & Hardening | Process-wide panic hook with thread-local suppression, zero-copy cascading `ModelLocator`, strict config gating, unified error boundaries, and `--doctor` diagnostics. |
 | **Phase 7** | Hardware Acceleration, Split-Pane Inspector & Hybrid Table Serialization | DirectML execution provider, generic `SessionPool<T>`, live split-pane canvas streaming, and hybrid table serialization with cell span reconstruction. |
-| **Phase 8** | CMap Font Decoder, Vision-First Routing & Release 0.7.0 | Adobe CMap `/ToUnicode` stream parsing, encoding fallbacks, vision-first layout route by default, and WiX v5 MSI installers. |
+| **Phase 8** | CMap Font Decoder, Vision-First Routing & Release 0.7.1 | Adobe CMap `/ToUnicode` stream parsing, encoding fallbacks, vision-first layout route by default, and WiX v5 MSI installers. |
 
 ---
 
@@ -399,7 +399,7 @@ flowchart TD
 
 ---
 
-### Phase 8: CMap Subset Font Decoder, Vision-First Routing & Release 0.7.0 (Audit 2026-11-22)
+### Phase 8: CMap Subset Font Decoder, Vision-First Routing & Release 0.7.1 (Audit 2026-11-22)
 
 #### Milestone 8.1: Adobe CMap `/ToUnicode` & Encoding Map Resolution
 - **Tasks**:
@@ -413,14 +413,12 @@ flowchart TD
   2. Prioritized vision-based layout segmentation and OCR to guarantee formulas, tables, and images are accurately captured without corrupted text streams from non-standard embedded fonts.
   3. Preserved opt-in digital text extraction via `--extract-digital-text`.
 
-#### Milestone 8.3: Release 0.7.0 & Windows WiX v5 MSI Packaging
+#### Milestone 8.3: Release 0.7.1 & Windows WiX v5 MSI Packaging
 - **Tasks**:
-  1. Synchronized version `0.7.0` across `Cargo.toml`, member crates, `crates/desktop/tauri.conf.json`, `ui/package.json`, and WiX manifests (`wix/main.wxs`, `wix/full.wxs`).
+  1. Synchronized version `0.7.1` across `Cargo.toml`, member crates, `crates/desktop/tauri.conf.json`, `ui/package.json`, and WiX manifests (`wix/main.wxs`, `wix/full.wxs`).
   2. Rebuilt production frontend bundle `ui/dist` with React 19 + Tailwind CSS.
   3. Compiled release binaries with Thin LTO (`pdfmd-lite.exe` and `pdfmd-lite-desktop.exe`).
-  4. Built and validated WiX MSI packages in `dist/installers/`:
-     - `pdfmd-lite-v0.7.0-x64-slim.msi` (83.46 MB, SHA-256: `6FDC4BAABB0BB521C144ACCF5C598F32CE620A65D420C6696FFF8C1844E7D999`)
-     - `pdfmd-lite-v0.7.0-x64-full-offline.msi` (359.98 MB, SHA-256: `0B54050FEC51526E845A0AA79FEA609F56784F9357A43BA3A1D2B848EAE7D251`)
+  4. Built and validated WiX MSI packages in `dist/installers/`.
 
 - **Verification**:
   - `cargo check --all-targets`: Passed with 0 errors.

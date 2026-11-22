@@ -161,7 +161,7 @@ The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-pr
 | **5.4: Tauri v2 Desktop Shell** | Native Windows WebView2 container executing engine commands in-process with OS file/folder dialogs and window event telemetry. |
 | **5.5: Windows MSI Packaging** | WiX Toolset v5 automation generating both a Full Offline MSI (~225 MB with models) and Slim MSI (~77 MB) for Program Files. |
 
-## Phase 8 — CMap Font Decoder, Vision-First Routing & v0.7.0 Release (Completed ✅)
+## Phase 8 — CMap Font Decoder, Vision-First Routing & v0.7.1 Release (Completed ✅)
 
 **Status:** Implemented ✅
 
@@ -169,7 +169,7 @@ The `embed-models` feature is fully implemented with `tokenizers` 0.20 and in-pr
 |-----------|-------------------------------------|
 | **8.1: Adobe CMap & Font Encoding Parser** | Implemented `/ToUnicode` CMap stream parser and standard PDF encoding fallbacks (`WinAnsi`, `Standard`, `MacRoman`, `UTF-16BE`) to resolve font mojibake in digital text. |
 | **8.2: Vision-First Layout Routing** | Switched default route to pure vision-based layout and OCR, protecting formula/table/image integrity against scrambled subset fonts while retaining opt-in digital extraction (`--extract-digital-text`). |
-| **8.3: Release v0.7.0 Packaging** | Bumped monorepo to v0.7.0 and generated WiX v5 Slim (83.46 MB) and Full Offline (359.98 MB) MSI installers with SHA-256 digests. |
+| **8.3: Release v0.7.1 Packaging** | Bumped monorepo to v0.7.1 and generated WiX v5 Slim and Full Offline MSI installers with SHA-256 digests. |
 
 ## Verification
 
