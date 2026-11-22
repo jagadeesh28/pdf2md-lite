@@ -868,15 +868,18 @@ fn process_single_page_image_with_doc(
         image_opts,
     )?;
 
-    // Phase 2: Convert to grayscale directly (eliminates 30 MB RGBA clone) and mask in-place (ADR 0011)
+    // Phase 2: Convert to grayscale directly (eliminates 30 MB RGBA clone) (ADR 0011)
     let mut gray_canvas = page_img.to_luma8();
-    if !layout.picture_masks.is_empty() {
-        mask_gray_regions_mut(&mut gray_canvas, &layout.picture_masks);
-    }
 
     // Phase 3: Text Extraction (Baseline-Aware Hybrid DOM Extraction or Indra OCR, ADR 0012)
     let hybrid_dom_viable = lopdf_doc
         .is_some_and(|doc| crate::pdf::can_use_hybrid_dom(doc, page_num, image_opts.dom_mode));
+
+    // Only apply in-place visual masking for genuine picture figures when hybrid DOM extraction is viable (ADR 0011, ADR 0012).
+    // On scanned documents or image-only pages, masking visual regions would erase the scanned document text prior to OCR.
+    if hybrid_dom_viable && !layout.picture_masks.is_empty() {
+        mask_gray_regions_mut(&mut gray_canvas, &layout.picture_masks);
+    }
 
     let (ocr_text, text_lines) = if hybrid_dom_viable {
         let doc = lopdf_doc.unwrap();
@@ -940,6 +943,15 @@ fn process_single_page_image_with_doc(
             txt.to_string()
         } else {
             String::new()
+        }
+    } else if let Some(txt) = raw_page_text {
+        let ocr_alpha = ocr_text.chars().filter(|c| c.is_alphanumeric()).count();
+        let raw_alpha = txt.chars().filter(|c| c.is_alphanumeric()).count();
+        // If raw stream text has substantially more content than sparse/hallucinated OCR
+        if raw_alpha > ocr_alpha + 30 && ocr_alpha < 30 {
+            txt.to_string()
+        } else {
+            ocr_text
         }
     } else {
         ocr_text

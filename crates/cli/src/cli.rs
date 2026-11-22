@@ -149,7 +149,7 @@ pub struct CliArgs {
     #[arg(long = "auto")]
     pub auto: bool,
 
-    /// DOM extraction strategy: never (default, pure Indra vision OCR), auto, always
+    /// DOM extraction strategy: auto (default), always, never
     #[arg(long = "dom-extraction", visible_alias = "dom-mode", value_name = "MODE")]
     pub dom_extraction: Option<String>,
 
@@ -533,7 +533,7 @@ pub fn run() {
                 .as_deref()
                 .and_then(pdfmd_lite::pdf::DomExtractionMode::from_str_loose)
         })
-        .unwrap_or(pdfmd_lite::pdf::DomExtractionMode::Never);
+        .unwrap_or(pdfmd_lite::pdf::DomExtractionMode::Auto);
 
     let image_opts = ImageOptions::new(
         final_image_format,

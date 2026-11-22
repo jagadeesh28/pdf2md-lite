@@ -85,7 +85,7 @@ mod tests {
             image_quality = 90
             save_table_images = true
             embed_images_base64 = false
-            dom_extraction = "never"
+            dom_extraction = "auto"
         "#;
         let config: Result<AppConfig, _> = toml::from_str(toml_str);
         assert!(config.is_ok());

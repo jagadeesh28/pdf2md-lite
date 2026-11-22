@@ -64,7 +64,7 @@ impl Default for ImageOptions {
             quality: 80,
             save_table_images: false,
             embed_base64: false,
-            dom_mode: crate::pdf::DomExtractionMode::Never,
+            dom_mode: crate::pdf::DomExtractionMode::Auto,
         }
     }
 }
@@ -76,7 +76,7 @@ impl ImageOptions {
             quality: quality.clamp(1, 100),
             save_table_images,
             embed_base64: false,
-            dom_mode: crate::pdf::DomExtractionMode::Never,
+            dom_mode: crate::pdf::DomExtractionMode::Auto,
         }
     }
 

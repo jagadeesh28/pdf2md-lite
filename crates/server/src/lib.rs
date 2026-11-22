@@ -322,8 +322,8 @@ pub struct EmbedVaultRequest {
 fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     let dom_mode = match config.dom_extraction.as_deref() {
         Some("always") => DomExtractionMode::Always,
-        Some("auto") => DomExtractionMode::Auto,
-        _ => DomExtractionMode::Never,
+        Some("never") => DomExtractionMode::Never,
+        _ => DomExtractionMode::Auto,
     };
     ImageOptions {
         format: match config.image_format.as_deref() {

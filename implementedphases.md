@@ -15,7 +15,7 @@ This document records the completed implementation phases and technical mileston
 | **Phase 5** | Unified Desktop & Web Application | Workspace monorepo decoupling, React 19 + Tailwind SPA, Axum localhost daemon (`--serve`), Tauri v2 desktop shell, and WiX v5 MSI packaging. |
 | **Phase 6** | Reliability, Zero-Copy Model Locator & Hardening | Process-wide panic hook with thread-local suppression, zero-copy cascading `ModelLocator`, strict config gating, unified error boundaries, and `--doctor` diagnostics. |
 | **Phase 7** | Hardware Acceleration, Split-Pane Inspector & Hybrid Table Serialization | DirectML execution provider, generic `SessionPool<T>`, live split-pane canvas streaming, and hybrid table serialization with cell span reconstruction. |
-| **Phase 8** | CMap Font Decoder, Vision-First Routing & Release 0.7.1 | Adobe CMap `/ToUnicode` stream parsing, encoding fallbacks, vision-first layout route by default, and WiX v5 MSI installers. |
+| **Phase 8** | CMap Font Decoder, Hybrid Routing & Release 0.7.2 | Adobe CMap `/ToUnicode` stream parsing, encoding fallbacks, hybrid DOM routing & in-place masking gating, and WiX v5 MSI installers. |
 
 ---
 
@@ -399,23 +399,24 @@ flowchart TD
 
 ---
 
-### Phase 8: CMap Subset Font Decoder, Vision-First Routing & Release 0.7.1 (Audit 2026-11-22)
+### Phase 8: CMap Subset Font Decoder, Hybrid Routing & Release 0.7.2 (Audit 2026-11-22)
 
 #### Milestone 8.1: Adobe CMap `/ToUnicode` & Encoding Map Resolution
 - **Tasks**:
-  1. Implemented robust CMap stream extraction and CID-to-Unicode mapping in `crates/engine/src/pdf.rs` using `lopdf`.
+  1. Implemented robust CMap stream extraction, discrete PostScript block tokenization (`tokenize_cmap_block`), and CID-to-Unicode mapping in `crates/engine/src/pdf.rs` using `lopdf`.
   2. Handled standard character mappings (`WinAnsiEncoding`, `StandardEncoding`, `MacRomanEncoding`, `PDFDocEncoding`) and two-byte big-endian UTF-16 stream decoders.
   3. Integrated lookup caches to avoid redundant stream decodes across repeated glyph renders.
 
-#### Milestone 8.2: Vision-First Layout Routing by Default
+#### Milestone 8.2: Baseline-Aware Hybrid Routing & In-Place Masking Gating
 - **Tasks**:
-  1. Defaulted `extract_digital_text` to `false` in `FigurePipelineConfig`, CLI flags, and UI configurations.
-  2. Prioritized vision-based layout segmentation and OCR to guarantee formulas, tables, and images are accurately captured without corrupted text streams from non-standard embedded fonts.
-  3. Preserved opt-in digital text extraction via `--extract-digital-text`.
+  1. Restored `DomExtractionMode::Auto` as the default across CLI, desktop shell, and server daemon (ADR 0012).
+  2. Scoped math font fallback to TeX math fonts (`CMMI`, `CMSY`, `MSBM`) and added explicit detection for Type0 / Identity-H CID fonts lacking `/ToUnicode`.
+  3. Gated in-place visual masking (`mask_gray_regions_mut`) to hybrid-viable documents, ensuring scanned documents and certificates retain complete unmasked canvases for neural OCR (ADR 0011).
+  4. Hardened Phase 4 body text selection to preserve rich stream text against sparse OCR noise.
 
-#### Milestone 8.3: Release 0.7.1 & Windows WiX v5 MSI Packaging
+#### Milestone 8.3: Release 0.7.2 & Windows WiX v5 MSI Packaging
 - **Tasks**:
-  1. Synchronized version `0.7.1` across `Cargo.toml`, member crates, `crates/desktop/tauri.conf.json`, `ui/package.json`, and WiX manifests (`wix/main.wxs`, `wix/full.wxs`).
+  1. Synchronized version `0.7.2` across `Cargo.toml`, member crates, `crates/desktop/tauri.conf.json`, `ui/package.json`, and WiX manifests (`wix/main.wxs`, `wix/full.wxs`).
   2. Rebuilt production frontend bundle `ui/dist` with React 19 + Tailwind CSS.
   3. Compiled release binaries with Thin LTO (`pdfmd-lite.exe` and `pdfmd-lite-desktop.exe`).
   4. Built and validated WiX MSI packages in `dist/installers/`.
@@ -423,7 +424,7 @@ flowchart TD
 - **Verification**:
   - `cargo check --all-targets`: Passed with 0 errors.
   - `cargo check --benches`: Passed with 0 errors.
-  - `cargo test --workspace`: 100/100 unit and integration tests passed.
+  - `cargo test --workspace`: 103/103 unit and integration tests passed.
   - `cargo clippy --all-targets -- -D warnings`: Passed with 0 warnings.
-  - `target\release\pdfmd-lite.exe --version`: Output `pdfmd-lite 0.7.0`.
+  - `target\release\pdfmd-lite.exe --version`: Output `pdfmd-lite 0.7.2`.
 

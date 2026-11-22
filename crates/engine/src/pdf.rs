@@ -14,12 +14,13 @@ use crate::markdown::{DocumentMetadata, PdfExtractionResult};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DomExtractionMode {
-    /// Automatically validates font CMaps and text density when explicitly requested.
+    /// Automatically validates font CMaps and text density; uses hybrid extraction on clean vector PDFs
+    /// while falling back to pure vision OCR on scanned or unmapped-font documents (default).
+    #[default]
     Auto,
     /// Unconditionally forces digital DOM text stream extraction.
     Always,
-    /// Bypasses DOM stream extraction and uses pure Indra neural vision OCR exclusively (default).
-    #[default]
+    /// Bypasses DOM stream extraction and uses pure Indra neural vision OCR exclusively.
     Never,
 }
 
@@ -471,32 +472,42 @@ pub fn can_use_hybrid_dom(doc: &lopdf::Document, page_num: usize, mode: DomExtra
                     .map(|n| String::from_utf8_lossy(n).to_uppercase())
                     .unwrap_or_default();
 
-                let is_math_or_symbol = base_font_name.contains("CMMI")
+                let is_tex_math = base_font_name.contains("CMMI")
                     || base_font_name.contains("CMSY")
-                    || base_font_name.contains("MSBM")
-                    || base_font_name.contains("MATH")
-                    || base_font_name.contains("SYMBOL");
+                    || base_font_name.contains("MSBM");
 
-                if is_math_or_symbol && font_dict.get(b"ToUnicode").is_err() {
-                    // Specialized math font lacking Unicode CMap -> safe fallback to Indra OCR
+                if is_tex_math && font_dict.get(b"ToUnicode").is_err() {
+                    // Specialized LaTeX math font lacking Unicode CMap -> safe fallback to Indra OCR
                     return false;
                 }
 
-                // If subsetted or Type0 font lacks ToUnicode, fallback to Indra OCR in Auto mode
+                // If Type0 or Identity-H/V CID font lacks ToUnicode CMap, digital decoding yields cipher noise -> safe fallback to Indra OCR
                 let subtype = font_dict
                     .get(b"Subtype")
                     .ok()
                     .and_then(|o| o.as_name().ok())
                     .unwrap_or(b"");
-                let is_subset_or_type0 = base_font_name.contains('+') || subtype == b"Type0";
-                if is_subset_or_type0 && font_dict.get(b"ToUnicode").is_err() {
+                let encoding_name = font_dict
+                    .get(b"Encoding")
+                    .ok()
+                    .and_then(|o| o.as_name().ok())
+                    .unwrap_or(b"");
+                let is_cid_font = subtype == b"Type0"
+                    || encoding_name == b"Identity-H"
+                    || encoding_name == b"Identity-V";
+
+                if is_cid_font && font_dict.get(b"ToUnicode").is_err() {
                     return false;
                 }
             }
 
-            // Verify content stream exists and is non-empty
-            let content_bytes = doc.get_page_content(page_id);
-            !content_bytes.is_empty()
+            // Verify content stream exists and actually contains text rendering operators (Tj, TJ, ', ")
+            let Ok(content) = doc.get_and_decode_page_content(page_id) else {
+                return false;
+            };
+            content.operations.iter().any(|op| {
+                op.operator == "Tj" || op.operator == "TJ" || op.operator == "'" || op.operator == "\""
+            })
         }
     }
 }
@@ -620,6 +631,45 @@ impl PdfFontDecoder {
     }
 }
 
+/// Tokenizes a PostScript / CMap block into discrete tokens, respecting self-delimiting `<...>`, `[`, and `]`.
+fn tokenize_cmap_block(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+        } else if c == '<' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && chars[i] != '>' {
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == '>' {
+                i += 1;
+            }
+            tokens.push(chars[start..i].iter().collect());
+        } else if c == '[' || c == ']' {
+            tokens.push(c.to_string());
+            i += 1;
+        } else {
+            let start = i;
+            while i < chars.len()
+                && !chars[i].is_whitespace()
+                && chars[i] != '<'
+                && chars[i] != '>'
+                && chars[i] != '['
+                && chars[i] != ']'
+            {
+                i += 1;
+            }
+            tokens.push(chars[start..i].iter().collect());
+        }
+    }
+    tokens
+}
+
 /// Parses a PDF `/ToUnicode` CMap stream into a character-code to Unicode mapping.
 pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
     let mut map = HashMap::new();
@@ -658,10 +708,11 @@ pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
         let end_pos = after_start.find("endbfchar").unwrap_or(after_start.len());
         let block = &after_start[..end_pos];
 
-        let mut tokens = block.split_whitespace();
-        while let Some(src_tok) = tokens.next() {
-            if let Some(dst_tok) = tokens.next()
-                && let (Some(code), Some(text)) = (parse_hex_code(src_tok), parse_dst_utf16(dst_tok))
+        let tokens = tokenize_cmap_block(block);
+        let mut it = tokens.into_iter();
+        while let Some(src_tok) = it.next() {
+            if let Some(dst_tok) = it.next()
+                && let (Some(code), Some(text)) = (parse_hex_code(&src_tok), parse_dst_utf16(&dst_tok))
             {
                 map.insert(code, text);
             }
@@ -678,41 +729,29 @@ pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
         let end_pos = after_start.find("endbfrange").unwrap_or(after_start.len());
         let block = &after_start[..end_pos];
 
-        let mut tokens = block.split_whitespace();
-        while let Some(start_tok) = tokens.next() {
-            let Some(end_tok) = tokens.next() else { break };
-            let Some(dst_tok) = tokens.next() else { break };
+        let tokens = tokenize_cmap_block(block);
+        let mut it = tokens.into_iter();
+        while let Some(start_tok) = it.next() {
+            let Some(end_tok) = it.next() else { break };
+            let Some(dst_tok) = it.next() else { break };
 
-            let Some(start_code) = parse_hex_code(start_tok) else { continue };
-            let Some(end_code) = parse_hex_code(end_tok) else { continue };
+            let Some(start_code) = parse_hex_code(&start_tok) else { continue };
+            let Some(end_code) = parse_hex_code(&end_tok) else { continue };
 
-            if dst_tok.starts_with('[') {
+            if dst_tok == "[" {
                 let mut current_code = start_code;
-                let first_elem = dst_tok.trim_start_matches('[');
-                if !first_elem.is_empty() && first_elem != "]"
-                    && let Some(text) = parse_dst_utf16(first_elem)
-                {
-                    map.insert(current_code, text);
-                    current_code += 1;
-                }
-                for elem in tokens.by_ref() {
-                    if elem.ends_with(']') {
-                        let inner = elem.trim_end_matches(']');
-                        if !inner.is_empty() && current_code <= end_code
-                            && let Some(text) = parse_dst_utf16(inner)
-                        {
-                            map.insert(current_code, text);
-                        }
+                for elem in it.by_ref() {
+                    if elem == "]" {
                         break;
                     }
                     if current_code <= end_code
-                        && let Some(text) = parse_dst_utf16(elem)
+                        && let Some(text) = parse_dst_utf16(&elem)
                     {
                         map.insert(current_code, text);
                         current_code += 1;
                     }
                 }
-            } else if let Some(dst_start_code) = parse_hex_code(dst_tok) {
+            } else if let Some(dst_start_code) = parse_hex_code(&dst_tok) {
                 let count = end_code.saturating_sub(start_code);
                 for i in 0..=count {
                     let code = start_code + i;
@@ -1213,7 +1252,7 @@ mod tests {
             Some(DomExtractionMode::Never)
         );
         assert_eq!(DomExtractionMode::from_str_loose("unknown"), None);
-        assert_eq!(DomExtractionMode::default(), DomExtractionMode::Never);
+        assert_eq!(DomExtractionMode::default(), DomExtractionMode::Auto);
     }
 
     #[test]
@@ -1350,5 +1389,67 @@ mod tests {
                 .iter()
                 .any(|l| l.text.contains("Prose text after formula"))
         );
+    }
+
+    #[test]
+    fn test_font_cmap_concatenated_hex_ranges() {
+        let cmap_sample = r#"
+            /CIDInit /ProcSet findresource begin
+            12 dict begin
+            begincmap
+            /CMapType 2 def
+            1 begincodespacerange
+            <00><ff>
+            endcodespacerange
+            4 beginbfrange
+            <01><01><0046>
+            <02><02><006f>
+            <03><03><0072>
+            <04><04><0020>
+            endbfrange
+            endcmap
+        "#;
+
+        let map = parse_cmap_str(cmap_sample);
+        assert_eq!(map.len(), 4);
+        assert_eq!(map.get(&1), Some(&"F".to_string()));
+        assert_eq!(map.get(&2), Some(&"o".to_string()));
+        assert_eq!(map.get(&3), Some(&"r".to_string()));
+        assert_eq!(map.get(&4), Some(&" ".to_string()));
+
+        let decoder = PdfFontDecoder {
+            cmap: map,
+            is_two_byte: false,
+        };
+        assert_eq!(decoder.decode(&[1, 2, 3, 4]), "For ");
+    }
+
+    #[test]
+    fn test_electricity_name_change_dom_extraction() {
+        let path = Path::new(r"F:\Jag\artech varsha documents\Electricity name change.pdf");
+        if !path.exists() {
+            return;
+        }
+        let doc = lopdf::Document::load(path).expect("Failed to load PDF");
+        assert!(can_use_hybrid_dom(&doc, 1, DomExtractionMode::Auto), "Electricity name change must be eligible for hybrid DOM");
+        let lines = extract_baseline_aware_dom_text_lines(&doc, 1, 2.0, &[])
+            .expect("DOM extraction should succeed");
+        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(full_text.contains("For Office"), "Must contain 'For Office', got: {}", full_text);
+        assert!(full_text.contains("Connected"), "Must contain 'Connected'");
+    }
+
+    #[test]
+    fn test_varsha_deed_dom_extraction() {
+        let path = Path::new(r"F:\Jag\artech varsha documents\VARSHA - 7B - B BLOCK Deed.pdf");
+        if !path.exists() {
+            return;
+        }
+        let doc = lopdf::Document::load(path).expect("Failed to load PDF");
+        assert!(can_use_hybrid_dom(&doc, 1, DomExtractionMode::Auto), "Varsha deed must be eligible for hybrid DOM");
+        let lines = extract_baseline_aware_dom_text_lines(&doc, 2, 2.0, &[])
+            .expect("DOM extraction on page 2 should succeed");
+        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(full_text.contains("Sub Regiskar") || full_text.contains("Sub Registrar") || full_text.contains("Pattom"), "Must extract page 2 deed text");
     }
 }
