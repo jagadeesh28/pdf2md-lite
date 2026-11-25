@@ -85,6 +85,7 @@ pub struct ConversionOptions {
     pub image_opts: crate::figure::ImageOptions,
     pub embed: bool,
     pub models_dir: Option<PathBuf>,
+    pub debug_layout: Option<PathBuf>,
 }
 
 impl ConversionOptions {
@@ -99,6 +100,7 @@ impl ConversionOptions {
             image_opts: crate::figure::ImageOptions::default(),
             embed: false,
             models_dir: None,
+            debug_layout: None,
         }
     }
 
@@ -129,6 +131,11 @@ impl ConversionOptions {
 
     pub fn with_models_dir(mut self, dir: PathBuf) -> Self {
         self.models_dir = Some(dir);
+        self
+    }
+
+    pub fn with_debug_layout(mut self, dir: Option<PathBuf>) -> Self {
+        self.debug_layout = dir;
         self
     }
 }
@@ -629,7 +636,7 @@ where
                     page_num,
                     raw_page_text.as_deref(),
                     script,
-                    image_opts,
+                    image_opts.clone(),
                 ),
                 Err(err) => {
                     tracing::warn!(
@@ -662,6 +669,7 @@ where
             let input_path_clone = input_path_buf.clone();
             let pdf_pages_clone = Arc::clone(&pdf_pages);
             let lopdf_doc_clone = Arc::clone(&lopdf_doc);
+            let image_opts_worker = image_opts.clone();
 
             let handle = thread::spawn(move || {
                 loop {
@@ -692,7 +700,7 @@ where
                             page_num,
                             raw_page_text.as_deref(),
                             script,
-                            image_opts,
+                            image_opts_worker.clone(),
                         ),
                         Err(err) => {
                             tracing::warn!(
@@ -903,7 +911,7 @@ fn process_single_page_image_with_doc(
         page_img,
         image_output_dir,
         page_num,
-        image_opts,
+        image_opts.clone(),
     )?;
 
     // Phase 2: Convert to grayscale directly (eliminates 30 MB RGBA clone) (ADR 0011)
@@ -924,6 +932,9 @@ fn process_single_page_image_with_doc(
         let mut exclude_regions: Vec<crate::figure::caption::FigureRect> = Vec::new();
         exclude_regions.extend(layout.picture_masks.iter().cloned());
         exclude_regions.extend(layout.formulas.iter().cloned());
+        for (tbl_rect, _) in &layout.tables {
+            exclude_regions.push(*tbl_rect);
+        }
 
         match crate::pdf::extract_baseline_aware_dom_text_lines(
             doc,
@@ -950,6 +961,22 @@ fn process_single_page_image_with_doc(
             .transcribe_gray_with_script(&gray_canvas, script)
             .with_context(|| format!("Indra OCR failed for page {page_num}"))?
     };
+
+    // Filter out any lines falling inside tables or picture masks from body prose
+    let mut text_lines = text_lines;
+    text_lines.retain(|l| {
+        let cx = l.bbox.x + l.bbox.width / 2;
+        let cy = l.bbox.y + l.bbox.height / 2;
+        let in_tbl = layout
+            .tables
+            .iter()
+            .any(|(t, _)| cx >= t.x && cx <= t.x + t.width && cy >= t.y && cy <= t.y + t.height);
+        let in_pic = layout
+            .picture_masks
+            .iter()
+            .any(|p| cx >= p.x && cx <= p.x + p.width && cy >= p.y && cy <= p.y + p.height);
+        !in_tbl && !in_pic
+    });
 
     // Phase 3.1: Proximity Caption Matching for Figures
     for fig in &mut layout.pictures {
@@ -1045,8 +1072,8 @@ fn process_single_page_image_with_doc(
         if let Some(sc) = single_char_cand {
             recognized_latex = Some(sc);
         } else if is_tiny_formula && inside_lines.is_empty() {
-            // Tiny box with no OCR text — likely a symbol or noise; emit as inline math placeholder
-            recognized_latex = Some("?".to_string());
+            // Tiny box with no text — skip without emitting a spurious placeholder
+            continue;
         } else {
             #[cfg(feature = "latex-ort")]
             if let Some(latex_engine) = figure::latex::get_latex_engine() {
@@ -1304,6 +1331,77 @@ fn process_single_page_image_with_doc(
 
     // Phase 7: Attach visual figures (pictures) to body text
     let with_figures = attach_figures_to_page_text(&formatted_text, &layout.pictures);
+
+    // Phase 7.1: Diagnostic Layout Trace (--debug-layout <dir>)
+    if let Some(ref debug_dir) = image_opts.debug_layout {
+        let (media_box, crop_box, rotate) = if let Some(doc) = lopdf_doc
+            && let Some(page_id) = doc.get_pages().get(&(page_num as u32)).copied()
+            && let Ok(p_dict) = doc.get_dictionary(page_id)
+        {
+            let (x0, y0, x1, y1) = crate::pdf::get_page_bbox(doc, p_dict);
+            let rot = crate::pdf::get_page_rotate(p_dict);
+            ([x0, y0, x1, y1], [x0, y0, x1, y1], rot)
+        } else {
+            ([0.0, 0.0, 595.0, 842.0], [0.0, 0.0, 595.0, 842.0], 0)
+        };
+
+        let raw_spans = text_lines
+            .iter()
+            .enumerate()
+            .map(|(idx, l)| crate::ir::SpanIr {
+                id: idx,
+                text: l.text.clone(),
+                bbox: crate::ir::BoundingBox::new(
+                    l.bbox.x as f32,
+                    l.bbox.y as f32,
+                    l.bbox.width as f32,
+                    l.bbox.height as f32,
+                ),
+                font_name: None,
+                font_size: 12.0,
+                provenance: if hybrid_dom_viable {
+                    crate::ir::Provenance::Dom
+                } else {
+                    crate::ir::Provenance::Ocr
+                },
+            })
+            .collect();
+
+        let yolo_boxes_raw = layout
+            .raw_layout_boxes
+            .iter()
+            .map(|b| crate::ir::LayoutBoxTrace {
+                class_name: b.class.as_str().to_string(),
+                class_id: match b.class {
+                    crate::figure::yolo::LayoutClass::Picture => 6,
+                    crate::figure::yolo::LayoutClass::Table => 8,
+                    crate::figure::yolo::LayoutClass::Formula => 2,
+                    crate::figure::yolo::LayoutClass::SectionHeader => 7,
+                    crate::figure::yolo::LayoutClass::Title => 10,
+                },
+                score: b.score,
+                bbox: crate::ir::BoundingBox::new(
+                    b.x as f32,
+                    b.y as f32,
+                    b.width as f32,
+                    b.height as f32,
+                ),
+            })
+            .collect();
+
+        let trace = crate::ir::DebugLayoutTrace {
+            page_number: page_num,
+            media_box,
+            crop_box,
+            rotate,
+            raw_dom_spans: raw_spans,
+            yolo_boxes_raw,
+            yolo_boxes_post_nms: Vec::new(),
+            xy_cut_splits: Vec::new(),
+            final_block_order: Vec::new(),
+        };
+        let _ = trace.write_to_dir(debug_dir);
+    }
 
     // Phase 8: Page Demarcation (<!-- Page N -->)
     let page_demarcation = format_page_demarcation(page_num);

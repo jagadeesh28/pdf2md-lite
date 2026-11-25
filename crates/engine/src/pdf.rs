@@ -524,7 +524,7 @@ fn obj_to_f32(obj: &lopdf::Object) -> Option<f32> {
 }
 
 /// Helper to extract page bounding box from MediaBox or CropBox.
-fn get_page_bbox(doc: &lopdf::Document, page_dict: &lopdf::Dictionary) -> (f32, f32, f32, f32) {
+pub fn get_page_bbox(doc: &lopdf::Document, page_dict: &lopdf::Dictionary) -> (f32, f32, f32, f32) {
     let box_obj = page_dict
         .get(b"CropBox")
         .or_else(|_| page_dict.get(b"MediaBox"))
@@ -551,6 +551,83 @@ fn get_page_bbox(doc: &lopdf::Document, page_dict: &lopdf::Dictionary) -> (f32, 
     }
 
     (0.0, 0.0, 595.0, 842.0)
+}
+
+/// Helper to extract page rotation in degrees.
+pub fn get_page_rotate(page_dict: &lopdf::Dictionary) -> i32 {
+    page_dict
+        .get(b"Rotate")
+        .ok()
+        .and_then(|o| o.as_i64().ok())
+        .unwrap_or(0) as i32
+}
+
+fn mult_matrix(m: [f32; 6], ctm: [f32; 6]) -> [f32; 6] {
+    [
+        m[0] * ctm[0] + m[1] * ctm[2],
+        m[0] * ctm[1] + m[1] * ctm[3],
+        m[2] * ctm[0] + m[3] * ctm[2],
+        m[2] * ctm[1] + m[3] * ctm[3],
+        m[4] * ctm[0] + m[5] * ctm[2] + ctm[4],
+        m[4] * ctm[1] + m[5] * ctm[3] + ctm[5],
+    ]
+}
+
+/// Maps standard Adobe Glyph List and ligature names to Unicode characters.
+fn glyph_name_to_unicode(name: &[u8]) -> Option<String> {
+    match name {
+        b"fi" => Some("fi".to_string()),
+        b"fl" => Some("fl".to_string()),
+        b"ff" => Some("ff".to_string()),
+        b"ffi" => Some("ffi".to_string()),
+        b"ffl" => Some("ffl".to_string()),
+        b"endash" => Some("\u{2013}".to_string()),
+        b"emdash" => Some("\u{2014}".to_string()),
+        b"quotedblleft" => Some("\u{201C}".to_string()),
+        b"quotedblright" => Some("\u{201D}".to_string()),
+        b"quoteleft" => Some("\u{2018}".to_string()),
+        b"quoteright" => Some("\u{2019}".to_string()),
+        b"bullet" => Some("\u{2022}".to_string()),
+        b"minus" => Some("\u{2212}".to_string()),
+        b"fraction" => Some("/".to_string()),
+        b"dagger" => Some("\u{2020}".to_string()),
+        b"daggerdbl" => Some("\u{2021}".to_string()),
+        b"ellipsis" => Some("\u{2026}".to_string()),
+        b"perthousand" => Some("\u{2030}".to_string()),
+        b"copyright" => Some("\u{00A9}".to_string()),
+        b"registered" => Some("\u{00AE}".to_string()),
+        b"trademark" => Some("\u{2122}".to_string()),
+        b"degree" => Some("\u{00B0}".to_string()),
+        b"plusminus" => Some("\u{00B1}".to_string()),
+        b"times" => Some("\u{00D7}".to_string()),
+        b"divide" => Some("\u{00F7}".to_string()),
+        b"leq" => Some("\u{2264}".to_string()),
+        b"geq" => Some("\u{2265}".to_string()),
+        b"neq" => Some("\u{2260}".to_string()),
+        b"approx" => Some("\u{2248}".to_string()),
+        b"infty" => Some("\u{221E}".to_string()),
+        b"sum" => Some("\u{2211}".to_string()),
+        b"integral" => Some("\u{222B}".to_string()),
+        b"partialdiff" => Some("\u{2202}".to_string()),
+        b"space" => Some(" ".to_string()),
+        other => {
+            if (other.starts_with(b"uni") && other.len() == 7)
+                || (other.starts_with(b"u") && other.len() == 5)
+            {
+                let hex_str = if other.starts_with(b"uni") {
+                    std::str::from_utf8(&other[3..]).ok()?
+                } else {
+                    std::str::from_utf8(&other[1..]).ok()?
+                };
+                if let Ok(code) = u32::from_str_radix(hex_str, 16)
+                    && let Some(c) = char::from_u32(code)
+                {
+                    return Some(c.to_string());
+                }
+            }
+            None
+        }
+    }
 }
 
 fn is_box_overlapping(a: &TextBoundingBox, b: &FigureRect) -> bool {
@@ -590,19 +667,29 @@ impl PdfFontDecoder {
             let mut out = String::new();
             if self.is_two_byte {
                 let mut i = 0;
-                while i + 1 < bytes.len() {
-                    let code = ((bytes[i] as u32) << 8) | (bytes[i + 1] as u32);
-                    if let Some(s) = self.cmap.get(&code) {
-                        out.push_str(s);
-                    } else if bytes[i] == 0 && (32..=126).contains(&bytes[i + 1]) {
-                        out.push(bytes[i + 1] as char);
+                while i < bytes.len() {
+                    let mut matched = false;
+                    if i + 1 < bytes.len() {
+                        let code = ((bytes[i] as u32) << 8) | (bytes[i + 1] as u32);
+                        if let Some(s) = self.cmap.get(&code) {
+                            out.push_str(s);
+                            i += 2;
+                            matched = true;
+                        } else if bytes[i] == 0 && (32..=126).contains(&bytes[i + 1]) {
+                            out.push(bytes[i + 1] as char);
+                            i += 2;
+                            matched = true;
+                        }
                     }
-                    i += 2;
-                }
-                if i < bytes.len() {
-                    let code = bytes[i] as u32;
-                    if let Some(s) = self.cmap.get(&code) {
-                        out.push_str(s);
+                    if !matched {
+                        // Check variable-length 1-byte fallback
+                        let code = bytes[i] as u32;
+                        if let Some(s) = self.cmap.get(&code) {
+                            out.push_str(s);
+                        } else if (32..=126).contains(&bytes[i]) {
+                            out.push(bytes[i] as char);
+                        }
+                        i += 1;
                     }
                 }
             } else {
@@ -825,6 +912,46 @@ pub fn build_page_font_decoders(
             }
         }
 
+        // Parse `/Encoding` `/Differences` array if present (e.g. ligatures fi, fl, ff, etc.)
+        let enc_obj = font_dict.get(b"Encoding").ok();
+        let enc_dict = match enc_obj {
+            Some(lopdf::Object::Dictionary(d)) => Some(d),
+            Some(lopdf::Object::Reference(id)) => {
+                doc.get_object(*id).ok().and_then(|o| o.as_dict().ok())
+            }
+            _ => None,
+        };
+        if let Some(enc_dict) = enc_dict
+            && let Ok(diffs_obj) = enc_dict.get(b"Differences")
+        {
+            let diff_arr = match diffs_obj {
+                lopdf::Object::Array(a) => Some(a.as_slice()),
+                lopdf::Object::Reference(id) => doc
+                    .get_object(*id)
+                    .ok()
+                    .and_then(|o| o.as_array().ok())
+                    .map(|a| a.as_slice()),
+                _ => None,
+            };
+            if let Some(arr) = diff_arr {
+                let mut curr_code: u32 = 0;
+                for item in arr {
+                    match item {
+                        lopdf::Object::Integer(code) => {
+                            curr_code = (*code).max(0) as u32;
+                        }
+                        lopdf::Object::Name(name) => {
+                            if let Some(unicode_str) = glyph_name_to_unicode(name) {
+                                decoder.cmap.entry(curr_code).or_insert(unicode_str);
+                            }
+                            curr_code += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         decoders.insert(font_name.clone(), decoder);
     }
 
@@ -895,8 +1022,30 @@ pub fn parse_content_text_lines_with_fonts(
     regions_to_exclude: &[FigureRect],
     fonts: &HashMap<Vec<u8>, PdfFontDecoder>,
 ) -> Vec<TextLine> {
+    parse_content_text_lines_with_geometry(
+        content,
+        scale,
+        (0.0, 0.0, 595.0, page_h_pts),
+        0,
+        regions_to_exclude,
+        fonts,
+    )
+}
+
+/// Parses decoded PDF content operations into spatial `TextLine` structures with full geometry,
+/// CTM graphics-state stacks, `/Rotate` normalization, and font CMap resolution.
+pub fn parse_content_text_lines_with_geometry(
+    content: &lopdf::content::Content,
+    scale: f32,
+    bbox: (f32, f32, f32, f32),
+    rotate: i32,
+    regions_to_exclude: &[FigureRect],
+    fonts: &HashMap<Vec<u8>, PdfFontDecoder>,
+) -> Vec<TextLine> {
     let mut lines = Vec::new();
 
+    let mut ctm_stack: Vec<[f32; 6]> = Vec::new();
+    let mut ctm = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut matrix = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut line_matrix = matrix;
     let mut font_size = 12.0f32;
@@ -904,6 +1053,9 @@ pub fn parse_content_text_lines_with_fonts(
     let mut line_baseline_y = 0.0f32;
     let mut leading = 14.0f32;
     let mut rise = 0.0f32;
+    let mut char_spacing = 0.0f32;
+    let mut _word_spacing = 0.0f32;
+    let mut horiz_scale = 100.0f32;
     let mut current_font: Vec<u8> = Vec::new();
 
     let mut current_line_text = String::new();
@@ -912,12 +1064,16 @@ pub fn parse_content_text_lines_with_fonts(
     let mut line_char_count = 0usize;
     let mut line_active = false;
 
+    let (x0, y0, x1, y1) = bbox;
+
     let flush_line = |lines: &mut Vec<TextLine>,
                       text: &mut String,
                       x_pts: f32,
                       y_pts: f32,
                       char_count: usize,
                       base_fs: f32,
+                      h_scale: f32,
+                      c_spacing: f32,
                       active: &mut bool| {
         let trimmed = text.trim();
         if !trimmed.is_empty() && *active {
@@ -927,11 +1083,20 @@ pub fn parse_content_text_lines_with_fonts(
                 .collect();
             let clean = sanitized.trim();
             if !clean.is_empty() {
-                let w_pts = (char_count as f32 * base_fs * 0.52).max(10.0);
+                let w_pts = (char_count as f32 * base_fs * 0.52 * (h_scale / 100.0)).max(10.0)
+                    + (char_count as f32 * c_spacing);
                 let h_pts = base_fs * 1.2;
 
-                let x_px = (x_pts * scale).max(0.0) as u32;
-                let y_px = (((page_h_pts - y_pts - h_pts) * scale).max(0.0)) as u32;
+                let norm_rot = rotate.rem_euclid(360);
+                let (x_box, y_box) = match norm_rot {
+                    90 => (y_pts - y0, x_pts - x0),
+                    180 => (x1 - x_pts - w_pts, y_pts - y0),
+                    270 => (y1 - y_pts - h_pts, x1 - x_pts - w_pts),
+                    _ => (x_pts - x0, y1 - y_pts - h_pts),
+                };
+
+                let x_px = (x_box * scale).max(0.0) as u32;
+                let y_px = (y_box * scale).max(0.0) as u32;
                 let w_px = (w_pts * scale) as u32;
                 let h_px = (h_pts * scale) as u32;
 
@@ -959,8 +1124,45 @@ pub fn parse_content_text_lines_with_fonts(
         *active = false;
     };
 
+    let user_coords = |m: &[f32; 6], c: &[f32; 6]| -> (f32, f32) {
+        (
+            m[4] * c[0] + m[5] * c[2] + c[4],
+            m[4] * c[1] + m[5] * c[3] + c[5],
+        )
+    };
+
     for op in &content.operations {
         match op.operator.as_str() {
+            "q" => {
+                ctm_stack.push(ctm);
+            }
+            "Q" => {
+                ctm = ctm_stack.pop().unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+            }
+            "cm" if op.operands.len() >= 6 => {
+                let a = obj_to_f32(&op.operands[0]).unwrap_or(1.0);
+                let b = obj_to_f32(&op.operands[1]).unwrap_or(0.0);
+                let c = obj_to_f32(&op.operands[2]).unwrap_or(0.0);
+                let d = obj_to_f32(&op.operands[3]).unwrap_or(1.0);
+                let e = obj_to_f32(&op.operands[4]).unwrap_or(0.0);
+                let f = obj_to_f32(&op.operands[5]).unwrap_or(0.0);
+                ctm = mult_matrix([a, b, c, d, e, f], ctm);
+            }
+            "Tc" => {
+                if let Some(first) = op.operands.first() {
+                    char_spacing = obj_to_f32(first).unwrap_or(0.0);
+                }
+            }
+            "Tw" => {
+                if let Some(first) = op.operands.first() {
+                    _word_spacing = obj_to_f32(first).unwrap_or(0.0);
+                }
+            }
+            "Tz" => {
+                if let Some(first) = op.operands.first() {
+                    horiz_scale = obj_to_f32(first).unwrap_or(100.0).max(10.0);
+                }
+            }
             "BT" => {
                 matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
                 line_matrix = matrix;
@@ -974,6 +1176,8 @@ pub fn parse_content_text_lines_with_fonts(
                     line_start_y,
                     line_char_count,
                     base_font_size,
+                    horiz_scale,
+                    char_spacing,
                     &mut line_active,
                 );
             }
@@ -1003,9 +1207,21 @@ pub fn parse_content_text_lines_with_fonts(
                 let e = obj_to_f32(&op.operands[4]).unwrap_or(0.0);
                 let f = obj_to_f32(&op.operands[5]).unwrap_or(0.0);
 
+                matrix = [a, b, c, d, e, f];
+                line_matrix = matrix;
+                let (cur_x, cur_y) = user_coords(&matrix, &ctm);
+
+                let is_reduced_size =
+                    font_size < 0.88 * base_font_size || base_font_size < 0.88 * font_size;
+                let max_dy = if is_reduced_size {
+                    0.6 * base_font_size.max(font_size)
+                } else {
+                    0.35 * font_size.min(base_font_size).max(6.0)
+                };
+
                 let is_new_line = !line_active
-                    || (f - line_baseline_y).abs() > (base_font_size * 0.7)
-                    || e < line_start_x;
+                    || (cur_y - line_baseline_y).abs() > max_dy
+                    || cur_x < line_start_x;
 
                 if is_new_line {
                     flush_line(
@@ -1015,18 +1231,17 @@ pub fn parse_content_text_lines_with_fonts(
                         line_start_y,
                         line_char_count,
                         base_font_size,
+                        horiz_scale,
+                        char_spacing,
                         &mut line_active,
                     );
-                    line_start_x = e;
-                    line_start_y = f;
-                    line_baseline_y = f;
+                    line_start_x = cur_x;
+                    line_start_y = cur_y;
+                    line_baseline_y = cur_y;
                     base_font_size = font_size;
                     line_char_count = 0;
                     line_active = true;
                 }
-
-                matrix = [a, b, c, d, e, f];
-                line_matrix = matrix;
             }
             "Td" if op.operands.len() >= 2 => {
                 let tx = obj_to_f32(&op.operands[0]).unwrap_or(0.0);
@@ -1040,6 +1255,8 @@ pub fn parse_content_text_lines_with_fonts(
                         line_start_y,
                         line_char_count,
                         base_font_size,
+                        horiz_scale,
+                        char_spacing,
                         &mut line_active,
                     );
                 }
@@ -1047,11 +1264,12 @@ pub fn parse_content_text_lines_with_fonts(
                 line_matrix[4] += tx * line_matrix[0] + ty * line_matrix[2];
                 line_matrix[5] += tx * line_matrix[1] + ty * line_matrix[3];
                 matrix = line_matrix;
+                let (cur_x, cur_y) = user_coords(&matrix, &ctm);
 
                 if ty.abs() > 2.0 || !line_active {
-                    line_start_x = matrix[4];
-                    line_start_y = matrix[5];
-                    line_baseline_y = matrix[5];
+                    line_start_x = cur_x;
+                    line_start_y = cur_y;
+                    line_baseline_y = cur_y;
                     base_font_size = font_size;
                     line_char_count = 0;
                     line_active = true;
@@ -1069,16 +1287,19 @@ pub fn parse_content_text_lines_with_fonts(
                     line_start_y,
                     line_char_count,
                     base_font_size,
+                    horiz_scale,
+                    char_spacing,
                     &mut line_active,
                 );
 
                 line_matrix[4] += tx * line_matrix[0] + ty * line_matrix[2];
                 line_matrix[5] += tx * line_matrix[1] + ty * line_matrix[3];
                 matrix = line_matrix;
+                let (cur_x, cur_y) = user_coords(&matrix, &ctm);
 
-                line_start_x = matrix[4];
-                line_start_y = matrix[5];
-                line_baseline_y = matrix[5];
+                line_start_x = cur_x;
+                line_start_y = cur_y;
+                line_baseline_y = cur_y;
                 base_font_size = font_size;
                 line_char_count = 0;
                 line_active = true;
@@ -1091,13 +1312,16 @@ pub fn parse_content_text_lines_with_fonts(
                     line_start_y,
                     line_char_count,
                     base_font_size,
+                    horiz_scale,
+                    char_spacing,
                     &mut line_active,
                 );
                 line_matrix[5] -= leading;
                 matrix = line_matrix;
-                line_start_x = matrix[4];
-                line_start_y = matrix[5];
-                line_baseline_y = matrix[5];
+                let (cur_x, cur_y) = user_coords(&matrix, &ctm);
+                line_start_x = cur_x;
+                line_start_y = cur_y;
+                line_baseline_y = cur_y;
                 base_font_size = font_size;
                 line_char_count = 0;
                 line_active = true;
@@ -1110,7 +1334,8 @@ pub fn parse_content_text_lines_with_fonts(
                         decode_bytes_to_string(bytes)
                     };
                     if !decoded.is_empty() {
-                        let delta_y = (matrix[5] - line_baseline_y) + rise;
+                        let (_cur_x, cur_y) = user_coords(&matrix, &ctm);
+                        let delta_y = (cur_y - line_baseline_y) + rise;
                         let is_reduced_size = font_size < 0.88 * base_font_size;
 
                         if is_reduced_size && delta_y > 1.5 {
@@ -1122,7 +1347,7 @@ pub fn parse_content_text_lines_with_fonts(
                         } else {
                             current_line_text.push_str(&decoded);
                             if !line_active {
-                                line_baseline_y = matrix[5];
+                                line_baseline_y = cur_y;
                                 base_font_size = font_size;
                             }
                         }
@@ -1133,6 +1358,7 @@ pub fn parse_content_text_lines_with_fonts(
             }
             "TJ" => {
                 if let Some(lopdf::Object::Array(items)) = op.operands.first() {
+                    let space_threshold = -120.0 * (font_size / 12.0).clamp(0.5, 2.0);
                     for item in items {
                         match item {
                             lopdf::Object::String(bytes, _) => {
@@ -1142,7 +1368,8 @@ pub fn parse_content_text_lines_with_fonts(
                                     decode_bytes_to_string(bytes)
                                 };
                                 if !decoded.is_empty() {
-                                    let delta_y = (matrix[5] - line_baseline_y) + rise;
+                                    let (_cur_x, cur_y) = user_coords(&matrix, &ctm);
+                                    let delta_y = (cur_y - line_baseline_y) + rise;
                                     let is_reduced_size = font_size < 0.88 * base_font_size;
 
                                     if is_reduced_size && delta_y > 1.5 {
@@ -1159,16 +1386,92 @@ pub fn parse_content_text_lines_with_fonts(
                                 }
                             }
                             lopdf::Object::Integer(k)
-                                if *k < -180 && !current_line_text.ends_with(' ') =>
+                                if (*k as f32) < space_threshold
+                                    && !current_line_text.ends_with(' ') =>
                             {
                                 current_line_text.push(' ');
                             }
                             lopdf::Object::Real(k)
-                                if *k < -180.0 && !current_line_text.ends_with(' ') =>
+                                if *k < space_threshold && !current_line_text.ends_with(' ') =>
                             {
                                 current_line_text.push(' ');
                             }
                             _ => {}
+                        }
+                    }
+                }
+            }
+            "'" => {
+                // Move to next line (T*) then show text (Tj)
+                flush_line(
+                    &mut lines,
+                    &mut current_line_text,
+                    line_start_x,
+                    line_start_y,
+                    line_char_count,
+                    base_font_size,
+                    horiz_scale,
+                    char_spacing,
+                    &mut line_active,
+                );
+                line_matrix[5] -= leading;
+                matrix = line_matrix;
+                let (cur_x, cur_y) = user_coords(&matrix, &ctm);
+                line_start_x = cur_x;
+                line_start_y = cur_y;
+                line_baseline_y = cur_y;
+                base_font_size = font_size;
+                line_char_count = 0;
+                line_active = true;
+
+                if let Some(lopdf::Object::String(bytes, _)) = op.operands.first() {
+                    let decoded = if let Some(decoder) = fonts.get(&current_font) {
+                        decoder.decode(bytes)
+                    } else {
+                        decode_bytes_to_string(bytes)
+                    };
+                    if !decoded.is_empty() {
+                        current_line_text.push_str(&decoded);
+                        line_char_count += decoded.chars().count();
+                    }
+                }
+            }
+            "\"" => {
+                // Set word spacing (op 0), char spacing (op 1), then move to next line and show text (op 2)
+                if op.operands.len() >= 3 {
+                    _word_spacing = obj_to_f32(&op.operands[0]).unwrap_or(0.0);
+                    char_spacing = obj_to_f32(&op.operands[1]).unwrap_or(0.0);
+
+                    flush_line(
+                        &mut lines,
+                        &mut current_line_text,
+                        line_start_x,
+                        line_start_y,
+                        line_char_count,
+                        base_font_size,
+                        horiz_scale,
+                        char_spacing,
+                        &mut line_active,
+                    );
+                    line_matrix[5] -= leading;
+                    matrix = line_matrix;
+                    let (cur_x, cur_y) = user_coords(&matrix, &ctm);
+                    line_start_x = cur_x;
+                    line_start_y = cur_y;
+                    line_baseline_y = cur_y;
+                    base_font_size = font_size;
+                    line_char_count = 0;
+                    line_active = true;
+
+                    if let lopdf::Object::String(bytes, _) = &op.operands[2] {
+                        let decoded = if let Some(decoder) = fonts.get(&current_font) {
+                            decoder.decode(bytes)
+                        } else {
+                            decode_bytes_to_string(bytes)
+                        };
+                        if !decoded.is_empty() {
+                            current_line_text.push_str(&decoded);
+                            line_char_count += decoded.chars().count();
                         }
                     }
                 }
@@ -1185,6 +1488,8 @@ pub fn parse_content_text_lines_with_fonts(
         line_start_y,
         line_char_count,
         base_font_size,
+        horiz_scale,
+        char_spacing,
         &mut line_active,
     );
 
@@ -1214,23 +1519,45 @@ pub fn extract_baseline_aware_dom_text_lines(
     }
     let content = lopdf::content::Content::decode(&content_bytes)?;
 
-    let (_page_w_pts, page_h_pts) = {
-        if let Ok(page_dict) = doc.get_dictionary(page_id) {
-            let (x0, y0, x1, y1) = get_page_bbox(doc, page_dict);
-            ((x1 - x0).abs(), (y1 - y0).abs())
-        } else {
-            (595.0, 842.0)
-        }
+    let (bbox, rotate) = if let Ok(page_dict) = doc.get_dictionary(page_id) {
+        (get_page_bbox(doc, page_dict), get_page_rotate(page_dict))
+    } else {
+        ((0.0, 0.0, 595.0, 842.0), 0)
     };
 
     let font_decoders = build_page_font_decoders(doc, page_id);
-    let lines = parse_content_text_lines_with_fonts(
+    let lines = parse_content_text_lines_with_geometry(
         &content,
         scale,
-        page_h_pts,
+        bbox,
+        rotate,
         regions_to_exclude,
         &font_decoders,
     );
+
+    // DOM Sanity Gate: verify decoded text does not have excessive replacement / PUA chars (>10%)
+    let total_chars: usize = lines.iter().map(|l| l.text.chars().count()).sum();
+    let bad_chars: usize = lines
+        .iter()
+        .map(|l| {
+            l.text
+                .chars()
+                .filter(|&c| {
+                    c == '\u{FFFD}'
+                        || ('\u{E000}'..='\u{F8FF}').contains(&c)
+                        || ('\u{F0000}'..='\u{FFFFD}').contains(&c)
+                })
+                .count()
+        })
+        .sum();
+
+    if total_chars > 0 && (bad_chars as f32 / total_chars as f32) > 0.10 {
+        tracing::warn!(
+            "Page {page_num}: DOM sanity gate failed ({bad_chars}/{total_chars} bad characters, >10%). Falling back to OCR."
+        );
+        return Ok(Vec::new());
+    }
+
     Ok(lines)
 }
 

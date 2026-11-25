@@ -84,7 +84,7 @@ pub fn is_file_ready(path: &Path) -> bool {
 }
 
 /// Configuration options for the directory watch loop.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WatchOptions {
     pub debounce_delay: Duration,
     pub poll_interval: Duration,
@@ -152,7 +152,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
         options.script,
         options.quiet,
         true, // resume = true
-        options.image_opts,
+        options.image_opts.clone(),
         options.embed,
     );
 
@@ -256,7 +256,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
                 options.concurrency,
                 None,
                 options.script,
-                options.image_opts,
+                options.image_opts.clone(),
                 options.embed,
             );
 

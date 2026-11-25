@@ -17,6 +17,8 @@ pub enum LayoutClass {
     Picture,
     Table,
     Formula,
+    SectionHeader,
+    Title,
 }
 
 impl LayoutClass {
@@ -25,6 +27,8 @@ impl LayoutClass {
             LayoutClass::Picture => "figure",
             LayoutClass::Table => "table",
             LayoutClass::Formula => "formula",
+            LayoutClass::SectionHeader => "section-header",
+            LayoutClass::Title => "title",
         }
     }
 }
@@ -153,6 +157,8 @@ pub struct YoloLayoutDetector {
     formula_class_idx: usize,
     picture_class_idx: usize,
     table_class_idx: usize,
+    section_header_class_idx: usize,
+    title_class_idx: usize,
 }
 
 impl YoloLayoutDetector {
@@ -177,7 +183,9 @@ impl YoloLayoutDetector {
             target_side,
             formula_class_idx: 2, // Standard DocLayNet Formula class index
             picture_class_idx: 6, // Standard DocLayNet Picture class index
+            section_header_class_idx: 7, // Standard DocLayNet Section-header class index
             table_class_idx: 8,   // Standard DocLayNet Table class index
+            title_class_idx: 10,  // Standard DocLayNet Title class index
         })
     }
 
@@ -323,11 +331,63 @@ impl YoloLayoutDetector {
                     }
                 }
             }
+
+            // Evaluate Section-header class (DocLayNet class 7)
+            if self.section_header_class_idx + 4 < channels {
+                let sh_score = raw_slice[(4 + self.section_header_class_idx) * anchors + i];
+                if sh_score >= score_threshold {
+                    let (x, y, width, height) = info.unmap_box(cx, cy, w, h);
+                    if width > 10 && height > 8 {
+                        candidates.push(LayoutBox {
+                            x,
+                            y,
+                            width,
+                            height,
+                            class: LayoutClass::SectionHeader,
+                            score: sh_score,
+                        });
+                    }
+                }
+            }
+
+            // Evaluate Title class (DocLayNet class 10)
+            if self.title_class_idx + 4 < channels {
+                let title_score = raw_slice[(4 + self.title_class_idx) * anchors + i];
+                if title_score >= score_threshold {
+                    let (x, y, width, height) = info.unmap_box(cx, cy, w, h);
+                    if width > 15 && height > 10 {
+                        candidates.push(LayoutBox {
+                            x,
+                            y,
+                            width,
+                            height,
+                            class: LayoutClass::Title,
+                            score: title_score,
+                        });
+                    }
+                }
+            }
         }
 
         // Apply pure-Rust greedy NMS and hierarchical containment merging
         let nms_boxes = Self::apply_nms(candidates, 0.45);
-        let final_boxes = Self::merge_hierarchical_containment(nms_boxes, 0.85);
+        let mut final_boxes = Self::merge_hierarchical_containment(nms_boxes, 0.85);
+
+        // Class-agnostic containment pruning: Table beats Picture when overlapping > 60%
+        let table_boxes: Vec<LayoutBox> = final_boxes
+            .iter()
+            .filter(|b| b.class == LayoutClass::Table)
+            .cloned()
+            .collect();
+        final_boxes.retain(|b| {
+            if b.class == LayoutClass::Picture {
+                !table_boxes
+                    .iter()
+                    .any(|other| b.iou(other) > 0.60 || b.containment_ratio(other) > 0.60)
+            } else {
+                true
+            }
+        });
 
         Ok(final_boxes)
     }

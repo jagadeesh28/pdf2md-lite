@@ -19,10 +19,17 @@ pub struct SemanticChunk {
     pub text: String,
 }
 
-/// Target character bounds for section-aware chunks (~3-4 chars per token).
-const MIN_CHUNK_CHARS: usize = 200;
-const TARGET_CHUNK_CHARS: usize = 1200;
-const MAX_CHUNK_CHARS: usize = 2000;
+/// Target token bounds for section-aware chunks (384 target / 512 max per ADR 0010).
+pub const MIN_CHUNK_TOKENS: usize = 64;
+pub const TARGET_CHUNK_TOKENS: usize = 384;
+pub const MAX_CHUNK_TOKENS: usize = 512;
+
+/// Estimates token count for text using word/character heuristics (~3.8 chars per token).
+pub fn estimate_tokens(text: &str) -> usize {
+    let words = text.split_whitespace().count();
+    let chars = text.chars().count();
+    chars.div_ceil(4).max(words)
+}
 
 /// Partitions a Markdown note into section-aware semantic chunks.
 pub fn chunk_markdown_document(content: &str, slug: &str) -> Vec<SemanticChunk> {
@@ -77,8 +84,10 @@ pub fn chunk_markdown_document(content: &str, slug: &str) -> Vec<SemanticChunk> 
             chunk_heading = current_heading.clone();
         }
 
-        // If adding this block would exceed MAX_CHUNK_CHARS and we already have sufficient content
-        if buffer.len() >= MIN_CHUNK_CHARS && (buffer.len() + block.len() > TARGET_CHUNK_CHARS) {
+        // Check token budget: if adding this block would exceed TARGET_CHUNK_TOKENS
+        let buf_tokens = estimate_tokens(&buffer);
+        let blk_tokens = estimate_tokens(&block);
+        if buf_tokens >= MIN_CHUNK_TOKENS && (buf_tokens + blk_tokens > TARGET_CHUNK_TOKENS) {
             chunks.push(SemanticChunk {
                 chunk_id: format!("{slug}#p{chunk_page}-c{chunk_index}"),
                 page_num: chunk_page,
@@ -92,9 +101,9 @@ pub fn chunk_markdown_document(content: &str, slug: &str) -> Vec<SemanticChunk> 
             chunk_heading = current_heading.clone();
         }
 
-        // Handle oversized individual prose blocks (> MAX_CHUNK_CHARS) with sentence-level sliding overlap
-        if block.len() > MAX_CHUNK_CHARS && !is_atomic_block(trimmed) {
-            let sub_paragraphs = split_oversized_prose(&block, TARGET_CHUNK_CHARS, 150);
+        // Handle oversized individual prose blocks (> MAX_CHUNK_TOKENS) with sentence-level sliding overlap
+        if blk_tokens > MAX_CHUNK_TOKENS && !is_atomic_block(trimmed) {
+            let sub_paragraphs = split_oversized_prose(&block, TARGET_CHUNK_TOKENS * 4, 150);
             for (sub_idx, sub_text) in sub_paragraphs.into_iter().enumerate() {
                 if sub_idx == 0 && buffer.is_empty() {
                     chunks.push(SemanticChunk {

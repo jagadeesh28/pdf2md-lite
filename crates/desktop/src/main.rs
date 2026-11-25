@@ -256,6 +256,7 @@ fn resolve_image_options(config: &AppConfig) -> ImageOptions {
         save_table_images: config.save_table_images.unwrap_or(true),
         embed_base64: config.embed_images_base64.unwrap_or(false),
         dom_mode,
+        debug_layout: None,
     }
 }
 
@@ -522,7 +523,7 @@ async fn start_conversion(
                             config.concurrency,
                             None,
                             script,
-                            image_opts,
+                            image_opts.clone(),
                             embed,
                             Some(tracker.as_ref()),
                         ) {
@@ -565,7 +566,7 @@ async fn start_conversion(
                             script,
                             true,
                             resume,
-                            image_opts,
+                            image_opts.clone(),
                             embed,
                             Some(tracker.clone()),
                         ) {
@@ -579,7 +580,7 @@ async fn start_conversion(
                                     config.concurrency,
                                     script,
                                     resume,
-                                    image_opts,
+                                    image_opts.clone(),
                                     embed,
                                 ));
                             }

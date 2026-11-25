@@ -350,6 +350,7 @@ fn resolve_image_options(config: &AppConfig) -> ImageOptions {
         save_table_images: config.save_table_images.unwrap_or(true),
         embed_base64: config.embed_images_base64.unwrap_or(false),
         dom_mode,
+        debug_layout: None,
     }
 }
 
@@ -743,7 +744,7 @@ async fn convert_handler(
                     config.concurrency,
                     None,
                     script,
-                    image_opts,
+                    image_opts.clone(),
                     embed,
                     Some(emitter.as_ref()),
                 ) {
@@ -779,7 +780,7 @@ async fn convert_handler(
                     script,
                     true,
                     resume,
-                    image_opts,
+                    image_opts.clone(),
                     embed,
                     Some(emitter.clone()),
                 ) {

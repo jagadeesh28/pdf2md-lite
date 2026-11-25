@@ -205,6 +205,10 @@ pub struct CliArgs {
     /// Install offline neural models from local directory or .zip bundle into AppData
     #[arg(long = "install-models", value_name = "PATH")]
     pub install_models: Option<PathBuf>,
+
+    /// Emit diagnostic layout traces into the specified directory
+    #[arg(long = "debug-layout", value_name = "DIR")]
+    pub debug_layout: Option<PathBuf>,
 }
 
 pub fn run() {
@@ -639,13 +643,16 @@ pub fn run() {
         })
         .unwrap_or(pdfmd_lite::pdf::DomExtractionMode::Auto);
 
+    let final_debug_layout = args.debug_layout.or(config.debug_layout);
+
     let image_opts = ImageOptions::new(
         final_image_format,
         final_image_quality,
         final_save_table_images,
     )
     .with_embed_base64(final_embed_base64)
-    .with_dom_mode(final_dom_mode);
+    .with_dom_mode(final_dom_mode)
+    .with_debug_layout(final_debug_layout);
 
     if args.watch {
         let watch_opts = pdfmd_lite::watch::WatchOptions {

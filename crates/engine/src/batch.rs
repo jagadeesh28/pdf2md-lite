@@ -446,7 +446,7 @@ pub fn process_pdf_directory_all_with_emitter(
                 Some(1),
                 item.rel_source.as_deref(),
                 script,
-                image_opts,
+                image_opts.clone(),
                 embed,
                 emitter.as_deref(),
             );
@@ -497,6 +497,7 @@ pub fn process_pdf_directory_all_with_emitter(
             let result_clone = std::sync::Arc::clone(&result);
             let tracker_clone = std::sync::Arc::clone(&tracker);
             let emitter_clone = emitter.clone();
+            let image_opts_worker = image_opts.clone();
 
             let handle = std::thread::spawn(move || {
                 loop {
@@ -526,7 +527,7 @@ pub fn process_pdf_directory_all_with_emitter(
                         Some(per_doc_workers),
                         item.rel_source.as_deref(),
                         script,
-                        image_opts,
+                        image_opts_worker.clone(),
                         embed,
                         emitter_clone.as_deref(),
                     );

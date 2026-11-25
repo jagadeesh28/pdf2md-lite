@@ -134,8 +134,12 @@ fn find_horizontal_cuts(
     let mut hist = vec![0u16; range + 1];
     for &idx in indices {
         let b = &lines[idx].bbox;
-        let y0 = b.y.saturating_sub(min_y) as usize;
-        let y1 = (b.y + b.height).saturating_sub(min_y).min(max_y - min_y) as usize;
+        // Vertical overlap shrinkage: shrink top and bottom by 10% line-height margin
+        let shrink = (b.height as f32 * 0.10) as u32;
+        let y0 = (b.y + shrink).saturating_sub(min_y) as usize;
+        let y1 = (b.y + b.height.saturating_sub(shrink))
+            .saturating_sub(min_y)
+            .min(max_y - min_y) as usize;
         for bin in y0..=y1 {
             if bin < hist.len() {
                 hist[bin] = hist[bin].saturating_add(1);
@@ -197,7 +201,9 @@ fn find_horizontal_cuts(
         partitions.push(last_group);
     }
 
-    if partitions.len() > 1 {
+    // Validate single-column gutter and sustained dual-side text mass (>= 15% per side)
+    let min_mass = ((indices.len() as f32) * 0.15).ceil() as usize;
+    if partitions.len() > 1 && partitions.iter().all(|part| part.len() >= min_mass) {
         Some(partitions)
     } else {
         None
@@ -286,7 +292,9 @@ fn find_vertical_cuts(
         partitions.push(last_group);
     }
 
-    if partitions.len() > 1 {
+    // Validate single-column gutter and sustained dual-side text mass (>= 15% per side)
+    let min_mass = ((indices.len() as f32) * 0.15).ceil() as usize;
+    if partitions.len() > 1 && partitions.iter().all(|part| part.len() >= min_mass) {
         Some(partitions)
     } else {
         None

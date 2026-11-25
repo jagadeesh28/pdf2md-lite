@@ -6,6 +6,9 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tract_onnx::prelude::*;
+
+type TractEmbeddingPlan = TypedRunnableModel;
 
 #[cfg(feature = "ort")]
 use std::sync::Mutex;
@@ -32,7 +35,8 @@ pub struct EmbeddingEngine {
     #[cfg(feature = "tokenizers-support")]
     tokenizer: tokenizers::Tokenizer,
     #[cfg(feature = "ort")]
-    session: Mutex<Session>,
+    session: Option<Mutex<Session>>,
+    tract_plan: Option<Arc<TractEmbeddingPlan>>,
 }
 
 impl EmbeddingEngine {
@@ -59,23 +63,48 @@ impl EmbeddingEngine {
 
         #[cfg(feature = "ort")]
         let session = {
-            let env = crate::figure::models::get_shared_ort_environment()?;
-            let s = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?
-                .commit_from_file(&model_path)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to load embedding model from {}: {e}",
-                        model_path.display()
-                    )
-                })?;
-            Mutex::new(s)
+            if let Ok(env) = crate::figure::models::get_shared_ort_environment()
+                && let Ok(mut builder) =
+                    crate::figure::models::create_optimized_session_builder(&env, Some(2), true)
+                && let Ok(s) = builder.commit_from_file(&model_path)
+            {
+                Some(Mutex::new(s))
+            } else {
+                None
+            }
         };
+
+        // Pure-Rust tract-onnx fallback plan (ADR 0010)
+        let tract_plan = match std::fs::read(&model_path) {
+            Ok(bytes) => {
+                let mut reader = std::io::Cursor::new(bytes);
+                tract_onnx::onnx()
+                    .model_for_read(&mut reader)
+                    .ok()
+                    .and_then(|m| m.into_typed().ok())
+                    .and_then(|m| m.into_runnable().ok())
+            }
+            Err(_) => None,
+        };
+
+        #[cfg(feature = "ort")]
+        let has_model = session.is_some() || tract_plan.is_some();
+        #[cfg(not(feature = "ort"))]
+        let has_model = tract_plan.is_some();
+
+        if !has_model {
+            anyhow::bail!(
+                "Failed to load embedding model from {}",
+                model_path.display()
+            );
+        }
 
         Ok(Self {
             #[cfg(feature = "tokenizers-support")]
             tokenizer,
             #[cfg(feature = "ort")]
             session,
+            tract_plan,
         })
     }
 
@@ -88,52 +117,62 @@ impl EmbeddingEngine {
             .context("No embedding produced for text")
     }
 
-    /// Embeds a batch of texts into 384-dimensional unit L2-normalized vectors.
+    /// Embeds a batch of texts into 384-dimensional unit L2-normalized vectors using real tensor batching.
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
 
-        #[cfg(all(feature = "tokenizers-support", feature = "ort"))]
+        #[cfg(feature = "tokenizers-support")]
         {
-            let mut all_embeddings = Vec::with_capacity(texts.len());
-            let mut session_guard = self
-                .session
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Embedding mutex poisoned: {e}"))?;
+            let encodings = self
+                .tokenizer
+                .encode_batch(texts.to_vec(), true)
+                .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
 
-            for &text in texts {
-                let encoding = self
-                    .tokenizer
-                    .encode(text, true)
-                    .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
+            let batch_size = texts.len();
+            let max_seq_len = encodings
+                .iter()
+                .map(|e| e.get_ids().len())
+                .max()
+                .unwrap_or(0);
+            if max_seq_len == 0 {
+                return Ok(vec![vec![0.0f32; EMBEDDING_DIM]; batch_size]);
+            }
 
-                let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-                let attention_mask: Vec<i64> = encoding
-                    .get_attention_mask()
-                    .iter()
-                    .map(|&x| x as i64)
-                    .collect();
-                let token_type_ids: Vec<i64> =
-                    encoding.get_type_ids().iter().map(|&x| x as i64).collect();
+            #[cfg(feature = "ort")]
+            if let Some(ref session_mutex) = self.session {
+                let mut session_guard = session_mutex
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Embedding mutex poisoned: {e}"))?;
 
-                let seq_len = input_ids.len();
-                if seq_len == 0 {
-                    all_embeddings.push(vec![0.0f32; EMBEDDING_DIM]);
-                    continue;
+                let mut input_ids_flat = vec![0i64; batch_size * max_seq_len];
+                let mut attention_mask_flat = vec![0i64; batch_size * max_seq_len];
+                let mut token_type_ids_flat = vec![0i64; batch_size * max_seq_len];
+
+                for (i, enc) in encodings.iter().enumerate() {
+                    let ids = enc.get_ids();
+                    let mask = enc.get_attention_mask();
+                    let type_ids = enc.get_type_ids();
+                    for j in 0..ids.len() {
+                        let idx = i * max_seq_len + j;
+                        input_ids_flat[idx] = ids[j] as i64;
+                        attention_mask_flat[idx] = mask[j] as i64;
+                        token_type_ids_flat[idx] = type_ids[j] as i64;
+                    }
                 }
 
                 let input_ids_tensor = ort::value::Tensor::from_array((
-                    [1usize, seq_len],
-                    input_ids.into_boxed_slice(),
+                    [batch_size, max_seq_len],
+                    input_ids_flat.into_boxed_slice(),
                 ))?;
                 let attention_mask_tensor = ort::value::Tensor::from_array((
-                    [1usize, seq_len],
-                    attention_mask.clone().into_boxed_slice(),
+                    [batch_size, max_seq_len],
+                    attention_mask_flat.into_boxed_slice(),
                 ))?;
                 let token_type_ids_tensor = ort::value::Tensor::from_array((
-                    [1usize, seq_len],
-                    token_type_ids.into_boxed_slice(),
+                    [batch_size, max_seq_len],
+                    token_type_ids_flat.into_boxed_slice(),
                 ))?;
 
                 let inputs = ort::inputs![
@@ -144,7 +183,7 @@ impl EmbeddingEngine {
 
                 let outputs = session_guard.run(inputs)?;
 
-                // Output 0: last_hidden_state [1, seq_len, 384]
+                // Output 0: last_hidden_state [batch_size, max_seq_len, hidden_dim]
                 let (hidden_shape, hidden_slice) =
                     outputs[0].try_extract_tensor::<f32>().map_err(|e| {
                         anyhow::anyhow!("Failed to extract last_hidden_state tensor: {e}")
@@ -156,44 +195,104 @@ impl EmbeddingEngine {
                     EMBEDDING_DIM
                 };
 
-                // Mean pooling across non-masked tokens
-                let mut pooled = vec![0.0f32; hidden_dim];
-                let mut mask_sum = 0.0f32;
+                let mut all_embeddings = Vec::with_capacity(batch_size);
 
-                for (t, &m) in attention_mask.iter().enumerate() {
-                    if m == 1 {
-                        mask_sum += 1.0;
-                        let offset = t * hidden_dim;
-                        if offset + hidden_dim <= hidden_slice.len() {
-                            for d in 0..hidden_dim {
-                                pooled[d] += hidden_slice[offset + d];
+                for (i, enc) in encodings.iter().enumerate() {
+                    let mask = enc.get_attention_mask();
+                    let mut pooled = vec![0.0f32; hidden_dim];
+                    let mut mask_sum = 0.0f32;
+
+                    for (t, &m) in mask.iter().enumerate() {
+                        if m == 1 {
+                            mask_sum += 1.0;
+                            let offset = (i * max_seq_len + t) * hidden_dim;
+                            if offset + hidden_dim <= hidden_slice.len() {
+                                for d in 0..hidden_dim {
+                                    pooled[d] += hidden_slice[offset + d];
+                                }
                             }
                         }
                     }
-                }
 
-                if mask_sum > 0.0 {
-                    for val in &mut pooled {
-                        *val /= mask_sum;
+                    if mask_sum > 0.0 {
+                        for val in &mut pooled {
+                            *val /= mask_sum;
+                        }
                     }
+
+                    // L2 normalization
+                    let norm = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    let scale = if norm > 1e-12 { 1.0 / norm } else { 1.0 };
+                    for val in &mut pooled {
+                        *val *= scale;
+                    }
+
+                    all_embeddings.push(pooled);
                 }
 
-                // L2 normalization
-                let norm = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
-                let scale = if norm > 1e-12 { 1.0 / norm } else { 1.0 };
-                for val in &mut pooled {
-                    *val *= scale;
-                }
-
-                all_embeddings.push(pooled);
+                return Ok(all_embeddings);
             }
 
-            Ok(all_embeddings)
+            // Fallback to tract-onnx
+            if let Some(ref plan) = self.tract_plan {
+                let mut all_embeddings = Vec::with_capacity(batch_size);
+                for enc in &encodings {
+                    let ids: Vec<i64> = enc.get_ids().iter().map(|&x| x as i64).collect();
+                    let mask: Vec<i64> =
+                        enc.get_attention_mask().iter().map(|&x| x as i64).collect();
+                    let type_ids: Vec<i64> = enc.get_type_ids().iter().map(|&x| x as i64).collect();
+                    let seq_len = ids.len();
+
+                    let input_ids: Tensor =
+                        tract_ndarray::Array2::from_shape_vec((1, seq_len), ids)?.into();
+                    let attention_mask: Tensor =
+                        tract_ndarray::Array2::from_shape_vec((1, seq_len), mask.clone())?.into();
+                    let token_type_ids: Tensor =
+                        tract_ndarray::Array2::from_shape_vec((1, seq_len), type_ids)?.into();
+
+                    let outputs = plan.run(tvec![
+                        input_ids.into(),
+                        attention_mask.into(),
+                        token_type_ids.into()
+                    ])?;
+                    let hidden_view = outputs[0].to_plain_array_view::<f32>()?;
+                    let hidden_slice = hidden_view.as_slice().unwrap_or(&[]);
+                    let hidden_dim = EMBEDDING_DIM;
+
+                    let mut pooled = vec![0.0f32; hidden_dim];
+                    let mut mask_sum = 0.0f32;
+                    for (t, &m) in mask.iter().enumerate() {
+                        if m == 1 {
+                            mask_sum += 1.0;
+                            let offset = t * hidden_dim;
+                            if offset + hidden_dim <= hidden_slice.len() {
+                                for d in 0..hidden_dim {
+                                    pooled[d] += hidden_slice[offset + d];
+                                }
+                            }
+                        }
+                    }
+                    if mask_sum > 0.0 {
+                        for val in &mut pooled {
+                            *val /= mask_sum;
+                        }
+                    }
+                    let norm = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    let scale = if norm > 1e-12 { 1.0 / norm } else { 1.0 };
+                    for val in &mut pooled {
+                        *val *= scale;
+                    }
+                    all_embeddings.push(pooled);
+                }
+                return Ok(all_embeddings);
+            }
+
+            anyhow::bail!("No active neural runtime available for embedding generation");
         }
 
-        #[cfg(not(all(feature = "tokenizers-support", feature = "ort")))]
+        #[cfg(not(feature = "tokenizers-support"))]
         {
-            anyhow::bail!("tokenizers-support and ort features are required to compute embeddings")
+            anyhow::bail!("tokenizers-support feature is required to compute embeddings")
         }
     }
 }

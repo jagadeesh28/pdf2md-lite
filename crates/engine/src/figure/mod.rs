@@ -48,13 +48,14 @@ impl ImageFormat {
 }
 
 /// Image configuration options for figure extraction and saving.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImageOptions {
     pub format: ImageFormat,
     pub quality: u8,
     pub save_table_images: bool,
     pub embed_base64: bool,
     pub dom_mode: crate::pdf::DomExtractionMode,
+    pub debug_layout: Option<PathBuf>,
 }
 
 impl Default for ImageOptions {
@@ -65,6 +66,7 @@ impl Default for ImageOptions {
             save_table_images: false,
             embed_base64: false,
             dom_mode: crate::pdf::DomExtractionMode::Auto,
+            debug_layout: None,
         }
     }
 }
@@ -77,6 +79,7 @@ impl ImageOptions {
             save_table_images,
             embed_base64: false,
             dom_mode: crate::pdf::DomExtractionMode::Auto,
+            debug_layout: None,
         }
     }
 
@@ -87,6 +90,11 @@ impl ImageOptions {
 
     pub fn with_dom_mode(mut self, dom_mode: crate::pdf::DomExtractionMode) -> Self {
         self.dom_mode = dom_mode;
+        self
+    }
+
+    pub fn with_debug_layout(mut self, debug_layout: Option<PathBuf>) -> Self {
+        self.debug_layout = debug_layout;
         self
     }
 }
@@ -282,6 +290,12 @@ pub struct PageLayoutResult {
     pub tables: Vec<(FigureRect, CroppedFigure)>,
     /// Formula bounding boxes (for display math $$..$$ formatting).
     pub formulas: Vec<FigureRect>,
+    /// Section-header bounding boxes.
+    pub section_headers: Vec<FigureRect>,
+    /// Title bounding boxes.
+    pub titles: Vec<FigureRect>,
+    /// Raw detected YOLO layout boxes for diagnostic traces.
+    pub raw_layout_boxes: Vec<yolo::LayoutBox>,
 }
 
 /// Analyzes page layout using YOLOv8n DocLayNet and PDF streams directly from an in-memory DynamicImage.
@@ -391,7 +405,7 @@ pub fn analyze_page_layout_image_with_doc_and_options(
     let mut figure_idx = result.pictures.len();
     let mut table_idx = 0;
 
-    for b in boxes {
+    for b in &boxes {
         let rect = FigureRect {
             x: b.x,
             y: b.y,
@@ -506,8 +520,15 @@ pub fn analyze_page_layout_image_with_doc_and_options(
             LayoutClass::Formula => {
                 result.formulas.push(rect);
             }
+            LayoutClass::SectionHeader => {
+                result.section_headers.push(rect);
+            }
+            LayoutClass::Title => {
+                result.titles.push(rect);
+            }
         }
     }
+    result.raw_layout_boxes = boxes;
 
     Ok(result)
 }

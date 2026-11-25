@@ -66,7 +66,7 @@ pub fn should_update_embeddings(md_path: &Path, sidecar_path: &Path) -> bool {
     md_modified > sidecar_modified
 }
 
-/// Writes a collection of EmbeddingRecords to a JSON Lines sidecar file.
+/// Writes a collection of EmbeddingRecords to a JSON Lines sidecar file with metadata header.
 pub fn write_embeddings_sidecar(path: &Path, records: &[EmbeddingRecord]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -75,6 +75,14 @@ pub fn write_embeddings_sidecar(path: &Path, records: &[EmbeddingRecord]) -> Res
     let file = File::create(path)
         .with_context(|| format!("Failed to create embedding sidecar: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
+
+    // Write schema header recording model name and vector dimension (ADR 0009 / ADR 0010)
+    let header = serde_json::json!({
+        "_schema": "pdfmd-lite/embeddings/v1",
+        "model": "all-MiniLM-L6-v2",
+        "dimension": 384
+    });
+    writeln!(writer, "{}", serde_json::to_string(&header)?)?;
 
     for record in records {
         let json =
@@ -86,7 +94,7 @@ pub fn write_embeddings_sidecar(path: &Path, records: &[EmbeddingRecord]) -> Res
     Ok(())
 }
 
-/// Reads all EmbeddingRecords from a JSON Lines sidecar file.
+/// Reads all EmbeddingRecords from a JSON Lines sidecar file, skipping schema header if present.
 pub fn read_embeddings_sidecar(path: &Path) -> Result<Vec<EmbeddingRecord>> {
     let file = File::open(path)
         .with_context(|| format!("Failed to open embedding sidecar: {}", path.display()))?;
@@ -96,7 +104,7 @@ pub fn read_embeddings_sidecar(path: &Path) -> Result<Vec<EmbeddingRecord>> {
     for (line_num, line_res) in reader.lines().enumerate() {
         let line = line_res?;
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed.starts_with(r#"{"_schema""#) {
             continue;
         }
 

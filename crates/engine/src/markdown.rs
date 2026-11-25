@@ -1374,12 +1374,47 @@ pub fn is_inline_formula(text: &str, line_share_count: usize, box_h: u32, avg_h:
 
 /// De-hyphenates words broken across line breaks (e.g. "combus-\ntor" -> "combustor").
 /// Compound prefixes (e.g. "three-", "two-", "one-", "non-", "quasi-", "cross-", "self-") retain their hyphen ("three-dimensional").
+/// Code blocks, inline code spans, and LaTeX math ($..$, $$..$$) are strictly guarded against dehyphenation.
 pub fn dehyphenate_text(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
+    let mut in_code_fence = false;
+    let mut in_inline_code = false;
+    let mut in_math = false;
+    let mut in_display_math = false;
+
     let mut chars = text.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c == '-' {
+        if c == '`' {
+            let mut count = 1;
+            while chars.peek() == Some(&'`') {
+                count += 1;
+                chars.next();
+            }
+            if count >= 3 {
+                in_code_fence = !in_code_fence;
+            } else if !in_code_fence {
+                in_inline_code = !in_inline_code;
+            }
+            for _ in 0..count {
+                result.push('`');
+            }
+            continue;
+        }
+
+        if c == '$' && !in_code_fence && !in_inline_code {
+            if chars.peek() == Some(&'$') {
+                chars.next();
+                in_display_math = !in_display_math;
+                result.push_str("$$");
+            } else {
+                in_math = !in_math;
+                result.push('$');
+            }
+            continue;
+        }
+
+        if c == '-' && !in_code_fence && !in_inline_code && !in_math && !in_display_math {
             let mut ahead = chars.clone();
             let mut newline_found = false;
             if ahead.peek() == Some(&'\r') {
@@ -1751,57 +1786,24 @@ pub fn enrich_document_metadata(metadata: &mut DocumentMetadata, full_doc_text: 
         tags.push("type/document".to_string());
     }
 
-    // B. Domain Categorization
-    let mut domains = Vec::new();
-    if upper.contains("PROPULSION")
-        || upper.contains("COMBUSTOR")
-        || upper.contains("SLURRY")
-        || upper.contains("NOZZLE")
-        || upper.contains("SCRAMJET")
-        || upper.contains("RAMJET")
-        || upper.contains("ROCKET")
-    {
-        domains.push("domain/propulsion");
-        domains.push("domain/aerospace");
-    }
-    if upper.contains("TRANSONIC")
-        || upper.contains("SUPERSONIC")
-        || upper.contains("FLOWFIELD")
-        || upper.contains("AERODYNAMIC")
-        || upper.contains("BOUNDARY-LAYER")
-        || upper.contains("AIRFOIL")
-        || upper.contains("MACH")
-    {
-        domains.push("domain/aerodynamics");
-        domains.push("domain/fluid-dynamics");
-    }
-    if upper.contains("FACTORIZATION")
-        || upper.contains("FINITE-DIFFERENCE")
-        || upper.contains("MULTIGRID")
-        || upper.contains("NAVIER-STOKES")
-        || upper.contains("EULER")
-    {
-        domains.push("domain/computational-methods");
-    }
-    if upper.contains("COMBUSTION")
-        || upper.contains("DROPLET")
-        || upper.contains("FLAME")
-        || upper.contains("IGNITION")
-    {
-        domains.push("domain/combustion");
-    }
-    if crate::backends::indra::vocab::has_telugu(full_doc_text) {
-        domains.push("domain/telugu-literature");
-        domains.push("domain/history");
-        tags.push("lang/telugu".to_string());
+    // B. Script-Ratio Language Classification (ADR 0006)
+    let total_alpha = full_doc_text.chars().filter(|c| c.is_alphabetic()).count();
+    let telugu_chars = full_doc_text
+        .chars()
+        .filter(|&c| ('\u{0C00}'..='\u{0C7F}').contains(&c))
+        .count();
+
+    if total_alpha > 0 {
+        let telugu_ratio = telugu_chars as f32 / total_alpha as f32;
+        if telugu_ratio > 0.40 {
+            tags.push("lang/telugu".to_string());
+        } else if telugu_chars > 0 {
+            tags.push("lang/multilingual".to_string());
+        } else {
+            tags.push("lang/english".to_string());
+        }
     } else {
         tags.push("lang/english".to_string());
-    }
-
-    for d in domains {
-        if !tags.contains(&d.to_string()) {
-            tags.push(d.to_string());
-        }
     }
 
     // C. Topical entities from title
@@ -2735,9 +2737,7 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         );
         assert_eq!(meta.author.as_deref(), Some("By Dr. Jane Doe"));
         assert!(meta.tags.contains(&"type/journal-article".to_string()));
-        assert!(meta.tags.contains(&"domain/propulsion".to_string()));
-        assert!(meta.tags.contains(&"domain/aerospace".to_string()));
-        assert!(meta.tags.contains(&"domain/combustion".to_string()));
+        assert!(meta.tags.contains(&"lang/english".to_string()));
         assert!(meta.tags.contains(&"topic/scramjet".to_string()));
     }
 

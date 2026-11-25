@@ -4,6 +4,7 @@ pub mod concurrency;
 pub mod config;
 pub mod embeddings;
 pub mod figure;
+pub mod ir;
 pub mod markdown;
 pub mod metadata;
 pub mod model_locator;
@@ -27,6 +28,10 @@ pub use config::{AppConfig, DeviceTarget};
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{
     CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult, encode_image_to_base64_data_uri,
+};
+pub use ir::{
+    BlockIr, BlockKind, BlockOrderTrace, BoundingBox, DebugLayoutTrace, LayoutBoxTrace, LineIr,
+    PageIr, Provenance, RegionIr, RegionKind, SpanIr,
 };
 pub use markdown::{
     DocumentMetadata, PdfExtractionResult, attach_figures_to_page_text, compute_bytes_sha256,

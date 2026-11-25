@@ -30,6 +30,7 @@ pub struct AppConfig {
     pub academic_structure: Option<bool>,
     pub device: Option<String>,
     pub allow_degraded: Option<bool>,
+    pub debug_layout: Option<PathBuf>,
 }
 
 /// Execution hardware target for ONNX neural models.
