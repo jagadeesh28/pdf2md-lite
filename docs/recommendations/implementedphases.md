@@ -511,5 +511,28 @@ flowchart TD
 - Added destructive operation confirmation dialogs and expanded dry-run modal to display a full scrollable table.
 - Implemented browser-mode file/folder drag-and-drop and input streaming via `uploadFile` to the server upload sandbox.
 
+---
+
+### Phase 14: Performance Resource Caps, Hygiene & Release Certification
+
+#### Milestone 14.1: Hardware Resource Caps & Linear Performance
+- Enforced 40 Megapixels (`DEFAULT_MAX_PIXELS_PER_PAGE`) per-page raster allocation cap with proportional square-root downscaling for huge MediaBox bounds.
+- Enforced 100 MB stream decompression caps (`MAX_DECOMPRESSED_STREAM_BYTES`) and 16,384 dimension limits via `image::Limits` in `pdf_stream.rs`.
+- Added `max_file_mb` (default 500 MB) checking filesystem metadata before reading input documents.
+- Added per-page watchdog timer logging structured warnings if processing exceeds threshold (`page_timeout_sec`, default 60s).
+- Unified `lopdf` DOM and `hayro` raster decoding into single-source `PdfSession` (`<= 2` parses per document).
+- Verified linear scaling on a 300-page synthetic PDF document completing parsing and session initialization in `< 0.1s`.
+
+#### Milestone 14.2: Static Hygiene, Engine Purity & Zero-Unwrap Policy
+- Enforced `#![deny(clippy::print_stdout, clippy::print_stderr)]` in `crates/engine/src/lib.rs`.
+- Eliminated 100% of `println!` and `eprintln!` across `crates/engine/src`, routing all logging through `tracing::info!`, `tracing::warn!`, and `ProgressEmitter`.
+- Implemented `std::fmt::Display` for `DryRunReport`, cleanly decoupling formatted output from console printing.
+- Eliminated all remaining non-test `.unwrap()` and `.expect()` calls across `engine`, `cli`, `server`, and `desktop` crates.
+
+#### Milestone 14.3: Version Unification & Release Certification
+- Unified version to `0.7.2` across root `Cargo.toml`, `crates/desktop/tauri.conf.json`, `ui/package.json`, `wix/main.wxs`, and `wix/full.wxs`.
+- Successfully validated all 9 Phase 14 passing gates with exit code 0 (`--no-default-features`, full workspace check, benches, 131 tests, clippy with zero warnings, rustfmt, UI typecheck, UI build, UI vitest suite).
+
+
 
 

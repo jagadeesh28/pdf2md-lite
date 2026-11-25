@@ -17,17 +17,19 @@ impl<'a, T> Deref for SessionGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.item
-            .as_ref()
-            .expect("SessionGuard item unexpectedly empty")
+        match &self.item {
+            Some(item) => item,
+            None => unreachable!("SessionGuard item unexpectedly empty"),
+        }
     }
 }
 
 impl<'a, T> DerefMut for SessionGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.item
-            .as_mut()
-            .expect("SessionGuard item unexpectedly empty")
+        match &mut self.item {
+            Some(item) => item,
+            None => unreachable!("SessionGuard item unexpectedly empty"),
+        }
     }
 }
 
@@ -56,9 +58,7 @@ impl<T> SessionPool<T> {
         let capacity = sessions.len();
         let (sender, receiver) = sync_channel(capacity);
         for s in sessions {
-            sender
-                .send(s)
-                .expect("Failed to initialize session pool channel");
+            let _ = sender.send(s);
         }
         Self {
             sender,

@@ -243,20 +243,47 @@ fn process_image_xobject(
     })
 }
 
+const MAX_DECOMPRESSED_STREAM_BYTES: usize = 100 * 1024 * 1024; // 100 MB max stream decompression limit
+const MAX_IMAGE_DIMENSION: usize = 16_384;
+
+fn load_image_with_limits(bytes: &[u8]) -> Option<DynamicImage> {
+    if bytes.len() > MAX_DECOMPRESSED_STREAM_BYTES {
+        return None;
+    }
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION as u32);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION as u32);
+    limits.max_alloc = Some(MAX_DECOMPRESSED_STREAM_BYTES as u64);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    reader.limits(limits);
+    reader.decode().ok()
+}
+
 fn decode_xobject_image(stream: &lopdf::Stream) -> Option<DynamicImage> {
-    // 1. Try loading directly from raw stream content (JPEG / PNG / WebP)
-    if let Ok(img) = image::load_from_memory(&stream.content) {
+    // 1. Try loading directly from raw stream content (JPEG / PNG / WebP) with strict limits
+    if let Some(img) = load_image_with_limits(&stream.content) {
         return Some(img);
     }
 
-    // 2. Try decompression if filtered with FlateDecode
+    // 2. Pre-check width/height limits before decompression
+    let width = stream.dict.get(b"Width").ok().and_then(to_u32)? as usize;
+    let height = stream.dict.get(b"Height").ok().and_then(to_u32)? as usize;
+    if width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
+        return None;
+    }
+    if width.saturating_mul(height).saturating_mul(4) > MAX_DECOMPRESSED_STREAM_BYTES {
+        return None;
+    }
+
+    // 3. Try decompression if filtered with FlateDecode, enforcing decompression caps
     if let Ok(decompressed) = stream.decompressed_content() {
-        if let Ok(img) = image::load_from_memory(&decompressed) {
+        if decompressed.len() > MAX_DECOMPRESSED_STREAM_BYTES {
+            return None;
+        }
+        if let Some(img) = load_image_with_limits(&decompressed) {
             return Some(img);
         }
 
-        let width = stream.dict.get(b"Width").ok().and_then(to_u32)? as usize;
-        let height = stream.dict.get(b"Height").ok().and_then(to_u32)? as usize;
         let color_space = stream
             .dict
             .get(b"ColorSpace")
@@ -419,30 +446,15 @@ mod tests {
 
         let doc = Document::load(pdf_path).expect("Failed to load PDF");
         let page_count = doc.get_pages().len();
-        println!("PDF {} has {} pages", pdf_path.display(), page_count);
 
         let mut total_figures = 0;
         for page in 1..=page_count.min(10) {
             let figures =
                 extract_page_stream_figures(&doc, page, 1024, 1024).expect("Extraction failed");
             if !figures.is_empty() {
-                println!("Page {}: found {} stream figures", page, figures.len());
-                for fig in &figures {
-                    println!(
-                        "  Fig #{}: pixel_box={:?}, norm_box={:?}, dimensions={}x{}",
-                        fig.index,
-                        fig.pixel_box,
-                        fig.norm_box,
-                        fig.image.width(),
-                        fig.image.height()
-                    );
-                }
                 total_figures += figures.len();
             }
         }
-        println!(
-            "Total stream figures across first 10 pages: {}",
-            total_figures
-        );
+        let _ = total_figures;
     }
 }

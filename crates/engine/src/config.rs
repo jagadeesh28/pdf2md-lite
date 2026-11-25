@@ -31,6 +31,9 @@ pub struct AppConfig {
     pub device: Option<String>,
     pub allow_degraded: Option<bool>,
     pub debug_layout: Option<PathBuf>,
+    pub max_pixels: Option<u64>,
+    pub max_file_mb: Option<u64>,
+    pub page_timeout_sec: Option<u64>,
 }
 
 /// Execution hardware target for ONNX neural models.
@@ -280,6 +283,15 @@ impl AppConfig {
         }
         if other.debug_layout.is_some() {
             self.debug_layout = other.debug_layout;
+        }
+        if other.max_pixels.is_some() {
+            self.max_pixels = other.max_pixels;
+        }
+        if other.max_file_mb.is_some() {
+            self.max_file_mb = other.max_file_mb;
+        }
+        if other.page_timeout_sec.is_some() {
+            self.page_timeout_sec = other.page_timeout_sec;
         }
     }
 

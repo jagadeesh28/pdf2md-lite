@@ -82,6 +82,9 @@ export interface AppConfigData {
   log_file: string | null;
   output_dir?: string | null;
   device?: 'auto' | 'cpu' | 'directml';
+  max_pixels?: number;
+  max_file_mb?: number;
+  page_timeout_sec?: number;
 }
 
 export interface LanguageCapability {

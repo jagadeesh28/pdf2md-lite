@@ -966,7 +966,7 @@ fn main() {
         eprintln!("{crash_text}");
     }));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 let file_paths: Vec<String> = paths
@@ -994,7 +994,10 @@ fn main() {
             download_models,
             get_model_status,
             get_capabilities
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        ]);
+
+    if let Err(e) = builder.run(tauri::generate_context!()) {
+        eprintln!("error while running tauri application: {e}");
+        std::process::exit(1);
+    }
 }

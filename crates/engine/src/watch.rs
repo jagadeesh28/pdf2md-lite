@@ -152,15 +152,15 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
     })?;
 
     if !options.quiet {
-        println!("pdfmd-lite watch mode active:");
-        println!("  - Watching: {}", input_dir.display());
-        println!("  - Output:   {}", output_dir.display());
-        println!("  - Language: {}", options.script);
-        println!(
+        tracing::info!("pdfmd-lite watch mode active:");
+        tracing::info!("  - Watching: {}", input_dir.display());
+        tracing::info!("  - Output:   {}", output_dir.display());
+        tracing::info!("  - Language: {}", options.script);
+        tracing::info!(
             "  - Embeddings: {}",
             if options.embed { "enabled" } else { "disabled" }
         );
-        println!(
+        tracing::info!(
             "  - Base64 images: {}",
             if options.image_opts.embed_base64 {
                 "enabled"
@@ -168,7 +168,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
                 "disabled"
             }
         );
-        println!("Initial batch pass scanning for un-converted PDFs...");
+        tracing::info!("Initial batch pass scanning for un-converted PDFs...");
     }
 
     // Step 1: Initial batch pass with resume=true to convert un-indexed documents
@@ -186,7 +186,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
     );
 
     if !options.quiet {
-        println!("\nWatching for new or modified PDFs (Press Ctrl+C to stop)...");
+        tracing::info!("Watching for new or modified PDFs (Press Ctrl+C to stop)...");
     }
 
     // Step 2: Establish notify filesystem watcher
@@ -260,8 +260,8 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
             }
 
             if !options.quiet {
-                println!(
-                    "\n[WATCH] Change detected: '{}' -> converting...",
+                tracing::info!(
+                    "[WATCH] Change detected: '{}' -> converting...",
                     pdf_path.display()
                 );
             }
@@ -293,7 +293,7 @@ pub fn watch_directory(input_dir: &Path, output_dir: &Path, options: WatchOption
                 Ok(_) => {
                     let elapsed = t0.elapsed().as_secs_f32();
                     if !options.quiet {
-                        println!(
+                        tracing::info!(
                             "[WATCH] [DONE] Converted '{}' ({page_count} pages, {elapsed:.2}s)",
                             pdf_path.file_name().unwrap_or_default().to_string_lossy()
                         );

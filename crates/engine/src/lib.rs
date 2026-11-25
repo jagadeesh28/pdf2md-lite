@@ -1,3 +1,5 @@
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
 pub mod backends;
 pub mod batch;
 pub mod concurrency;
@@ -52,9 +54,10 @@ pub use model_locator::{
 };
 pub use path_policy::{PathPolicy, PathPolicyError};
 pub use pdf::{
-    DomExtractionMode, can_use_hybrid_dom, clean_extracted_text,
-    extract_baseline_aware_dom_text_lines, extract_pdf_metadata, extract_pdf_text,
-    get_pdf_page_count, render_pages_to_images, safe_extract_text_by_pages, validate_page_range,
+    DEFAULT_MAX_PIXELS_PER_PAGE, DomExtractionMode, PdfSession, can_use_hybrid_dom,
+    clean_extracted_text, extract_baseline_aware_dom_text_lines, extract_pdf_metadata,
+    extract_pdf_metadata_from_doc, extract_pdf_text, get_pdf_page_count, render_pages_to_images,
+    safe_extract_text_by_pages, stream_rendered_pages_from_session, validate_page_range,
 };
 pub use pipeline::{
     ConversionOptions, format_warning_callout, get_indra_engine, process_pages_stream,

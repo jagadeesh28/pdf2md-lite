@@ -445,14 +445,13 @@ mod tests {
         let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
 
         if !model_path.exists() || !dict_path.exists() {
-            println!("SLANet models not found, skipping");
             return Ok(());
         }
 
         let engine = SlaNetEngine::new(&model_path, &dict_path)?;
         let dummy_crop = DynamicImage::new_rgb8(200, 100);
         let md = engine.predict_table_markdown(&dummy_crop, &[], 0, 0)?;
-        println!("Generated SLANet markdown:\n{}", md);
+        let _ = md;
         Ok(())
     }
 }

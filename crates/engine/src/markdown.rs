@@ -672,7 +672,7 @@ pub fn convert_figure_links_to_obsidian(content: &str) -> (String, usize) {
 
         let trimmed_start = line.trim_start();
         if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
-            let ch = trimmed_start.chars().next().unwrap();
+            let ch = trimmed_start.chars().next().unwrap_or('`');
             let count = trimmed_start.chars().take_while(|&c| c == ch).count();
             if !in_fence {
                 in_fence = true;
@@ -878,7 +878,7 @@ pub fn replace_png_links_with_jpg(content: &str) -> (String, usize) {
 
         let trimmed_start = line.trim_start();
         if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
-            let ch = trimmed_start.chars().next().unwrap();
+            let ch = trimmed_start.chars().next().unwrap_or('`');
             let count = trimmed_start.chars().take_while(|&c| c == ch).count();
             if !in_fence {
                 in_fence = true;
@@ -1977,7 +1977,7 @@ fn wrap_inline_math(line: &str) -> String {
                 let prev_ok = if idx == 0 {
                     true
                 } else {
-                    let prev_char = active_line[..idx].chars().last().unwrap();
+                    let prev_char = active_line[..idx].chars().last().unwrap_or(' ');
                     !prev_char.is_alphanumeric()
                         && prev_char != '_'
                         && prev_char != '^'
@@ -2023,7 +2023,8 @@ fn wrap_inline_math(line: &str) -> String {
                                 let next_ok = if end_idx >= active_line.len() {
                                     true
                                 } else {
-                                    let next_c = active_line[end_idx..].chars().next().unwrap();
+                                    let next_c =
+                                        active_line[end_idx..].chars().next().unwrap_or(' ');
                                     !next_c.is_alphanumeric() && next_c != '_' && next_c != '^'
                                 };
 

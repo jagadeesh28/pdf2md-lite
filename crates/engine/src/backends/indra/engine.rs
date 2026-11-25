@@ -349,17 +349,12 @@ mod tests {
     fn test_indra_engine_e2e() -> Result<()> {
         let img_path = Path::new("images/page-1.png");
         if !img_path.exists() {
-            println!("Test image not found, skipping");
             return Ok(());
         }
 
         let img = image::open(img_path).context("Failed to open test image")?;
         let engine = IndraEngine::new(None).context("Failed to initialize IndraEngine")?;
         let markdown = engine.transcribe_image(&img)?;
-
-        println!("=== Transcribed Markdown ===");
-        println!("{}", markdown);
-        println!("============================");
 
         assert!(
             !markdown.trim().is_empty(),

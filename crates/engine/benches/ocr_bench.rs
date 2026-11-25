@@ -52,7 +52,7 @@ fn bench_serial_recognition(c: &mut Criterion) {
         };
         c.bench_function(&format!("serial_recognize_w{}", w), |b| {
             b.iter(|| {
-                let _ = black_box(rec.recognize_line(&img, &bbox).unwrap());
+                let _ = black_box(rec.recognize_line(&img, &bbox).ok());
             });
         });
     }
@@ -126,15 +126,20 @@ fn bench_page_transcription(c: &mut Criterion) {
     if !img_path.exists() {
         return;
     }
-    let img = image::open(&img_path).unwrap().into_luma8();
+    let Ok(img_raw) = image::open(&img_path) else {
+        return;
+    };
+    let img = img_raw.into_luma8();
     let dynamic = image::DynamicImage::ImageLuma8(img);
-    let engine = IndraEngine::new(None).unwrap();
+    let Ok(engine) = IndraEngine::new(None) else {
+        return;
+    };
     c.bench_function("transcribe_page", |b| {
         b.iter(|| {
             let _ = black_box(
                 engine
                     .transcribe_image_with_script(&dynamic, IndraScript::English)
-                    .unwrap(),
+                    .ok(),
             );
         });
     });

@@ -124,8 +124,10 @@ impl IndraRecognizer {
                 return (*bucket_w, plan);
             }
         }
-        let last = self.plans.last().unwrap();
-        (last.0, &last.1)
+        match self.plans.last() {
+            Some(last) => (last.0, &last.1),
+            None => unreachable!("IndraRecognizer plans vector cannot be empty"),
+        }
     }
 
     /// Selects the best batched plan for the given batch size and line width.
@@ -138,12 +140,12 @@ impl IndraRecognizer {
             .iter()
             .find(|&&bw| width <= bw)
             .copied()
-            .unwrap_or(*BUCKET_WIDTHS.last().unwrap());
+            .unwrap_or(1200);
         let batch = BATCH_SIZES
             .iter()
             .find(|&&b| batch_size <= b)
             .copied()
-            .unwrap_or(*BATCH_SIZES.last().unwrap());
+            .unwrap_or(8);
         self.batched_plans
             .iter()
             .find(|(b, bw, _)| *b == batch && *bw == bucket_w)
@@ -369,7 +371,7 @@ impl IndraRecognizer {
                     .iter()
                     .find(|&&bw| ink_w <= bw)
                     .copied()
-                    .unwrap_or(*BUCKET_WIDTHS.last().unwrap());
+                    .unwrap_or(1200);
                 tmp.entry(bucket_w).or_default().push(i);
             }
             tmp.into_iter().collect()

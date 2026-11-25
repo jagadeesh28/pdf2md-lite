@@ -123,7 +123,7 @@ pub fn flatten_to_rgb(img: &DynamicImage) -> image::RgbImage {
                 dst_chunk[2] =
                     ((src_chunk[2] as f32 * alpha) + (255.0 * (1.0 - alpha))).round() as u8;
             }
-            image::RgbImage::from_raw(w, h, rgb_raw).expect("RgbImage dimensions match")
+            image::RgbImage::from_raw(w, h, rgb_raw).unwrap_or_else(|| image::RgbImage::new(w, h))
         }
     }
 }

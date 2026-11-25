@@ -19,7 +19,7 @@ use crate::figure::{self, mask_gray_regions_mut};
 use crate::markdown::{
     attach_figures_to_page_text, format_page_demarcation, normalize_latex_delimiters,
 };
-use crate::pdf::{safe_extract_text_by_pages, validate_page_range};
+use crate::pdf::validate_page_range;
 
 static INDRA_ENGINE: std::sync::RwLock<Option<std::sync::Arc<IndraEngine>>> =
     std::sync::RwLock::new(None);
@@ -290,16 +290,14 @@ pub fn process_pdf_full_with_emitter(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
 
-    let pdf_bytes = fs::read(input_path)
-        .with_context(|| format!("failed to read PDF input file at {}", input_path.display()))?;
-
-    // Extract PDF document properties for Obsidian frontmatter via DOM-first gating
-    let mut metadata = crate::pdf::extract_pdf_metadata(input_path);
+    let config = crate::config::AppConfig::load(None).unwrap_or_default();
+    let session = crate::pdf::PdfSession::open(input_path, config.max_file_mb)?;
+    let mut metadata = session.metadata.clone();
     if metadata.title.is_none() {
         metadata.title = Some(pdf_stem.to_string());
     }
     if metadata.pdf_sha256.is_none() {
-        metadata.pdf_sha256 = Some(crate::markdown::compute_bytes_sha256(&pdf_bytes));
+        metadata.pdf_sha256 = Some(session.sha256.clone());
     }
 
     // DOM-First Fallback Gating: If author, publication date, organization, journal, volume, DOI, or keywords are missing, extract from document header slice
@@ -311,7 +309,7 @@ pub fn process_pdf_full_with_emitter(
         || metadata.doi.is_none()
         || metadata.keywords.is_none()
     {
-        let header_slice = crate::pdf::safe_extract_text_by_pages(&pdf_bytes)
+        let header_slice = crate::pdf::safe_extract_text_by_pages(&session.bytes)
             .and_then(|pages| pages.into_iter().next())
             .unwrap_or_default();
 
@@ -534,7 +532,7 @@ pub fn process_pdf_full_with_emitter(
                 &engine,
             ) {
                 Ok(count) => {
-                    println!(
+                    tracing::info!(
                         "Generated embedding sidecar ({} chunks) -> {}",
                         count,
                         crate::embeddings::sidecar_path_for_markdown(output_path).display()
@@ -551,7 +549,7 @@ pub fn process_pdf_full_with_emitter(
         }
     }
 
-    println!(
+    tracing::info!(
         "Completed conversion: {} -> {}",
         input_path.display(),
         output_path.display()
@@ -611,28 +609,30 @@ where
         })?;
     }
 
-    let pdf_bytes = fs::read(input_path).ok();
-    // Parse lopdf::Document once in memory per document to avoid redundant per-page file reads
-    let lopdf_doc = Arc::new(
-        pdf_bytes
-            .as_ref()
-            .and_then(|b| lopdf::Document::load_mem(b).ok()),
-    );
-    let pdf_pages = pdf_bytes
-        .as_ref()
-        .and_then(|bytes| safe_extract_text_by_pages(bytes));
+    let config = crate::config::AppConfig::load(None).unwrap_or_default();
+    let session = crate::pdf::PdfSession::open(input_path, config.max_file_mb)?;
+    let lopdf_doc = Arc::new(Some((*session.lopdf_doc).clone()));
+    let pdf_pages = crate::pdf::safe_extract_text_by_pages(&session.bytes);
 
     let concurrency = resolve_concurrency(explicit_concurrency);
     let total_pages = end_page.saturating_sub(begin_page) + 1;
+    let watchdog_sec = config.page_timeout_sec.unwrap_or(60);
 
     // Zero-disk Pipelined Streaming: Dedicated rendering thread streams DynamicImages into a bounded channel
     let channel_bound = concurrency.clamp(2, 4);
     let (raster_tx, raster_rx) =
         mpsc::sync_channel::<(usize, Result<image::DynamicImage>)>(channel_bound);
-    let pdf_path_for_render = input_path.to_path_buf();
+    let session_for_render = session.clone();
+    let max_pixels = config.max_pixels;
 
     let render_thread = thread::spawn(move || {
-        crate::pdf::stream_rendered_pages(&pdf_path_for_render, begin_page, end_page, raster_tx)
+        crate::pdf::stream_rendered_pages_from_session(
+            &session_for_render,
+            begin_page,
+            end_page,
+            max_pixels,
+            raster_tx,
+        )
     });
 
     if concurrency <= 1 || total_pages <= 1 {
@@ -643,6 +643,7 @@ where
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
 
+            let page_start = std::time::Instant::now();
             let page_md = match img_res {
                 Ok(page_img) => safe_process_single_page_image_with_doc_and_options(
                     lopdf_doc.as_ref().as_ref(),
@@ -665,6 +666,14 @@ where
                     )
                 }
             };
+            let elapsed = page_start.elapsed();
+            if elapsed.as_secs() > watchdog_sec {
+                tracing::warn!(
+                    "Page {page_num} processing watchdog warning: took {:.2}s (exceeded {}s threshold)",
+                    elapsed.as_secs_f32(),
+                    watchdog_sec
+                );
+            }
             on_page(page_num, page_md)?;
         }
         let render_res = render_thread
@@ -707,6 +716,7 @@ where
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
 
+                    let page_start = std::time::Instant::now();
                     let page_md = match img_res {
                         Ok(page_img) => safe_process_single_page_image_with_doc_and_options(
                             lopdf_doc_clone.as_ref().as_ref(),
@@ -729,6 +739,14 @@ where
                             )
                         }
                     };
+                    let elapsed = page_start.elapsed();
+                    if elapsed.as_secs() > watchdog_sec {
+                        tracing::warn!(
+                            "Page {page_num} processing watchdog warning: took {:.2}s (exceeded {}s threshold)",
+                            elapsed.as_secs_f32(),
+                            watchdog_sec
+                        );
+                    }
 
                     if result_tx_clone.send((page_num, page_md)).is_err() {
                         break;
@@ -747,9 +765,10 @@ where
 
             while let Some((&page, _)) = pending_results.iter().next() {
                 if page == next_expected_page {
-                    let (_, md) = pending_results.remove_entry(&page).unwrap();
-                    on_page(page, md)?;
-                    next_expected_page += 1;
+                    if let Some((_, md)) = pending_results.remove_entry(&page) {
+                        on_page(page, md)?;
+                        next_expected_page += 1;
+                    }
                 } else {
                     break;
                 }
@@ -943,8 +962,7 @@ fn process_single_page_image_with_doc(
         mask_gray_regions_mut(&mut gray_canvas, &layout.picture_masks);
     }
 
-    let (ocr_text, text_lines) = if hybrid_dom_viable {
-        let doc = lopdf_doc.unwrap();
+    let (ocr_text, text_lines) = if let (true, Some(doc)) = (hybrid_dom_viable, lopdf_doc) {
         let mut exclude_regions: Vec<crate::figure::caption::FigureRect> = Vec::new();
         exclude_regions.extend(layout.picture_masks.iter().cloned());
         exclude_regions.extend(layout.formulas.iter().cloned());

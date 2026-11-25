@@ -386,8 +386,8 @@ pub fn process_pdf_directory_all_with_emitter(
     let total_workers = crate::concurrency::resolve_concurrency(explicit_concurrency);
 
     if !quiet {
-        println!(
-            "\nFound {} PDF files in '{}'. Processing batch (concurrency={}, Language: {}{})...",
+        tracing::info!(
+            "Found {} PDF files in '{}'. Processing batch (concurrency={}, Language: {}{})...",
             pdf_files.len(),
             input_dir.display(),
             total_workers,
@@ -719,24 +719,28 @@ pub struct DryRunReport {
     pub estimated_time_secs: (f32, f32),
 }
 
-impl DryRunReport {
-    /// Formats and prints the dry-run report to stdout.
-    pub fn print(&self) {
-        println!(
+impl std::fmt::Display for DryRunReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
             "================================================================================"
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "                         pdfmd-lite Conversion Dry-Run                          "
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "================================================================================"
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "Execution Plan ({} document(s), {} pages to process):",
             self.total_documents, self.total_pages_to_process
-        );
+        )?;
         for (i, plan) in self.plans.iter().enumerate() {
-            println!(
+            writeln!(
+                f,
                 " [{}/{}] {}\n        Target:  {}\n        Pages:   {} (range: {}-{})\n        Images:  {}\n        Status:  {}",
                 i + 1,
                 self.total_documents,
@@ -747,32 +751,44 @@ impl DryRunReport {
                 plan.page_range.1,
                 plan.images_target,
                 plan.status
-            );
+            )?;
             if let Some(ref emb) = plan.embeddings_target {
-                println!("        Sidecar: {}", emb.display());
+                writeln!(f, "        Sidecar: {}", emb.display())?;
             }
         }
-        println!(
+        writeln!(
+            f,
             "--------------------------------------------------------------------------------"
-        );
-        println!("Resource Budgets & Performance Projections:");
-        println!(
+        )?;
+        writeln!(f, "Resource Budgets & Performance Projections:")?;
+        writeln!(
+            f,
             "  - Concurrency workers:        {}",
             self.resolved_concurrency
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "  - Estimated memory budget:    {} MB",
             self.memory_budget_mb
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "  - Estimated conversion time:  {:.1}s - {:.1}s (~{})",
             self.estimated_time_secs.0,
             self.estimated_time_secs.1,
             crate::progress::format_eta(self.estimated_time_secs.1)
-        );
-        println!(
+        )?;
+        writeln!(
+            f,
             "================================================================================"
-        );
+        )
+    }
+}
+
+impl DryRunReport {
+    /// Formats and logs the dry-run report.
+    pub fn print(&self) {
+        tracing::info!("{self}");
     }
 }
 

@@ -184,7 +184,10 @@ where
                         if let Ok(rel) = file.strip_prefix(path) {
                             out_dir.join(rel)
                         } else {
-                            out_dir.join(file.file_name().unwrap())
+                            out_dir.join(
+                                file.file_name()
+                                    .unwrap_or_else(|| std::ffi::OsStr::new("note.md")),
+                            )
                         }
                     } else {
                         let ts = std::time::SystemTime::now()
@@ -508,7 +511,7 @@ pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> Result<Embe
                 summary.notes_embedded += 1;
                 summary.chunks_embedded += count;
                 if !quiet {
-                    println!(
+                    tracing::info!(
                         "[{}/{}] Embedded {} ({} chunks) -> {}",
                         summary.notes_embedded + summary.notes_skipped,
                         summary.notes_scanned,
@@ -540,7 +543,7 @@ pub fn download_embedding_models() -> Result<()> {
     let model_target = target_dir.join("model.onnx");
     let tokenizer_target = target_dir.join("tokenizer.json");
 
-    println!(
+    tracing::info!(
         "Checking embedding model assets in '{}'...",
         target_dir.display()
     );
@@ -569,7 +572,7 @@ pub fn download_embedding_models() -> Result<()> {
     };
 
     if !model_target.exists() {
-        println!("Downloading quantized all-MiniLM-L6-v2 ONNX model (~22 MB)...");
+        tracing::info!("Downloading quantized all-MiniLM-L6-v2 ONNX model (~22 MB)...");
         let partial_model = target_dir.join("model.onnx.partial");
         let status = std::process::Command::new(curl_cmd)
             .args([
@@ -592,7 +595,7 @@ pub fn download_embedding_models() -> Result<()> {
                     );
                 }
                 fs::rename(&partial_model, &model_target)?;
-                println!("Downloaded and verified {}", model_target.display());
+                tracing::info!("Downloaded and verified {}", model_target.display());
             }
             _ => {
                 let _ = fs::remove_file(&partial_model);
@@ -604,11 +607,11 @@ pub fn download_embedding_models() -> Result<()> {
             }
         }
     } else {
-        println!("Model already exists: {}", model_target.display());
+        tracing::info!("Model already exists: {}", model_target.display());
     }
 
     if !tokenizer_target.exists() {
-        println!("Downloading tokenizer.json...");
+        tracing::info!("Downloading tokenizer.json...");
         let partial_tok = target_dir.join("tokenizer.json.partial");
         let status = std::process::Command::new(curl_cmd)
             .args([
@@ -631,7 +634,7 @@ pub fn download_embedding_models() -> Result<()> {
                     );
                 }
                 fs::rename(&partial_tok, &tokenizer_target)?;
-                println!("Downloaded and verified {}", tokenizer_target.display());
+                tracing::info!("Downloaded and verified {}", tokenizer_target.display());
             }
             _ => {
                 let _ = fs::remove_file(&partial_tok);
@@ -643,11 +646,11 @@ pub fn download_embedding_models() -> Result<()> {
             }
         }
     } else {
-        println!("Tokenizer already exists: {}", tokenizer_target.display());
+        tracing::info!("Tokenizer already exists: {}", tokenizer_target.display());
     }
 
     crate::model_locator::invalidate_model_caches();
-    println!("\nModel provisioning complete!");
+    tracing::info!("Model provisioning complete!");
     Ok(())
 }
 

@@ -244,7 +244,13 @@ pub fn run() {
         } else {
             format!("127.0.0.1:{port_or_addr}")
         };
-        let rt = tokio::runtime::Runtime::new().expect("Failed to initialize Tokio runtime");
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("Failed to initialize Tokio runtime: {e:#}");
+                process::exit(1);
+            }
+        };
         if let Err(e) = rt.block_on(pdfmd_lite_server::start_server(
             &bind_addr,
             args.allow_remote,
@@ -487,29 +493,30 @@ pub fn run() {
     }
 
     // Standalone vault embedding mode: `pdfmd-lite --embed <vault-dir-or-file> [--force]`
-    if args.embed && output_path.is_none() && input_path.is_some() {
-        let target = input_path.clone().unwrap();
-        if target.is_file() || target.is_dir() {
-            println!(
-                "Retroactively embedding vault notes in '{}'...",
-                target.display()
-            );
-            match embed_vault_in_path(&target, args.force, args.quiet) {
-                Ok(summary) => {
-                    println!("\nVault embedding complete:");
-                    println!("  - Markdown notes scanned:     {}", summary.notes_scanned);
-                    println!("  - Markdown notes embedded:    {}", summary.notes_embedded);
-                    println!("  - Notes skipped (up to date): {}", summary.notes_skipped);
-                    println!(
-                        "  - Total chunks indexed:       {}",
-                        summary.chunks_embedded
-                    );
-                    process::exit(0);
-                }
-                Err(e) => {
-                    eprintln!("Error embedding vault: {e:#}");
-                    process::exit(1);
-                }
+    if args.embed
+        && output_path.is_none()
+        && let Some(target) = input_path.clone()
+        && (target.is_file() || target.is_dir())
+    {
+        println!(
+            "Retroactively embedding vault notes in '{}'...",
+            target.display()
+        );
+        match embed_vault_in_path(&target, args.force, args.quiet) {
+            Ok(summary) => {
+                println!("\nVault embedding complete:");
+                println!("  - Markdown notes scanned:     {}", summary.notes_scanned);
+                println!("  - Markdown notes embedded:    {}", summary.notes_embedded);
+                println!("  - Notes skipped (up to date): {}", summary.notes_skipped);
+                println!(
+                    "  - Total chunks indexed:       {}",
+                    summary.chunks_embedded
+                );
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error embedding vault: {e:#}");
+                process::exit(1);
             }
         }
     }
@@ -686,7 +693,7 @@ pub fn run() {
                 args.embed,
             ) {
                 Ok(report) => {
-                    report.print();
+                    println!("{report}");
                     process::exit(0);
                 }
                 Err(err) => {
@@ -711,7 +718,7 @@ pub fn run() {
                 args.embed,
             ) {
                 Ok(report) => {
-                    report.print();
+                    println!("{report}");
                     process::exit(0);
                 }
                 Err(err) => {

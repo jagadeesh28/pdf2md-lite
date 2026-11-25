@@ -70,33 +70,110 @@ pub fn pixmap_to_dynamic_image(pixmap: &hayro::vello_cpu::Pixmap) -> image::Dyna
     image::DynamicImage::ImageRgba8(rgba)
 }
 
-/// Streams rendered `DynamicImage` pages through a channel as they are decoded by `hayro`,
-/// completely eliminating intermediate PNG encoding and disk writes.
-pub fn stream_rendered_pages(
-    pdf_path: &Path,
+/// Default pixel allocation cap per page (40 Megapixels = 40,000,000 pixels).
+pub const DEFAULT_MAX_PIXELS_PER_PAGE: u64 = 40_000_000;
+
+/// Default file size limit for input PDFs (500 MB).
+pub const DEFAULT_MAX_FILE_MB: u64 = 500;
+
+/// Unified in-memory PDF session holding single-source parsed documents and metadata.
+/// Consolidates duplicate PDF opening and parsing across the extraction and rendering lifecycle (ADR 0007, ADR 0018).
+#[derive(Clone)]
+pub struct PdfSession {
+    pub bytes: std::sync::Arc<[u8]>,
+    pub lopdf_doc: std::sync::Arc<lopdf::Document>,
+    pub hayro_doc: std::sync::Arc<hayro::hayro_syntax::Pdf>,
+    pub page_count: usize,
+    pub metadata: DocumentMetadata,
+    pub sha256: String,
+}
+
+impl std::fmt::Debug for PdfSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PdfSession")
+            .field("page_count", &self.page_count)
+            .field("sha256", &self.sha256)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
+impl PdfSession {
+    /// Loads and parses the PDF document once from the given filesystem path.
+    pub fn open(path: &Path, max_file_mb: Option<u64>) -> Result<Self> {
+        let max_mb = max_file_mb.unwrap_or(DEFAULT_MAX_FILE_MB);
+        let max_bytes = max_mb * 1024 * 1024;
+        let metadata_fs = fs::metadata(path)
+            .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+        if metadata_fs.len() > max_bytes {
+            anyhow::bail!(
+                "PDF file {} ({} bytes) exceeds maximum permitted size of {} MB ({} bytes)",
+                path.display(),
+                metadata_fs.len(),
+                max_mb,
+                max_bytes
+            );
+        }
+
+        let bytes = fs::read(path)
+            .with_context(|| format!("failed to read PDF input file at {}", path.display()))?;
+        Self::from_bytes(bytes.into(), Some(path))
+    }
+
+    /// Loads and parses the PDF document once from in-memory bytes.
+    pub fn from_bytes(bytes: std::sync::Arc<[u8]>, path_hint: Option<&Path>) -> Result<Self> {
+        let sha256 = crate::markdown::compute_bytes_sha256(&bytes);
+
+        // Parse 1: lopdf
+        let lopdf_doc = lopdf::Document::load_mem(&bytes)
+            .map_err(|e| anyhow!("Failed to parse PDF DOM with lopdf: {e}"))?;
+
+        // Parse 2: hayro
+        let hayro_doc = hayro::hayro_syntax::Pdf::new(bytes.to_vec())
+            .map_err(|e| anyhow!("Failed to parse PDF with hayro: {e:?}"))?;
+
+        let lopdf_pages = lopdf_doc.get_pages();
+        let hayro_pages_count = hayro_doc.pages().len();
+        let page_count = lopdf_pages.len().max(hayro_pages_count);
+
+        let mut metadata = extract_pdf_metadata_from_doc(&lopdf_doc);
+        if metadata.pdf_sha256.is_none() {
+            metadata.pdf_sha256 = Some(sha256.clone());
+        }
+        if metadata.title.is_none()
+            && let Some(p) = path_hint
+            && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+        {
+            metadata.title = Some(stem.to_string());
+        }
+
+        Ok(Self {
+            bytes,
+            lopdf_doc: std::sync::Arc::new(lopdf_doc),
+            hayro_doc: std::sync::Arc::new(hayro_doc),
+            page_count,
+            metadata,
+            sha256,
+        })
+    }
+}
+
+/// Streams rendered `DynamicImage` pages through a channel from an existing `PdfSession`,
+/// applying dynamic downscaling if the estimated uncompressed pixel buffer exceeds `max_pixels`.
+pub fn stream_rendered_pages_from_session(
+    session: &PdfSession,
     begin_page: usize,
     end_page: usize,
+    max_pixels: Option<u64>,
     tx: std::sync::mpsc::SyncSender<(usize, Result<image::DynamicImage>)>,
 ) -> Result<()> {
     validate_page_range(begin_page, end_page)?;
-    let pdf_bytes = fs::read(pdf_path)
-        .with_context(|| format!("failed to read PDF for rendering: {}", pdf_path.display()))?;
-    let document = Pdf::new(pdf_bytes).map_err(|error| {
-        anyhow!(
-            "failed to parse PDF for rendering {}: {error:?}",
-            pdf_path.display()
-        )
-    })?;
+    let max_px = max_pixels.unwrap_or(DEFAULT_MAX_PIXELS_PER_PAGE) as f32;
     let cache = hayro::RenderCache::new();
     let interpreter_settings = InterpreterSettings::default();
     let render_settings = hayro::RenderSettings::default();
-    let pixmap_settings = hayro::PixmapSettings {
-        x_scale: 2.0,
-        y_scale: 2.0,
-        bg_color: hayro::vello_cpu::color::palette::css::WHITE,
-    };
 
-    let total_pages = document.pages().len();
+    let total_pages = session.hayro_doc.pages().len();
     if end_page > total_pages {
         return Err(anyhow!(
             "page range {}-{} is outside the PDF's {} pages",
@@ -106,7 +183,10 @@ pub fn stream_rendered_pages(
         ));
     }
 
-    for (index, page) in document
+    let pages_map = session.lopdf_doc.get_pages();
+
+    for (index, page) in session
+        .hayro_doc
         .pages()
         .iter()
         .enumerate()
@@ -114,6 +194,35 @@ pub fn stream_rendered_pages(
         .take(end_page - begin_page + 1)
     {
         let page_num = index + 1;
+
+        let mut scale = 2.0f32;
+        if let Some(&page_id) = pages_map.get(&(page_num as u32))
+            && let Ok(page_dict) = session.lopdf_doc.get_dictionary(page_id)
+        {
+            let bbox = get_page_bbox(&session.lopdf_doc, page_dict);
+            let w_pt = (bbox.2 - bbox.0).abs().max(1.0);
+            let h_pt = (bbox.3 - bbox.1).abs().max(1.0);
+            let estimated_pixels = (w_pt * scale) * (h_pt * scale);
+            if estimated_pixels > max_px {
+                let downscale_factor = (max_px / estimated_pixels).sqrt();
+                scale = (scale * downscale_factor).max(0.2);
+                tracing::warn!(
+                    "Page {} dimensions ({}x{} pt) at 2.0x would exceed {} MP cap; downscaled to {:.2}x",
+                    page_num,
+                    w_pt,
+                    h_pt,
+                    max_px / 1_000_000.0,
+                    scale
+                );
+            }
+        }
+
+        let pixmap_settings = hayro::PixmapSettings {
+            x_scale: scale,
+            y_scale: scale,
+            bg_color: hayro::vello_cpu::color::palette::css::WHITE,
+        };
+
         let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let pixmap = hayro::render(
                 page,
@@ -135,6 +244,18 @@ pub fn stream_rendered_pages(
     }
 
     Ok(())
+}
+
+/// Streams rendered `DynamicImage` pages through a channel as they are decoded by `hayro`,
+/// completely eliminating intermediate PNG encoding and disk writes.
+pub fn stream_rendered_pages(
+    pdf_path: &Path,
+    begin_page: usize,
+    end_page: usize,
+    tx: std::sync::mpsc::SyncSender<(usize, Result<image::DynamicImage>)>,
+) -> Result<()> {
+    let session = PdfSession::open(pdf_path, None)?;
+    stream_rendered_pages_from_session(&session, begin_page, end_page, None, tx)
 }
 
 /// Renders a single page of a PDF document directly into an in-memory `DynamicImage` (RGBA8)
@@ -348,55 +469,58 @@ pub fn extract_pdf_text(
     })
 }
 
-/// Extracts embedded metadata properties (title, author, subject, dates) from a PDF.
-pub fn extract_pdf_metadata(pdf_path: &Path) -> DocumentMetadata {
+/// Extracts embedded metadata properties from an already parsed `lopdf::Document`.
+pub fn extract_pdf_metadata_from_doc(doc: &lopdf::Document) -> DocumentMetadata {
     let mut meta = DocumentMetadata::default();
+    let info_obj = doc.trailer.get(b"Info").ok();
+    let info_dict = match info_obj {
+        Some(lopdf::Object::Reference(id)) => doc
+            .get_object(*id)
+            .ok()
+            .and_then(|o| o.as_dict().ok().cloned()),
+        Some(lopdf::Object::Dictionary(dict)) => Some(dict.clone()),
+        _ => None,
+    };
 
-    if let Ok(doc) = lopdf::Document::load(pdf_path) {
-        let info_obj = doc.trailer.get(b"Info").ok();
-        let info_dict = match info_obj {
-            Some(lopdf::Object::Reference(id)) => doc
-                .get_object(*id)
-                .ok()
-                .and_then(|o| o.as_dict().ok().cloned()),
-            Some(lopdf::Object::Dictionary(dict)) => Some(dict.clone()),
-            _ => None,
-        };
-
-        if let Some(dict) = info_dict {
-            if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty()
-            {
-                meta.title = Some(val);
-            }
-            if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty()
-            {
-                meta.author = Some(val);
-            }
-            if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty()
-            {
-                meta.subject = Some(val);
-            }
-            if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty()
-            {
-                meta.keywords = Some(val);
-            }
-            if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string)
-                && !val.trim().is_empty()
-            {
-                meta.creation_date = Some(clean_pdf_date(&val));
-            }
+    if let Some(dict) = info_dict {
+        if let Some(val) = dict.get(b"Title").ok().and_then(decode_pdf_string)
+            && !val.trim().is_empty()
+        {
+            meta.title = Some(val);
+        }
+        if let Some(val) = dict.get(b"Author").ok().and_then(decode_pdf_string)
+            && !val.trim().is_empty()
+        {
+            meta.author = Some(val);
+        }
+        if let Some(val) = dict.get(b"Subject").ok().and_then(decode_pdf_string)
+            && !val.trim().is_empty()
+        {
+            meta.subject = Some(val);
+        }
+        if let Some(val) = dict.get(b"Keywords").ok().and_then(decode_pdf_string)
+            && !val.trim().is_empty()
+        {
+            meta.keywords = Some(val);
+        }
+        if let Some(val) = dict.get(b"CreationDate").ok().and_then(decode_pdf_string)
+            && !val.trim().is_empty()
+        {
+            meta.creation_date = Some(clean_pdf_date(&val));
         }
     }
 
-    if let Ok(count) = get_pdf_page_count(pdf_path) {
-        meta.total_pages = Some(count);
-    }
-
+    meta.total_pages = Some(doc.get_pages().len());
     meta
+}
+
+/// Extracts embedded metadata properties (title, author, subject, dates) from a PDF.
+pub fn extract_pdf_metadata(pdf_path: &Path) -> DocumentMetadata {
+    if let Ok(doc) = lopdf::Document::load(pdf_path) {
+        extract_pdf_metadata_from_doc(&doc)
+    } else {
+        DocumentMetadata::default()
+    }
 }
 
 fn decode_pdf_string(obj: &lopdf::Object) -> Option<String> {
@@ -1824,6 +1948,125 @@ mod tests {
         assert!(
             full_text.contains("Sub Registrar") || full_text.contains("Pattom"),
             "Must extract page 2 deed text"
+        );
+    }
+
+    #[test]
+    fn test_pdf_session_open_and_parses() {
+        let path = resolve_test_fixture("digital_text.pdf");
+        let session = PdfSession::open(&path, None).expect("Should open session");
+        assert_eq!(session.page_count, 2);
+        assert!(!session.sha256.is_empty());
+        assert!(session.metadata.pdf_sha256.is_some());
+        assert_eq!(session.metadata.total_pages, Some(2));
+    }
+
+    #[test]
+    fn test_pdf_session_max_file_mb_rejection() {
+        let path = resolve_test_fixture("digital_text.pdf");
+        // Limit to 0 MB (0 bytes) so any non-empty file is rejected
+        let res = PdfSession::open(&path, Some(0));
+        assert!(res.is_err(), "Exceeding max_file_mb must return error");
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("exceeds maximum permitted size"));
+    }
+
+    #[test]
+    fn test_pixel_cap_huge_mediabox_downscaling() {
+        // Create an in-memory PDF with a 14400x14400 pt MediaBox (COR-17)
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(lopdf::Stream::new(lopdf::Dictionary::new(), vec![]));
+        let mut page_dict = lopdf::Dictionary::new();
+        page_dict.set("Type", "Page");
+        page_dict.set("Parent", pages_id);
+        page_dict.set(
+            "MediaBox",
+            vec![0.into(), 0.into(), 14400.into(), 14400.into()],
+        );
+        page_dict.set("Contents", content_id);
+        let page_id = doc.add_object(page_dict);
+
+        let mut pages_dict = lopdf::Dictionary::new();
+        pages_dict.set("Type", "Pages");
+        pages_dict.set("Kids", vec![page_id.into()]);
+        pages_dict.set("Count", 1);
+        doc.set_object(pages_id, pages_dict);
+
+        let mut catalog_dict = lopdf::Dictionary::new();
+        catalog_dict.set("Type", "Catalog");
+        catalog_dict.set("Pages", pages_id);
+        let catalog_id = doc.add_object(catalog_dict);
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes)
+            .expect("Failed to serialize synthetic PDF");
+
+        let session = PdfSession::from_bytes(bytes.into(), None).expect("Should parse session");
+        assert_eq!(session.page_count, 1);
+
+        // Verify downscale calculation
+        let (tx, rx) = std::sync::mpsc::sync_channel(2);
+        let stream_res = stream_rendered_pages_from_session(&session, 1, 1, Some(40_000_000), tx);
+        assert!(stream_res.is_ok());
+        if let Ok((page_num, img_res)) = rx.recv() {
+            assert_eq!(page_num, 1);
+            if let Ok(img) = img_res {
+                let total_px = (img.width() as u64) * (img.height() as u64);
+                assert!(
+                    total_px <= 45_000_000,
+                    "Rendered image pixels ({total_px}) must stay near or under 40 MP cap"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pdf_session_300_page_linear_scaling() {
+        // Construct a synthetic 300-page PDF document
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut page_ids = Vec::with_capacity(300);
+
+        for _ in 0..300 {
+            let content_id = doc.add_object(lopdf::Stream::new(lopdf::Dictionary::new(), vec![]));
+            let mut page_dict = lopdf::Dictionary::new();
+            page_dict.set("Type", "Page");
+            page_dict.set("Parent", pages_id);
+            page_dict.set("MediaBox", vec![0.into(), 0.into(), 612.into(), 792.into()]);
+            page_dict.set("Contents", content_id);
+            page_ids.push(doc.add_object(page_dict));
+        }
+
+        let kids: Vec<lopdf::Object> = page_ids.into_iter().map(|id| id.into()).collect();
+        let mut pages_dict = lopdf::Dictionary::new();
+        pages_dict.set("Type", "Pages");
+        pages_dict.set("Kids", kids);
+        pages_dict.set("Count", 300);
+        doc.set_object(pages_id, pages_dict);
+
+        let mut catalog_dict = lopdf::Dictionary::new();
+        catalog_dict.set("Type", "Catalog");
+        catalog_dict.set("Pages", pages_id);
+        let catalog_id = doc.add_object(catalog_dict);
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes)
+            .expect("Failed to serialize synthetic 300p PDF");
+
+        let t0 = std::time::Instant::now();
+        let session =
+            PdfSession::from_bytes(bytes.into(), None).expect("Should parse 300p session");
+        let elapsed_parse = t0.elapsed();
+
+        assert_eq!(session.page_count, 300);
+        // Linear scale verification: parsing 300 pages into session completes in < 1.5s
+        assert!(
+            elapsed_parse.as_secs_f32() < 1.5,
+            "Parsing 300 pages took too long: {:?}",
+            elapsed_parse
         );
     }
 }

@@ -17,7 +17,6 @@ mod tests {
             .into_typed()?
             .into_runnable()?;
 
-        println!("Successfully typed and optimized DBNet with concrete shape (1, 1, 1024, 1024)!");
         Ok(())
     }
 
@@ -36,7 +35,6 @@ mod tests {
             .into_typed()?
             .into_runnable()?;
 
-        println!("Successfully typed and optimized SVTR with concrete shape (1, 1, 96, 320)!");
         Ok(())
     }
 
@@ -58,9 +56,6 @@ mod tests {
             .into_typed()?
             .into_runnable()?;
 
-        println!(
-            "Successfully typed and optimized SVTR world with concrete shape (1, 1, 32, 320)!"
-        );
         Ok(())
     }
 }
