@@ -1,6 +1,6 @@
 import { invoke, isTauri as checkIsTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AppConfigData, DryRunSummary, ProgressPayload } from '../types';
+import { AppConfigData, DryRunSummary, ModelStatus, ProgressPayload } from '../types';
 
 export function isTauri(): boolean {
   try {
@@ -235,6 +235,30 @@ export async function embedVault(vaultPath: string, force: boolean): Promise<{ n
     body: JSON.stringify({ vaultPath, force }),
   });
   return await res.json();
+}
+
+export async function getModelStatus(): Promise<ModelStatus[]> {
+  if (isTauri()) {
+    try {
+      return await invoke<ModelStatus[]>('get_model_status');
+    } catch (err) {
+      console.error('Failed to get model status via Tauri IPC:', err);
+      return [];
+    }
+  }
+
+  try {
+    const res = await fetch('/api/models', {
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch models: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('Failed to get model status via HTTP:', err);
+    return [];
+  }
 }
 
 export async function downloadModels(): Promise<{ success: boolean; message: string }> {

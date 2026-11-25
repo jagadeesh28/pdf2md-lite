@@ -4,10 +4,11 @@ output/
 temp/
 *.log
 *.txt
-!models/layout/table_structure_dict.txt
 .pdfmd-backup/
 .cargo/
-models/
+models/*
+!models/MANIFEST.toml
+!models/layout/table_structure_dict.txt
 completed/
 dist/
 *.msi

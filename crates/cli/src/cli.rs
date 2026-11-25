@@ -193,6 +193,18 @@ pub struct CliArgs {
     /// Enable heuristic academic structure heading promotion (numbered sections and initials)
     #[arg(long = "academic-structure")]
     pub academic_structure: bool,
+
+    /// Hardware device for neural model execution: auto (default), cpu, directml
+    #[arg(long = "device", value_name = "DEVICE")]
+    pub device: Option<String>,
+
+    /// Allow degraded conversion when optional models or requested scripts are missing
+    #[arg(long = "allow-degraded")]
+    pub allow_degraded: bool,
+
+    /// Install offline neural models from local directory or .zip bundle into AppData
+    #[arg(long = "install-models", value_name = "PATH")]
+    pub install_models: Option<PathBuf>,
 }
 
 pub fn run() {
@@ -248,10 +260,29 @@ pub fn run() {
         process::exit(0);
     }
 
-    // 3. Doctor mode
+    // 3. Install offline models mode
+    if let Some(ref install_path) = args.install_models {
+        println!(
+            "Installing offline neural models from '{}'...",
+            install_path.display()
+        );
+        match pdfmd_lite::vault::install_offline_models(install_path) {
+            Ok(_) => {
+                println!("Successfully imported model bundle into AppData models directory.");
+                let ok = run_doctor(None);
+                process::exit(if ok { 0 } else { 1 });
+            }
+            Err(e) => {
+                eprintln!("Error installing offline models: {e:#}");
+                process::exit(1);
+            }
+        }
+    }
+
+    // 4. Doctor mode
     if args.doctor {
-        run_doctor(args.models_dir.as_deref());
-        process::exit(0);
+        let ok = run_doctor(args.models_dir.as_deref());
+        process::exit(if ok { 0 } else { 1 });
     }
 
     // 4. In-place PNG to JPEG conversion mode
@@ -504,24 +535,72 @@ pub fn run() {
     let final_concurrency = args.concurrency.or(config.concurrency);
     let final_max_depth = args.max_depth.or(config.max_depth).unwrap_or(3);
 
+    // Configure active hardware device (auto, cpu, directml)
+    let device_str = args
+        .device
+        .as_deref()
+        .or(config.device.as_deref())
+        .unwrap_or("auto");
+    let device_target = match device_str.parse::<pdfmd_lite::DeviceTarget>() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(1);
+        }
+    };
+    pdfmd_lite::figure::models::set_active_device(device_target);
+
+    let allow_degraded = args.allow_degraded || config.allow_degraded.unwrap_or(false);
+
     let final_script = if args.english {
         pdfmd_lite::backends::indra::IndraScript::English
     } else if args.telugu {
         pdfmd_lite::backends::indra::IndraScript::Telugu
     } else if args.auto {
         pdfmd_lite::backends::indra::IndraScript::Auto
+    } else if let Some(ref lang_str) = args.language.as_ref().or(config.language.as_ref()) {
+        match lang_str.parse::<pdfmd_lite::backends::indra::IndraScript>() {
+            Ok(s) => s,
+            Err(_) => {
+                if allow_degraded {
+                    tracing::warn!(
+                        "Requested language '{}' is unsupported. Degrading to English OCR.",
+                        lang_str
+                    );
+                    pdfmd_lite::backends::indra::IndraScript::English
+                } else {
+                    eprintln!(
+                        "Error: Unsupported language '{lang_str}'. Valid options are: english, telugu, world, auto.\nPass --allow-degraded to allow fallback to English."
+                    );
+                    process::exit(1);
+                }
+            }
+        }
     } else {
-        args.language
-            .as_deref()
-            .and_then(|s| s.parse::<pdfmd_lite::backends::indra::IndraScript>().ok())
-            .or_else(|| {
-                config
-                    .language
-                    .as_deref()
-                    .and_then(|s| s.parse::<pdfmd_lite::backends::indra::IndraScript>().ok())
-            })
-            .unwrap_or(pdfmd_lite::backends::indra::IndraScript::English)
+        pdfmd_lite::backends::indra::IndraScript::English
     };
+
+    // Capability check: if Telugu or World is requested, verify world model presence
+    if matches!(
+        final_script,
+        pdfmd_lite::backends::indra::IndraScript::Telugu
+            | pdfmd_lite::backends::indra::IndraScript::World
+    ) {
+        let locator = ModelLocator::new(final_models_dir.clone());
+        let has_world = locator.locate("models/indra/rec_world.onnx").is_some();
+        if !has_world {
+            if allow_degraded {
+                tracing::warn!(
+                    "Telugu/World script requested but 'models/indra/rec_world.onnx' was not found. Degrading to Latin OCR."
+                );
+            } else {
+                eprintln!(
+                    "Error: Telugu/World script requested, but 'models/indra/rec_world.onnx' is not available.\nRun 'pdfmd-lite --install-models <dir|zip>' or pass --allow-degraded to fall back to Latin OCR."
+                );
+                process::exit(1);
+            }
+        }
+    }
 
     let final_image_format = args
         .image_format
@@ -733,7 +812,7 @@ pub fn run() {
     }
 }
 
-fn run_doctor(custom_dir: Option<&Path>) {
+fn run_doctor(custom_dir: Option<&Path>) -> bool {
     let locator = ModelLocator::new(custom_dir.map(PathBuf::from));
     let report = locator.doctor_report();
 
@@ -742,8 +821,8 @@ fn run_doctor(custom_dir: Option<&Path>) {
         "=========================================================================================="
     );
     println!(
-        "{:<32} {:<10} {:<10} {:<10} Resolution / Location",
-        "Model Name", "Type", "Size", "SHA256"
+        "{:<35} {:<10} {:<10} {:<10} {:<10} Status / Location",
+        "Model Name", "Type", "Size", "SHA256", "Valid"
     );
     println!(
         "------------------------------------------------------------------------------------------"
@@ -751,6 +830,7 @@ fn run_doctor(custom_dir: Option<&Path>) {
 
     let mut missing_required = 0;
     let mut missing_optional = 0;
+    let mut invalid_models = 0;
 
     for status in &report {
         let presence = if status.is_embedded {
@@ -775,10 +855,17 @@ fn run_doctor(custom_dir: Option<&Path>) {
             .as_deref()
             .and_then(|h| h.get(..8))
             .unwrap_or("-");
+        let valid_str = if !status.exists {
+            if status.required { "NO" } else { "-" }
+        } else if status.is_valid {
+            "YES"
+        } else {
+            "MISMATCH"
+        };
 
         println!(
-            "{:<32} {:<10} {:<10} {:<10} {}",
-            status.name, req_str, size_str, hash_str, presence
+            "{:<35} {:<10} {:<10} {:<10} {:<10} {}",
+            status.name, req_str, size_str, hash_str, valid_str, presence
         );
 
         if !status.exists {
@@ -787,6 +874,11 @@ fn run_doctor(custom_dir: Option<&Path>) {
             } else {
                 missing_optional += 1;
             }
+        } else if !status.is_valid {
+            invalid_models += 1;
+            if let Some(ref err) = status.error {
+                eprintln!("  ↳ Integrity Error: {err}");
+            }
         }
     }
 
@@ -794,15 +886,18 @@ fn run_doctor(custom_dir: Option<&Path>) {
         "=========================================================================================="
     );
     if missing_required > 0 {
-        eprintln!(
-            "Warning: {missing_required} required model(s) are missing. Conversion will fail."
-        );
+        eprintln!("Error: {missing_required} required model(s) are missing. Conversion will fail.");
+    } else if invalid_models > 0 {
+        eprintln!("Error: {invalid_models} model weight(s) failed SHA-256 integrity verification.");
     } else {
-        println!("All required offline neural models are provisioned.");
+        println!("All required offline neural models are provisioned and verified.");
     }
+
     if missing_optional > 0 {
         println!(
-            "Note: {missing_optional} optional model(s) are not provisioned (formulas, tables, or embeddings will degrade to fallbacks).\nRun 'pdfmd-lite --download-models' to fetch optional weights."
+            "Note: {missing_optional} optional model(s) are not provisioned (formulas, tables, or embeddings will degrade to fallbacks).\nUse 'pdfmd-lite --install-models <dir|zip>' to import optional weights offline."
         );
     }
+
+    missing_required == 0 && invalid_models == 0
 }

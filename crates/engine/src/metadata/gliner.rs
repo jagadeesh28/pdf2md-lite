@@ -23,6 +23,7 @@ pub struct GlinerExtractionResult {
     pub custom: HashMap<String, Vec<String>>,
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "gliner-ort")]
 pub struct GlinerEngine {
     #[allow(dead_code)]
@@ -34,6 +35,7 @@ static GLINER_ENGINE: std::sync::OnceLock<Option<Arc<GlinerEngine>>> = std::sync
 
 /// Returns a shared, lazily initialized singleton instance of the GLiNER Engine,
 /// or `None` if the model weight file is not provisioned on disk.
+#[allow(dead_code)]
 #[cfg(feature = "gliner-ort")]
 pub fn get_gliner_engine() -> Option<Arc<GlinerEngine>> {
     let engine = GLINER_ENGINE.get_or_init(|| {
@@ -239,57 +241,7 @@ pub fn populate_metadata_from_text(
         return 0;
     }
 
-    #[cfg(feature = "gliner-ort")]
-    if let Some(gliner) = get_gliner_engine()
-        && let Ok(res) = gliner.extract_metadata(
-            header_slice,
-            &[
-                "title",
-                "author",
-                "date",
-                "organization",
-                "journal",
-                "volume",
-                "keywords",
-                "doi",
-            ],
-        )
-    {
-        if metadata.author.is_none() && !res.authors.is_empty() {
-            metadata.author = Some(res.authors.join(", "));
-            fields_added += 1;
-        }
-        if metadata.publication_date.is_none() && res.date.is_some() {
-            metadata.publication_date = res.date;
-            fields_added += 1;
-        }
-        if metadata.organization.is_none() && res.organization.is_some() {
-            metadata.organization = res.organization;
-            fields_added += 1;
-        }
-        if metadata.journal.is_none() && res.journal.is_some() {
-            metadata.journal = res.journal;
-            fields_added += 1;
-        }
-        if metadata.volume.is_none() && res.volume.is_some() {
-            metadata.volume = res.volume;
-            fields_added += 1;
-        }
-        if metadata.issue.is_none() && res.issue.is_some() {
-            metadata.issue = res.issue;
-            fields_added += 1;
-        }
-        if metadata.doi.is_none() && res.doi.is_some() {
-            metadata.doi = res.doi;
-            fields_added += 1;
-        }
-        if metadata.keywords.is_none() && !res.keywords.is_empty() {
-            metadata.keywords = Some(res.keywords.join(", "));
-            fields_added += 1;
-        }
-    }
-
-    // Pattern fallback
+    // Deterministic Header Metadata Extractor (ADR 0018: zero-LLM/zero-GLiNER decoupled)
     let res = extract_header_metadata_fallback(header_slice);
     if metadata.author.is_none() && !res.authors.is_empty() {
         metadata.author = Some(res.authors.join(", "));

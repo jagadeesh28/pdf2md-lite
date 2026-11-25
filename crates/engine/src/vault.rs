@@ -530,8 +530,12 @@ pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> Result<Embe
 /// Provisions official INT8 all-MiniLM-L6-v2 ONNX model and tokenizer.json into models/embeddings/.
 #[cfg(feature = "online-provisioning")]
 pub fn download_embedding_models() -> Result<()> {
-    let target_dir = Path::new("models/embeddings");
-    fs::create_dir_all(target_dir)?;
+    use sha2::Digest;
+
+    let target_dir = crate::config::default_data_dir()
+        .join("models")
+        .join("embeddings");
+    fs::create_dir_all(&target_dir)?;
 
     let model_target = target_dir.join("model.onnx");
     let tokenizer_target = target_dir.join("tokenizer.json");
@@ -541,20 +545,57 @@ pub fn download_embedding_models() -> Result<()> {
         target_dir.display()
     );
 
+    let manifest = crate::model_locator::ModelManifest::embedded().ok();
+    let expected_model_hash = manifest
+        .as_ref()
+        .and_then(|m| m.find_by_subpath("models/embeddings/model.onnx"))
+        .map(|e| e.sha256.as_str())
+        .unwrap_or("afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1");
+    let expected_tok_hash = manifest
+        .as_ref()
+        .and_then(|m| m.find_by_subpath("models/embeddings/tokenizer.json"))
+        .map(|e| e.sha256.as_str())
+        .unwrap_or("be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037");
+
     let model_url =
         "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
     let tokenizer_url =
         "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/raw/main/tokenizer.json";
 
+    let curl_cmd = if cfg!(target_os = "windows") {
+        "curl.exe"
+    } else {
+        "curl"
+    };
+
     if !model_target.exists() {
         println!("Downloading quantized all-MiniLM-L6-v2 ONNX model (~22 MB)...");
-        let status = std::process::Command::new("curl.exe")
-            .args(["-L", "-o", model_target.to_str().unwrap(), model_url])
+        let partial_model = target_dir.join("model.onnx.partial");
+        let status = std::process::Command::new(curl_cmd)
+            .args([
+                "-L",
+                "-s",
+                "-o",
+                partial_model.to_string_lossy().as_ref(),
+                model_url,
+            ])
             .status();
 
         match status {
-            Ok(s) if s.success() => println!("Downloaded {}", model_target.display()),
+            Ok(s) if s.success() => {
+                let data = fs::read(&partial_model)?;
+                let hash = format!("{:x}", sha2::Sha256::digest(&data));
+                if !hash.eq_ignore_ascii_case(expected_model_hash) {
+                    let _ = fs::remove_file(&partial_model);
+                    anyhow::bail!(
+                        "Downloaded model failed SHA-256 verification: expected {expected_model_hash}, got {hash}"
+                    );
+                }
+                fs::rename(&partial_model, &model_target)?;
+                println!("Downloaded and verified {}", model_target.display());
+            }
             _ => {
+                let _ = fs::remove_file(&partial_model);
                 anyhow::bail!(
                     "Failed to download model via curl.\nPlease manually download:\n  {}\nand save to:\n  {}",
                     model_url,
@@ -568,18 +609,32 @@ pub fn download_embedding_models() -> Result<()> {
 
     if !tokenizer_target.exists() {
         println!("Downloading tokenizer.json...");
-        let status = std::process::Command::new("curl.exe")
+        let partial_tok = target_dir.join("tokenizer.json.partial");
+        let status = std::process::Command::new(curl_cmd)
             .args([
                 "-L",
+                "-s",
                 "-o",
-                tokenizer_target.to_str().unwrap(),
+                partial_tok.to_string_lossy().as_ref(),
                 tokenizer_url,
             ])
             .status();
 
         match status {
-            Ok(s) if s.success() => println!("Downloaded {}", tokenizer_target.display()),
+            Ok(s) if s.success() => {
+                let data = fs::read(&partial_tok)?;
+                let hash = format!("{:x}", sha2::Sha256::digest(&data));
+                if !hash.eq_ignore_ascii_case(expected_tok_hash) {
+                    let _ = fs::remove_file(&partial_tok);
+                    anyhow::bail!(
+                        "Downloaded tokenizer failed SHA-256 verification: expected {expected_tok_hash}, got {hash}"
+                    );
+                }
+                fs::rename(&partial_tok, &tokenizer_target)?;
+                println!("Downloaded and verified {}", tokenizer_target.display());
+            }
             _ => {
+                let _ = fs::remove_file(&partial_tok);
                 anyhow::bail!(
                     "Failed to download tokenizer via curl.\nPlease manually download:\n  {}\nand save to:\n  {}",
                     tokenizer_url,
@@ -591,30 +646,97 @@ pub fn download_embedding_models() -> Result<()> {
         println!("Tokenizer already exists: {}", tokenizer_target.display());
     }
 
-    let metadata_dir = Path::new("models/metadata");
-    fs::create_dir_all(metadata_dir)?;
-    let gliner_target = metadata_dir.join("gliner_small.onnx");
-    let gliner_url = "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model_quantized.onnx";
+    crate::model_locator::invalidate_model_caches();
+    println!("\nModel provisioning complete!");
+    Ok(())
+}
 
-    if !gliner_target.exists() {
-        println!("Downloading GLiNER small metadata extractor ONNX model (~183 MB)...");
-        let status = std::process::Command::new("curl.exe")
-            .args(["-L", "-o", gliner_target.to_str().unwrap(), gliner_url])
-            .status();
-
-        match status {
-            Ok(s) if s.success() => println!("Downloaded {}", gliner_target.display()),
-            _ => {
-                tracing::warn!(
-                    "Failed to download GLiNER model via curl. Manual URL: {gliner_url}"
-                );
-            }
-        }
-    } else {
-        println!("GLiNER model already exists: {}", gliner_target.display());
+/// Installs offline neural models from a local directory or .zip bundle into AppData models directory.
+/// Verifies all extracted files against embedded `MANIFEST.toml` (SHA-256 and byte sizes)
+/// and invalidates in-memory model caches per Phase 10.
+pub fn install_offline_models(
+    source_path: &Path,
+) -> Result<Vec<crate::model_locator::ModelStatus>> {
+    if !source_path.exists() {
+        anyhow::bail!("Source path '{}' does not exist", source_path.display());
     }
 
-    println!("\nModel provisioning complete!");
+    let target_models_dir = crate::config::default_data_dir().join("models");
+    fs::create_dir_all(&target_models_dir).with_context(|| {
+        format!(
+            "Failed to create models directory at {}",
+            target_models_dir.display()
+        )
+    })?;
+
+    if source_path.is_file() {
+        let file = fs::File::open(source_path).with_context(|| {
+            format!(
+                "Failed to open model bundle archive at {}",
+                source_path.display()
+            )
+        })?;
+        let mut archive = zip::ZipArchive::new(file)
+            .with_context(|| format!("Failed to parse zip archive: {}", source_path.display()))?;
+
+        for i in 0..archive.len() {
+            let mut item = archive.by_index(i)?;
+            let raw_name = item.name().to_string();
+
+            // Prevent zip slip: reject directory traversal and absolute paths
+            if raw_name.contains("..") || raw_name.starts_with('/') || raw_name.starts_with('\\') {
+                continue;
+            }
+
+            let rel_path = crate::model_locator::ModelLocator::strip_models_prefix(&raw_name);
+            let out_path = target_models_dir.join(rel_path);
+
+            if item.is_dir() {
+                fs::create_dir_all(&out_path)?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut out_file = fs::File::create(&out_path)?;
+                std::io::copy(&mut item, &mut out_file)?;
+            }
+        }
+    } else if source_path.is_dir() {
+        copy_model_dir_recursive(source_path, &target_models_dir)?;
+    } else {
+        anyhow::bail!(
+            "Source path '{}' is neither a file nor a directory",
+            source_path.display()
+        );
+    }
+
+    // Invalidate in-memory caches so new models are immediately recognized
+    crate::model_locator::invalidate_model_caches();
+
+    let locator = crate::model_locator::ModelLocator::new(Some(target_models_dir));
+    Ok(locator.doctor_report())
+}
+
+fn copy_model_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let target = dst.join(&name);
+
+        if path.is_dir() {
+            fs::create_dir_all(&target)?;
+            copy_model_dir_recursive(&path, &target)?;
+        } else if path.is_file() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&path, &target)?;
+        }
+    }
     Ok(())
 }
 

@@ -105,6 +105,21 @@ export interface LogMessage {
   message: string;
 }
 
+export interface ModelStatus {
+  name: string;
+  subpath: string;
+  required: boolean;
+  resolved_path: string | null;
+  is_embedded: boolean;
+  exists: boolean;
+  size_bytes: number | null;
+  expected_size_bytes: number | null;
+  sha256: string | null;
+  expected_sha256: string | null;
+  is_valid: boolean;
+  error: string | null;
+}
+
 export interface ModelInfo {
   name: string;
   category: 'embeddings' | 'ocr' | 'layout' | 'latex' | 'metadata';

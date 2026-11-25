@@ -21,21 +21,36 @@ use crate::markdown::{
 };
 use crate::pdf::{safe_extract_text_by_pages, validate_page_range};
 
-static INDRA_ENGINE: std::sync::OnceLock<IndraEngine> = std::sync::OnceLock::new();
+static INDRA_ENGINE: std::sync::RwLock<Option<std::sync::Arc<IndraEngine>>> =
+    std::sync::RwLock::new(None);
 static INDRA_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Returns a lazily initialized static reference to the pure-Rust Indra OCR engine.
-pub fn get_indra_engine() -> Result<&'static IndraEngine> {
-    if let Some(engine) = INDRA_ENGINE.get() {
-        return Ok(engine);
+/// Invalidates cached singleton instance of the Indra OCR Engine.
+pub fn invalidate_indra_engine() {
+    if let Ok(mut lock) = INDRA_ENGINE.write() {
+        *lock = None;
+    }
+}
+
+/// Returns a lazily initialized reference to the pure-Rust Indra OCR engine.
+pub fn get_indra_engine() -> Result<std::sync::Arc<IndraEngine>> {
+    if let Ok(guard) = INDRA_ENGINE.read()
+        && let Some(ref engine) = *guard
+    {
+        return Ok(std::sync::Arc::clone(engine));
     }
     let _guard = INDRA_INIT_LOCK.lock().map_err(|e| anyhow!("{e}"))?;
-    if let Some(engine) = INDRA_ENGINE.get() {
-        return Ok(engine);
+    if let Ok(guard) = INDRA_ENGINE.read()
+        && let Some(ref engine) = *guard
+    {
+        return Ok(std::sync::Arc::clone(engine));
     }
-    let engine = IndraEngine::new(None)?;
-    let _ = INDRA_ENGINE.set(engine);
-    Ok(INDRA_ENGINE.get().expect("IndraEngine initialized"))
+
+    let engine = std::sync::Arc::new(IndraEngine::new(None)?);
+    if let Ok(mut guard) = INDRA_ENGINE.write() {
+        *guard = Some(std::sync::Arc::clone(&engine));
+    }
+    Ok(engine)
 }
 
 /// Formats a standardized Obsidian warning callout for incomplete or failed page processing.

@@ -34,6 +34,7 @@ dunce = "1.0"
 dirs = "7.0.0"
 rand = "0.8"
 toml = "1.2.1"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "registry"] }
 tract-onnx = "0.23.10"

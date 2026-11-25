@@ -1,10 +1,28 @@
 //! Model weight provisioning and loading for the YOLO Document Layout Engine.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::RwLock;
 
 static CUSTOM_LAYOUT_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
+static ACTIVE_DEVICE: RwLock<crate::config::DeviceTarget> =
+    RwLock::new(crate::config::DeviceTarget::Auto);
+
+/// Sets the process-wide active hardware device target for ONNX sessions.
+pub fn set_active_device(device: crate::config::DeviceTarget) {
+    if let Ok(mut lock) = ACTIVE_DEVICE.write() {
+        *lock = device;
+    }
+}
+
+/// Retrieves the process-wide active hardware device target.
+pub fn get_active_device() -> crate::config::DeviceTarget {
+    ACTIVE_DEVICE
+        .read()
+        .ok()
+        .map(|guard| *guard)
+        .unwrap_or(crate::config::DeviceTarget::Auto)
+}
 
 #[cfg(any(
     feature = "slanet-ort",
@@ -74,12 +92,25 @@ pub fn create_optimized_session_builder(
         .with_intra_threads(intra)
         .map_err(|e| anyhow::anyhow!("Failed to set ORT intra_threads ({intra}): {e}"))?;
 
+    let target_device = get_active_device();
+    let try_directml = match target_device {
+        crate::config::DeviceTarget::Directml => true,
+        crate::config::DeviceTarget::Auto => allow_directml,
+        crate::config::DeviceTarget::Cpu => false,
+    };
+
     #[cfg(all(target_os = "windows", feature = "directml"))]
-    if allow_directml {
-        // DirectML acceleration with automatic silent fallback to CPU
+    if try_directml {
+        tracing::info!("Configuring DirectML execution provider for ORT session");
         builder = builder
             .with_execution_providers([ort::ep::DirectML::default().build().fail_silently()])
             .map_err(|e| anyhow::anyhow!("Failed to configure DirectML execution provider: {e}"))?;
+    } else {
+        tracing::info!("Configuring CPU execution provider for ORT session");
+    }
+    #[cfg(not(all(target_os = "windows", feature = "directml")))]
+    {
+        tracing::info!("Configuring CPU execution provider for ORT session");
     }
 
     Ok(builder)
@@ -111,6 +142,17 @@ impl LayoutModelSource {
 
     /// Loads the YOLO layout detector model bytes without heap duplication.
     pub fn load_layout_bytes(&self) -> Result<std::borrow::Cow<'static, [u8]>> {
+        if let Some(ref path) = self.custom_path
+            && path.is_file()
+        {
+            let data = std::fs::read(path).with_context(|| {
+                format!(
+                    "Failed to read custom layout model file: {}",
+                    path.display()
+                )
+            })?;
+            return Ok(std::borrow::Cow::Owned(data));
+        }
         let locator = crate::model_locator::ModelLocator::new(self.custom_path.clone());
         locator.load_bytes("models/layout/yolov8n-doclaynet.onnx")
     }

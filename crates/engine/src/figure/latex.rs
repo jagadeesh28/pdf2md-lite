@@ -20,37 +20,61 @@ pub struct RapidLatexEngine {
 }
 
 #[cfg(feature = "latex-ort")]
-static LATEX_ENGINE: std::sync::OnceLock<Option<Arc<RapidLatexEngine>>> =
-    std::sync::OnceLock::new();
+static LATEX_ENGINE: std::sync::RwLock<Option<Option<Arc<RapidLatexEngine>>>> =
+    std::sync::RwLock::new(None);
+#[cfg(feature = "latex-ort")]
+static LATEX_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Invalidates cached singleton instance of the RapidLaTeXOCR Engine.
+#[cfg(feature = "latex-ort")]
+pub fn invalidate_latex_engine() {
+    if let Ok(mut lock) = LATEX_ENGINE.write() {
+        *lock = None;
+    }
+}
 
 /// Returns a shared, lazily initialized singleton instance of the RapidLaTeXOCR Engine,
 /// or `None` if the model/tokenizer files are not provisioned.
 #[cfg(feature = "latex-ort")]
 pub fn get_latex_engine() -> Option<Arc<RapidLatexEngine>> {
-    let engine = LATEX_ENGINE.get_or_init(|| {
-        let enc_path = crate::resolve_model_path("models/latex/encoder.onnx");
-        let dec_path = crate::resolve_model_path("models/latex/decoder.onnx");
-        let tok_path = crate::resolve_model_path("models/latex/tokenizer.json");
+    if let Ok(guard) = LATEX_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
+    let _lock = LATEX_INIT_LOCK.lock().ok()?;
+    if let Ok(guard) = LATEX_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
 
-        if enc_path.exists() && dec_path.exists() && tok_path.exists() {
-            match RapidLatexEngine::new(&enc_path, &dec_path, &tok_path) {
-                Ok(engine) => Some(Arc::new(engine)),
-                Err(err) => {
-                    tracing::warn!("Failed to initialize RapidLaTeXOCR engine: {err:#}");
-                    None
-                }
+    let enc_path = crate::resolve_model_path("models/latex/encoder.onnx");
+    let dec_path = crate::resolve_model_path("models/latex/decoder.onnx");
+    let tok_path = crate::resolve_model_path("models/latex/tokenizer.json");
+
+    let result = if enc_path.exists() && dec_path.exists() && tok_path.exists() {
+        match RapidLatexEngine::new(&enc_path, &dec_path, &tok_path) {
+            Ok(engine) => Some(Arc::new(engine)),
+            Err(err) => {
+                tracing::warn!("Failed to initialize RapidLaTeXOCR engine: {err:#}");
+                None
             }
-        } else {
-            tracing::warn!(
-                "RapidLaTeXOCR models not found (checked: {}, {}, {}). Mathematical formula recognition disabled.",
-                enc_path.display(),
-                dec_path.display(),
-                tok_path.display()
-            );
-            None
         }
-    });
-    engine.as_ref().cloned()
+    } else {
+        tracing::warn!(
+            "RapidLaTeXOCR models not found (checked: {}, {}, {}). Mathematical formula recognition disabled.",
+            enc_path.display(),
+            dec_path.display(),
+            tok_path.display()
+        );
+        None
+    };
+
+    if let Ok(mut guard) = LATEX_ENGINE.write() {
+        *guard = Some(result.clone());
+    }
+    result
 }
 
 #[cfg(not(feature = "latex-ort"))]
@@ -85,13 +109,18 @@ impl RapidLatexEngine {
         };
 
         // Bounded session pool: provision 2 sessions to allow concurrent page execution without mutex contention
+        let pool_size = crate::concurrency::resolve_session_pool_capacity();
         let mut encoders = vec![create_encoder()?];
-        if let Ok(second_enc) = create_encoder() {
+        if pool_size > 1
+            && let Ok(second_enc) = create_encoder()
+        {
             encoders.push(second_enc);
         }
 
         let mut decoders = vec![create_decoder()?];
-        if let Ok(second_dec) = create_decoder() {
+        if pool_size > 1
+            && let Ok(second_dec) = create_decoder()
+        {
             decoders.push(second_dec);
         }
 

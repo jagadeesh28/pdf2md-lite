@@ -457,6 +457,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let api_routes = Router::new()
         .route("/config", get(get_config).put(update_config))
+        .route("/models", get(get_models_handler))
         .route("/dry-run", post(dry_run_handler))
         .route("/convert", post(convert_handler))
         .route("/format-notes", post(format_notes_handler))
@@ -942,6 +943,10 @@ async fn embed_vault_handler(
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+}
+
+async fn get_models_handler() -> Json<Vec<pdfmd_lite::ModelStatus>> {
+    Json(pdfmd_lite::get_model_status())
 }
 
 async fn download_models_handler() -> Result<Json<serde_json::Value>, (StatusCode, String)> {

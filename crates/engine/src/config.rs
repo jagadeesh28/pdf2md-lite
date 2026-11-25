@@ -28,6 +28,32 @@ pub struct AppConfig {
     pub embed: Option<bool>,
     pub output_dir: Option<PathBuf>,
     pub academic_structure: Option<bool>,
+    pub device: Option<String>,
+    pub allow_degraded: Option<bool>,
+}
+
+/// Execution hardware target for ONNX neural models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceTarget {
+    #[default]
+    Auto,
+    Cpu,
+    Directml,
+}
+
+impl std::str::FromStr for DeviceTarget {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Ok(DeviceTarget::Auto),
+            "cpu" => Ok(DeviceTarget::Cpu),
+            "directml" | "dml" => Ok(DeviceTarget::Directml),
+            other => anyhow::bail!(
+                "Unknown device target '{other}'. Supported devices: auto, cpu, directml"
+            ),
+        }
+    }
 }
 
 impl AppConfig {

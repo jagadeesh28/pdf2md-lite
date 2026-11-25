@@ -50,40 +50,58 @@ pub struct SlaNetEngine {
 }
 
 #[cfg(feature = "slanet-ort")]
-static SLANET_ENGINE: std::sync::OnceLock<Option<Arc<SlaNetEngine>>> = std::sync::OnceLock::new();
+static SLANET_ENGINE: std::sync::RwLock<Option<Option<Arc<SlaNetEngine>>>> =
+    std::sync::RwLock::new(None);
+#[cfg(feature = "slanet-ort")]
+static SLANET_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Invalidates cached singleton instance of the SLANet Table Engine.
+#[cfg(feature = "slanet-ort")]
+pub fn invalidate_slanet_engine() {
+    if let Ok(mut lock) = SLANET_ENGINE.write() {
+        *lock = None;
+    }
+}
 
 /// Returns a shared, lazily initialized singleton instance of the SLANet Table Engine,
 /// or `None` if the model/dictionary files are not provisioned.
 #[cfg(feature = "slanet-ort")]
 pub fn get_slanet_engine() -> Option<Arc<SlaNetEngine>> {
-    let engine = SLANET_ENGINE.get_or_init(|| {
-        let model_path = {
-            let plus = crate::resolve_model_path("models/layout/slanet_plus.onnx");
-            if plus.exists() {
-                plus
-            } else {
-                crate::resolve_model_path("models/layout/slanet.onnx")
+    if let Ok(guard) = SLANET_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
+    let _lock = SLANET_INIT_LOCK.lock().ok()?;
+    if let Ok(guard) = SLANET_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
+
+    let model_path = crate::resolve_model_path("models/layout/slanet.onnx");
+    let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
+    let result = if model_path.exists() && dict_path.exists() {
+        match SlaNetEngine::new(&model_path, &dict_path) {
+            Ok(engine) => Some(Arc::new(engine)),
+            Err(err) => {
+                tracing::warn!("Failed to initialize SLANet table engine: {err:#}");
+                None
             }
-        };
-        let dict_path = crate::resolve_model_path("models/layout/table_structure_dict.txt");
-        if model_path.exists() && dict_path.exists() {
-            match SlaNetEngine::new(&model_path, &dict_path) {
-                Ok(engine) => Some(Arc::new(engine)),
-                Err(err) => {
-                    tracing::warn!("Failed to initialize SLANet table engine: {err:#}");
-                    None
-                }
-            }
-        } else {
-            tracing::warn!(
-                "SLANet table models not found (checked: {}, {}). Neural table structure recognition disabled.",
-                model_path.display(),
-                dict_path.display()
-            );
-            None
         }
-    });
-    engine.as_ref().cloned()
+    } else {
+        tracing::warn!(
+            "SLANet table models not found (checked: {}, {}). Neural table structure recognition disabled.",
+            model_path.display(),
+            dict_path.display()
+        );
+        None
+    };
+
+    if let Ok(mut guard) = SLANET_ENGINE.write() {
+        *guard = Some(result.clone());
+    }
+    result
 }
 
 #[cfg(not(feature = "slanet-ort"))]
@@ -105,9 +123,12 @@ impl SlaNetEngine {
                 .map_err(|e| anyhow::anyhow!("Failed to commit SLANet model from file: {e}"))
         };
 
-        // Bounded session pool: provision 2 sessions to allow concurrent page execution without mutex contention
+        // Bounded session pool: provision sessions scaled by available memory (ADR 0003, ADR 0018)
+        let pool_size = crate::concurrency::resolve_session_pool_capacity();
         let mut sessions = vec![create_session()?];
-        if let Ok(second) = create_session() {
+        if pool_size > 1
+            && let Ok(second) = create_session()
+        {
             sessions.push(second);
         }
 

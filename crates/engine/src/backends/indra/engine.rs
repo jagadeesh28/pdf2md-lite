@@ -152,9 +152,16 @@ impl IndraEngine {
         script: IndraScript,
     ) -> Result<(String, f32)> {
         match script {
-            IndraScript::Telugu | IndraScript::World => {
+            IndraScript::Telugu => {
                 if let Some(world) = &self.world_recognizer {
                     world.recognize_line_with_mask(gray, bbox, self.telugu_mask.as_deref())
+                } else {
+                    self.recognizer.recognize_line_with_conf(gray, bbox)
+                }
+            }
+            IndraScript::World => {
+                if let Some(world) = &self.world_recognizer {
+                    world.recognize_line_with_mask(gray, bbox, None)
                 } else {
                     self.recognizer.recognize_line_with_conf(gray, bbox)
                 }

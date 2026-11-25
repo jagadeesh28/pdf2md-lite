@@ -827,6 +827,13 @@ async fn embed_vault(vault_path: String, force: bool) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
+async fn get_model_status() -> Result<Vec<pdfmd_lite::ModelStatus>, String> {
+    tokio::task::spawn_blocking(pdfmd_lite::get_model_status)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn download_models() -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || {
         download_embedding_models().map_err(|e| e.to_string())?;
@@ -924,7 +931,8 @@ fn main() {
             format_notes,
             convert_png_to_jpeg,
             embed_vault,
-            download_models
+            download_models,
+            get_model_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

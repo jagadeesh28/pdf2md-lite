@@ -74,6 +74,19 @@ pub fn batch_page_worker_limit(explicit_override: Option<usize>, global_workers:
     global_workers.max(1)
 }
 
+/// Determines the optimal number of bounded model sessions in SessionPools
+/// based on total system memory (1 session when < 8 GB, 2 sessions when >= 8 GB) per Phase 10.
+pub fn resolve_session_pool_capacity() -> usize {
+    let total_ram_bytes = if let Ok(mut sys) = System::new() {
+        sys.refresh_memory();
+        sys.total_memory()
+    } else {
+        4 * 1024 * 1024 * 1024
+    };
+    let total_ram_gb = total_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    if total_ram_gb >= 8.0 { 2 } else { 1 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

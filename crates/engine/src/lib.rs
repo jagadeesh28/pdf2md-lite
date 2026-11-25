@@ -22,8 +22,8 @@ pub use batch::{
     process_pdf_directory, process_pdf_directory_all, process_pdf_directory_all_with_emitter,
     process_pdf_directory_full, process_pdf_directory_with_image_options, sanitize_short_slug,
 };
-pub use concurrency::resolve_concurrency;
-pub use config::AppConfig;
+pub use concurrency::{resolve_concurrency, resolve_session_pool_capacity};
+pub use config::{AppConfig, DeviceTarget};
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{
     CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult, encode_image_to_base64_data_uri,
@@ -34,7 +34,8 @@ pub use markdown::{
     normalize_latex_delimiters, render_markdown, replace_png_links_with_jpg,
 };
 pub use model_locator::{
-    KNOWN_MODELS, ModelLocator, ModelStatus, get_global_models_dir, set_global_models_dir,
+    KNOWN_MODELS, ModelLocator, ModelManifest, ModelStatus, get_global_models_dir,
+    get_model_status, invalidate_model_caches, set_global_models_dir,
 };
 pub use path_policy::{PathPolicy, PathPolicyError};
 pub use pdf::{
@@ -56,6 +57,7 @@ pub use vault::{
     ConvertImagesSummary, EmbedVaultSummary, FormatNotesSummary, VaultTaskProgress,
     convert_vault_png_to_jpeg, convert_vault_png_to_jpeg_with_progress, download_embedding_models,
     embed_vault_in_path, format_notes_in_path, format_notes_in_path_with_progress,
+    install_offline_models,
 };
 pub use watch::{WatchOptions, watch_directory};
 

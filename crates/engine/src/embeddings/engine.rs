@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 #[cfg(feature = "ort")]
 use std::sync::Mutex;
@@ -16,8 +16,16 @@ use ort::session::Session;
 /// Dimension of dense vectors produced by all-MiniLM-L6-v2.
 pub const EMBEDDING_DIM: usize = 384;
 
-/// Global singleton instance of the EmbeddingEngine.
-static GLOBAL_EMBEDDING_ENGINE: OnceLock<Option<Arc<EmbeddingEngine>>> = OnceLock::new();
+static GLOBAL_EMBEDDING_ENGINE: std::sync::RwLock<Option<Option<Arc<EmbeddingEngine>>>> =
+    std::sync::RwLock::new(None);
+static EMBEDDING_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Invalidates cached singleton instance of the EmbeddingEngine.
+pub fn invalidate_embedding_engine() {
+    if let Ok(mut lock) = GLOBAL_EMBEDDING_ENGINE.write() {
+        *lock = None;
+    }
+}
 
 /// Evaluates text embedding models locally in-process without network access.
 pub struct EmbeddingEngine {
@@ -200,27 +208,17 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 /// Resolves filesystem paths for the ONNX embedding model and tokenizer.
 pub fn resolve_embedding_paths(custom_dir: Option<&Path>) -> Result<(PathBuf, PathBuf)> {
-    let candidate_dirs = [
-        custom_dir.map(PathBuf::from),
-        Some(PathBuf::from("models/embeddings")),
-        Some(PathBuf::from("models")),
-        Some(PathBuf::from("../../models/embeddings")),
-        Some(PathBuf::from("../../models")),
-    ];
+    let locator = crate::model_locator::ModelLocator::new(custom_dir.map(PathBuf::from));
+    let model_path = locator
+        .locate("models/embeddings/model.onnx")
+        .or_else(|| locator.locate("models/embeddings/all-MiniLM-L6-v2.onnx"))
+        .or_else(|| locator.locate("model.onnx"));
+    let tokenizer_path = locator
+        .locate("models/embeddings/tokenizer.json")
+        .or_else(|| locator.locate("tokenizer.json"));
 
-    for dir_opt in candidate_dirs.into_iter().flatten() {
-        let model_path = dir_opt.join("model.onnx");
-        let tokenizer_path = dir_opt.join("tokenizer.json");
-
-        if model_path.is_file() && tokenizer_path.is_file() {
-            return Ok((model_path, tokenizer_path));
-        }
-
-        // Also check if named all-MiniLM-L6-v2.onnx
-        let alt_model = dir_opt.join("all-MiniLM-L6-v2.onnx");
-        if alt_model.is_file() && tokenizer_path.is_file() {
-            return Ok((alt_model, tokenizer_path));
-        }
+    if let (Some(m), Some(t)) = (model_path, tokenizer_path) {
+        return Ok((m, t));
     }
 
     anyhow::bail!(
@@ -235,17 +233,30 @@ pub fn embedding_models_exist(custom_dir: Option<&Path>) -> bool {
 
 /// Gets or initializes the shared global EmbeddingEngine singleton.
 pub fn get_embedding_engine(custom_dir: Option<&Path>) -> Option<Arc<EmbeddingEngine>> {
-    GLOBAL_EMBEDDING_ENGINE
-        .get_or_init(|| {
-            EmbeddingEngine::new(custom_dir)
-                .map(Arc::new)
-                .map_err(|e| {
-                    eprintln!("Note: In-process embedding engine inactive: {e}");
-                    e
-                })
-                .ok()
-        })
-        .clone()
+    if let Ok(guard) = GLOBAL_EMBEDDING_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
+    let _lock = EMBEDDING_INIT_LOCK.lock().ok()?;
+    if let Ok(guard) = GLOBAL_EMBEDDING_ENGINE.read()
+        && let Some(ref cached) = *guard
+    {
+        return cached.clone();
+    }
+
+    let result = match EmbeddingEngine::new(custom_dir) {
+        Ok(engine) => Some(Arc::new(engine)),
+        Err(e) => {
+            tracing::warn!("Note: In-process embedding engine inactive: {e}");
+            None
+        }
+    };
+
+    if let Ok(mut guard) = GLOBAL_EMBEDDING_ENGINE.write() {
+        *guard = Some(result.clone());
+    }
+    result
 }
 
 #[cfg(test)]
