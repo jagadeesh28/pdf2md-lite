@@ -3,13 +3,12 @@ input/
 output/
 temp/
 *.log
+*.txt
+!models/layout/table_structure_dict.txt
+.pdfmd-backup/
 .cargo/
-docs/*
-!docs/adr/
-models
+models/
 completed/
 dist/
 *.msi
 *.zip
-check_output.txt
-outputlog.txt

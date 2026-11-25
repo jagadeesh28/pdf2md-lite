@@ -2,13 +2,13 @@
 //! Predicts LaTeX code from cropped formula images using an encoder-decoder architecture.
 
 #[cfg(feature = "latex-ort")]
+use crate::figure::session_pool::SessionPool;
+#[cfg(feature = "latex-ort")]
 use image::{DynamicImage, GenericImageView};
 #[cfg(feature = "latex-ort")]
 use std::collections::HashMap;
 #[cfg(feature = "latex-ort")]
 use std::path::Path;
-#[cfg(feature = "latex-ort")]
-use crate::figure::session_pool::SessionPool;
 #[cfg(feature = "latex-ort")]
 use std::sync::Arc;
 
@@ -69,14 +69,16 @@ impl RapidLatexEngine {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
         let create_encoder = || -> anyhow::Result<ort::session::Session> {
-            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
+            let mut builder =
+                crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
             builder
                 .commit_from_file(encoder_path.as_ref())
                 .map_err(|e| anyhow::anyhow!("Failed to load encoder model: {e}"))
         };
 
         let create_decoder = || -> anyhow::Result<ort::session::Session> {
-            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
+            let mut builder =
+                crate::figure::models::create_optimized_session_builder(&env, Some(2), true)?;
             builder
                 .commit_from_file(decoder_path.as_ref())
                 .map_err(|e| anyhow::anyhow!("Failed to load decoder model: {e}"))

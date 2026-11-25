@@ -15,7 +15,10 @@ fn collect_files_with_ext(dir: &Path, ext: &str, collected: &mut Vec<PathBuf>) {
         let p = entry.path();
         if p.is_dir() {
             collect_files_with_ext(&p, ext, collected);
-        } else if p.is_file() && p.extension().is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(ext)) {
+        } else if p.is_file()
+            && p.extension()
+                .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(ext))
+        {
             collected.push(p);
         }
     }
@@ -72,29 +75,49 @@ where
             eta_sec: 0.0,
         });
         let content = fs::read_to_string(path)?;
-        let (fixed, report) = crate::markdown::format_note_document(&content, Some(path));
+        if is_pdfmd_note(&content) {
+            let (fixed, report) = crate::markdown::format_note_document(&content, Some(path));
 
-        if report.is_changed() {
-            summary.files_modified = 1;
-            summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
-            summary.banners_purged += report.banners_purged;
-            if report.latex_repaired {
-                summary.latex_repaired += 1;
-            }
-            if report.frontmatter_added {
-                summary.frontmatter_added += 1;
-            }
-            summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
-            summary.figure_links_converted += report.figure_links_converted;
+            if report.is_changed() {
+                if !dry_run {
+                    let write_res = if let Some(out_p) = output {
+                        atomic_write_file(out_p, &fixed)
+                    } else {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let root_dir = path.parent().unwrap_or(path);
+                        let _ = backup_file(path, root_dir, ts);
+                        atomic_write_file(path, &fixed)
+                    };
 
-            if !dry_run {
-                if let Some(out_p) = output {
-                    if let Some(parent) = out_p.parent() {
-                        fs::create_dir_all(parent)?;
+                    if write_res.is_ok() {
+                        summary.files_modified = 1;
+                        summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
+                        summary.banners_purged += report.banners_purged;
+                        if report.latex_repaired {
+                            summary.latex_repaired += 1;
+                        }
+                        if report.frontmatter_added {
+                            summary.frontmatter_added += 1;
+                        }
+                        summary.frontmatter_fields_backfilled +=
+                            report.frontmatter_fields_backfilled;
+                        summary.figure_links_converted += report.figure_links_converted;
                     }
-                    fs::write(out_p, fixed)?;
                 } else {
-                    fs::write(path, fixed)?;
+                    summary.files_modified = 1;
+                    summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
+                    summary.banners_purged += report.banners_purged;
+                    if report.latex_repaired {
+                        summary.latex_repaired += 1;
+                    }
+                    if report.frontmatter_added {
+                        summary.frontmatter_added += 1;
+                    }
+                    summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
+                    summary.figure_links_converted += report.figure_links_converted;
                 }
             }
         }
@@ -151,20 +174,11 @@ where
                     continue;
                 }
             };
+            if !is_pdfmd_note(&content) {
+                continue;
+            }
             let (fixed, report) = crate::markdown::format_note_document(&content, Some(file));
             if report.is_changed() {
-                summary.files_modified += 1;
-                summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
-                summary.banners_purged += report.banners_purged;
-                if report.latex_repaired {
-                    summary.latex_repaired += 1;
-                }
-                if report.frontmatter_added {
-                    summary.frontmatter_added += 1;
-                }
-                summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
-                summary.figure_links_converted += report.figure_links_converted;
-
                 if !dry_run {
                     let dest = if let Some(out_dir) = output {
                         if let Ok(rel) = file.strip_prefix(path) {
@@ -173,21 +187,81 @@ where
                             out_dir.join(file.file_name().unwrap())
                         }
                     } else {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let _ = backup_file(file, path, ts);
                         file.clone()
                     };
 
-                    if let Some(parent) = dest.parent() {
-                        let _ = fs::create_dir_all(parent);
+                    match atomic_write_file(&dest, &fixed) {
+                        Ok(_) => {
+                            summary.files_modified += 1;
+                            summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
+                            summary.banners_purged += report.banners_purged;
+                            if report.latex_repaired {
+                                summary.latex_repaired += 1;
+                            }
+                            if report.frontmatter_added {
+                                summary.frontmatter_added += 1;
+                            }
+                            summary.frontmatter_fields_backfilled +=
+                                report.frontmatter_fields_backfilled;
+                            summary.figure_links_converted += report.figure_links_converted;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Could not write {}: {e}", dest.display());
+                        }
                     }
-                    if let Err(e) = fs::write(&dest, fixed) {
-                        tracing::warn!("Could not write {}: {e}", dest.display());
+                } else {
+                    summary.files_modified += 1;
+                    summary.codeblocks_unwrapped += report.codeblocks_unwrapped;
+                    summary.banners_purged += report.banners_purged;
+                    if report.latex_repaired {
+                        summary.latex_repaired += 1;
                     }
+                    if report.frontmatter_added {
+                        summary.frontmatter_added += 1;
+                    }
+                    summary.frontmatter_fields_backfilled += report.frontmatter_fields_backfilled;
+                    summary.figure_links_converted += report.figure_links_converted;
                 }
             }
         }
     }
 
     Ok(summary)
+}
+
+fn is_pdfmd_note(content: &str) -> bool {
+    let (meta, _) = crate::markdown::parse_existing_frontmatter(content);
+    meta.and_then(|m| m.generator).as_deref() == Some("pdfmd-lite")
+        || content.contains("generator: pdfmd-lite")
+        || content.contains("generator: \"pdfmd-lite\"")
+}
+
+fn backup_file(file: &Path, root: &Path, timestamp: u64) -> Result<()> {
+    let backup_dir = root.join(".pdfmd-backup").join(timestamp.to_string());
+    let rel = file
+        .strip_prefix(root)
+        .unwrap_or_else(|_| file.file_name().map(Path::new).unwrap_or(file));
+    let target = backup_dir.join(rel);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(file, target)?;
+    Ok(())
+}
+
+fn atomic_write_file(dest: &Path, content: &str) -> Result<()> {
+    let partial = dest.with_extension("md.partial");
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&partial, content)?;
+    fs::rename(&partial, dest)?;
+    Ok(())
 }
 
 /// Formats Markdown note(s) across a single file or directory:
@@ -454,6 +528,7 @@ pub fn embed_vault_in_path(path: &Path, force: bool, quiet: bool) -> Result<Embe
 }
 
 /// Provisions official INT8 all-MiniLM-L6-v2 ONNX model and tokenizer.json into models/embeddings/.
+#[cfg(feature = "online-provisioning")]
 pub fn download_embedding_models() -> Result<()> {
     let target_dir = Path::new("models/embeddings");
     fs::create_dir_all(target_dir)?;
@@ -519,8 +594,7 @@ pub fn download_embedding_models() -> Result<()> {
     let metadata_dir = Path::new("models/metadata");
     fs::create_dir_all(metadata_dir)?;
     let gliner_target = metadata_dir.join("gliner_small.onnx");
-    let gliner_url =
-        "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model_quantized.onnx";
+    let gliner_url = "https://huggingface.co/onnx-community/gliner_small-v2.1/resolve/main/onnx/model_quantized.onnx";
 
     if !gliner_target.exists() {
         println!("Downloading GLiNER small metadata extractor ONNX model (~183 MB)...");
@@ -542,6 +616,15 @@ pub fn download_embedding_models() -> Result<()> {
 
     println!("\nModel provisioning complete!");
     Ok(())
+}
+
+#[cfg(not(feature = "online-provisioning"))]
+pub fn download_embedding_models() -> Result<()> {
+    anyhow::bail!(
+        "Online model downloading is disabled in default offline builds (ADR 0001, ADR 0017).\n\
+         Please use 'pdfmd-lite --install-models <dir|zip>' to import models offline, \n\
+         or compile with '--features online-provisioning'."
+    );
 }
 
 #[cfg(test)]
@@ -584,5 +667,36 @@ mod tests {
         assert!(updated_md.contains("![Figure 1](notes_images/figure1.jpg)"));
         assert!(updated_md.contains("![[notes_images/figure1.jpg]]"));
         assert!(!updated_md.contains("figure1.png"));
+    }
+
+    #[test]
+    fn test_format_notes_scoping_and_backup() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let vault = temp_dir.path();
+
+        // 1. Foreign note without generator marker: should be untouched
+        let foreign_md = vault.join("Foreign.md");
+        let foreign_content = "# My Custom Notes\n\n```markdown\n# Nested block\n```\n";
+        fs::write(&foreign_md, foreign_content).unwrap();
+
+        // 2. pdfmd-lite note with generator marker: should be formatted and backed up
+        let pdfmd_note = vault.join("PdfmdNote.md");
+        let pdfmd_content = "---\ngenerator: \"pdfmd-lite\"\npdfmd_schema: 2\n---\n\n```markdown\n# Spurious block\n```\n";
+        fs::write(&pdfmd_note, pdfmd_content).unwrap();
+
+        let summary = format_notes_in_path(vault, None, false).unwrap();
+        assert_eq!(summary.files_scanned, 2);
+        assert_eq!(summary.files_modified, 1);
+
+        // Foreign note unchanged
+        assert_eq!(fs::read_to_string(&foreign_md).unwrap(), foreign_content);
+
+        // pdfmd note modified
+        let modified = fs::read_to_string(&pdfmd_note).unwrap();
+        assert!(!modified.contains("```markdown"));
+
+        // Backup directory created
+        let backup_dir = vault.join(".pdfmd-backup");
+        assert!(backup_dir.exists(), "Backup directory should exist");
     }
 }

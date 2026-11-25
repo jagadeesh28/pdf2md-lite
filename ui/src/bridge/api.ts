@@ -10,6 +10,21 @@ export function isTauri(): boolean {
   }
 }
 
+export function getAuthToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const meta = document.querySelector('meta[name="pdfmd-auth-token"]');
+  return meta ? meta.getAttribute('content') : null;
+}
+
+export function authHeaders(existing?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...existing };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export const defaultConfig: AppConfigData = {
   language: 'en',
   dom_extraction: 'auto',
@@ -85,6 +100,7 @@ export async function uploadFile(file: File): Promise<string> {
   formData.append('file', file, file.name);
   const res = await fetch('/api/upload', {
     method: 'POST',
+    headers: authHeaders(),
     body: formData,
   });
   if (!res.ok) {
@@ -105,7 +121,7 @@ export async function fetchConfig(): Promise<AppConfigData> {
   }
 
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch('/api/config', { headers: authHeaders() });
     if (res.ok) {
       const cfg = await res.json();
       return normalizeConfig(cfg);
@@ -124,7 +140,7 @@ export async function saveConfig(config: AppConfigData): Promise<void> {
 
   await fetch('/api/config', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(config),
   });
 }
@@ -136,7 +152,7 @@ export async function runDryRun(inputPath: string, outputDir: string): Promise<D
 
   const res = await fetch('/api/dry-run', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ inputPath, outputDir }),
   });
   if (!res.ok) {
@@ -158,7 +174,7 @@ export async function startConversion(payload: {
 
   const res = await fetch('/api/convert', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -178,7 +194,7 @@ export async function formatNotes(vaultPath: string, fixLatex: boolean): Promise
 
   const res = await fetch('/api/format-notes', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ vaultPath, fixLatex }),
   });
   return await res.json();
@@ -199,7 +215,7 @@ export async function convertPngToJpeg(
 
   const res = await fetch('/api/convert-png-to-jpeg', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ vaultPath, quality: safeQuality }),
   });
   if (!res.ok) {
@@ -215,7 +231,7 @@ export async function embedVault(vaultPath: string, force: boolean): Promise<{ n
 
   const res = await fetch('/api/embed-vault', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ vaultPath, force }),
   });
   return await res.json();
@@ -226,7 +242,10 @@ export async function downloadModels(): Promise<{ success: boolean; message: str
     return await invoke('download_models');
   }
 
-  const res = await fetch('/api/download-models', { method: 'POST' });
+  const res = await fetch('/api/download-models', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
   return await res.json();
 }
 
@@ -251,7 +270,8 @@ export function subscribeProgress(onEvent: (payload: ProgressPayload) => void): 
   const connect = () => {
     if (!active) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/events`;
+    const token = getAuthToken();
+    const wsUrl = `${protocol}//${window.location.host}/api/events${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     ws = new WebSocket(wsUrl);
 
     ws.onmessage = (msg) => {
@@ -308,7 +328,10 @@ export async function cancelConversion(): Promise<void> {
     }
   }
   try {
-    await fetch('/api/cancel', { method: 'POST' });
+    await fetch('/api/cancel', {
+      method: 'POST',
+      headers: authHeaders(),
+    });
   } catch (err) {
     console.warn('Web daemon cancel error:', err);
   }
@@ -326,7 +349,9 @@ export async function fetchPagePreview(filePath: string, pageNumber: number): Pr
       console.warn('Tauri get_page_preview error:', err);
     }
   }
-  return `/api/page-preview?slug=${encodeURIComponent(filePath)}&page=${pageNumber}`;
+  const token = getAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  return `/api/page-preview?slug=${encodeURIComponent(filePath)}&page=${pageNumber}${tokenParam}`;
 }
 
 /**

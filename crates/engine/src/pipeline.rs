@@ -446,7 +446,8 @@ pub fn process_pdf_full_with_emitter(
 
             // Write progressive updates to output path
             let progressive_md = format!("{}{}", metadata.to_yaml_frontmatter(), raw_body);
-            let _ = fs::write(output_path, normalize_latex_delimiters(&progressive_md));
+            let partial_path = output_path.with_extension("md.partial");
+            let _ = fs::write(&partial_path, normalize_latex_delimiters(&progressive_md));
             Ok(())
         },
     )
@@ -466,12 +467,22 @@ pub fn process_pdf_full_with_emitter(
     crate::markdown::enrich_document_metadata(&mut metadata, &structured_body);
 
     // 5. Prepend finalized Obsidian YAML frontmatter and normalize math delimiters
+    metadata.pdfmd_status = Some("complete".to_string());
     let final_markdown = format!("{}{}", metadata.to_yaml_frontmatter(), structured_body);
     let final_output = normalize_latex_delimiters(&final_markdown);
 
-    fs::write(output_path, &final_output).with_context(|| {
+    let partial_path = output_path.with_extension("md.partial");
+    fs::write(&partial_path, &final_output).with_context(|| {
         format!(
-            "failed to write finalized markdown output to {}",
+            "failed to write partial markdown output to {}",
+            partial_path.display()
+        )
+    })?;
+
+    fs::rename(&partial_path, output_path).with_context(|| {
+        format!(
+            "failed to atomically rename {} to {}",
+            partial_path.display(),
             output_path.display()
         )
     })?;
@@ -564,7 +575,11 @@ where
 
     let pdf_bytes = fs::read(input_path).ok();
     // Parse lopdf::Document once in memory per document to avoid redundant per-page file reads
-    let lopdf_doc = Arc::new(pdf_bytes.as_ref().and_then(|b| lopdf::Document::load_mem(b).ok()));
+    let lopdf_doc = Arc::new(
+        pdf_bytes
+            .as_ref()
+            .and_then(|b| lopdf::Document::load_mem(b).ok()),
+    );
     let pdf_pages = pdf_bytes
         .as_ref()
         .and_then(|bytes| safe_extract_text_by_pages(bytes));
@@ -614,7 +629,10 @@ where
             };
             on_page(page_num, page_md)?;
         }
-        let _ = render_thread.join();
+        let render_res = render_thread
+            .join()
+            .map_err(|e| anyhow::anyhow!("Render thread panicked: {:?}", e))?;
+        render_res.with_context(|| format!("Rendering failed for {}", input_path.display()))?;
     } else {
         let raster_rx = Arc::new(Mutex::new(raster_rx));
         let (result_tx, result_rx) = mpsc::channel();
@@ -702,7 +720,10 @@ where
         for handle in worker_handles {
             let _ = handle.join();
         }
-        let _ = render_thread.join();
+        let render_res = render_thread
+            .join()
+            .map_err(|e| anyhow::anyhow!("Render thread panicked: {:?}", e))?;
+        render_res.with_context(|| format!("Rendering failed for {}", input_path.display()))?;
 
         while let Some((page, md)) = pending_results.pop_first() {
             if page == next_expected_page {
@@ -840,7 +861,9 @@ pub fn safe_process_single_page_image_with_doc_and_options(
             tracing::warn!("Page {page_num} processing panicked. Emitting warning callout.");
             format_warning_callout(
                 page_num,
-                &format!("An unexpected panic occurred while decoding or processing page {page_num}."),
+                &format!(
+                    "An unexpected panic occurred while decoding or processing page {page_num}."
+                ),
                 raw_page_text,
             )
         }
@@ -1221,7 +1244,10 @@ fn process_single_page_image_with_doc(
             let callout = {
                 let mut callout_lines = Vec::new();
                 let caption_desc = fig.caption.as_deref().unwrap_or(&fig.figure_label);
-                callout_lines.push(format!("> [!table]- Original Table & Structure: {}", fig.figure_label));
+                callout_lines.push(format!(
+                    "> [!table]- Original Table & Structure: {}",
+                    fig.figure_label
+                ));
 
                 if image_opts.save_table_images {
                     let img_tag = if let Some(ref data_uri) = fig.data_uri {

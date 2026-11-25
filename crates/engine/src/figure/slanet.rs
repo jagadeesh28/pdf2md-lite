@@ -4,11 +4,11 @@
 #[cfg(feature = "slanet-ort")]
 use crate::backends::indra::order::TextLine;
 #[cfg(feature = "slanet-ort")]
+use crate::figure::session_pool::SessionPool;
+#[cfg(feature = "slanet-ort")]
 use image::{DynamicImage, GenericImageView};
 #[cfg(feature = "slanet-ort")]
 use std::path::Path;
-#[cfg(feature = "slanet-ort")]
-use crate::figure::session_pool::SessionPool;
 #[cfg(feature = "slanet-ort")]
 use std::sync::Arc;
 
@@ -98,7 +98,8 @@ impl SlaNetEngine {
         let env = crate::figure::models::get_shared_ort_environment()?;
 
         let create_session = || -> anyhow::Result<ort::session::Session> {
-            let mut builder = crate::figure::models::create_optimized_session_builder(&env, Some(2), false)?;
+            let mut builder =
+                crate::figure::models::create_optimized_session_builder(&env, Some(2), false)?;
             builder
                 .commit_from_file(model_path.as_ref())
                 .map_err(|e| anyhow::anyhow!("Failed to commit SLANet model from file: {e}"))

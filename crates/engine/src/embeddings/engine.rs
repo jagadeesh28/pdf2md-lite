@@ -21,7 +21,7 @@ static GLOBAL_EMBEDDING_ENGINE: OnceLock<Option<Arc<EmbeddingEngine>>> = OnceLoc
 
 /// Evaluates text embedding models locally in-process without network access.
 pub struct EmbeddingEngine {
-    #[cfg(feature = "embed-models")]
+    #[cfg(feature = "tokenizers-support")]
     tokenizer: tokenizers::Tokenizer,
     #[cfg(feature = "ort")]
     session: Mutex<Session>,
@@ -33,7 +33,7 @@ impl EmbeddingEngine {
         #[allow(unused_variables)]
         let (model_path, tokenizer_path) = resolve_embedding_paths(custom_models_dir)?;
 
-        #[cfg(feature = "embed-models")]
+        #[cfg(feature = "tokenizers-support")]
         let tokenizer = {
             let mut tok = tokenizers::Tokenizer::from_file(&tokenizer_path).map_err(|e| {
                 anyhow::anyhow!(
@@ -64,7 +64,7 @@ impl EmbeddingEngine {
         };
 
         Ok(Self {
-            #[cfg(feature = "embed-models")]
+            #[cfg(feature = "tokenizers-support")]
             tokenizer,
             #[cfg(feature = "ort")]
             session,
@@ -86,7 +86,7 @@ impl EmbeddingEngine {
             return Ok(Vec::new());
         }
 
-        #[cfg(all(feature = "embed-models", feature = "ort"))]
+        #[cfg(all(feature = "tokenizers-support", feature = "ort"))]
         {
             let mut all_embeddings = Vec::with_capacity(texts.len());
             let mut session_guard = self
@@ -183,9 +183,9 @@ impl EmbeddingEngine {
             Ok(all_embeddings)
         }
 
-        #[cfg(not(all(feature = "embed-models", feature = "ort")))]
+        #[cfg(not(all(feature = "tokenizers-support", feature = "ort")))]
         {
-            anyhow::bail!("embed-models and ort features are required to compute embeddings")
+            anyhow::bail!("tokenizers-support and ort features are required to compute embeddings")
         }
     }
 }

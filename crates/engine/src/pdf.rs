@@ -506,7 +506,10 @@ pub fn can_use_hybrid_dom(doc: &lopdf::Document, page_num: usize, mode: DomExtra
                 return false;
             };
             content.operations.iter().any(|op| {
-                op.operator == "Tj" || op.operator == "TJ" || op.operator == "'" || op.operator == "\""
+                op.operator == "Tj"
+                    || op.operator == "TJ"
+                    || op.operator == "'"
+                    || op.operator == "\""
             })
         }
     }
@@ -712,7 +715,8 @@ pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
         let mut it = tokens.into_iter();
         while let Some(src_tok) = it.next() {
             if let Some(dst_tok) = it.next()
-                && let (Some(code), Some(text)) = (parse_hex_code(&src_tok), parse_dst_utf16(&dst_tok))
+                && let (Some(code), Some(text)) =
+                    (parse_hex_code(&src_tok), parse_dst_utf16(&dst_tok))
             {
                 map.insert(code, text);
             }
@@ -735,8 +739,12 @@ pub fn parse_cmap_str(cmap: &str) -> HashMap<u32, String> {
             let Some(end_tok) = it.next() else { break };
             let Some(dst_tok) = it.next() else { break };
 
-            let Some(start_code) = parse_hex_code(&start_tok) else { continue };
-            let Some(end_code) = parse_hex_code(&end_tok) else { continue };
+            let Some(start_code) = parse_hex_code(&start_tok) else {
+                continue;
+            };
+            let Some(end_code) = parse_hex_code(&end_tok) else {
+                continue;
+            };
 
             if dst_tok == "[" {
                 let mut current_code = start_code;
@@ -811,7 +819,8 @@ pub fn build_page_font_decoders(
                 let cmap_str = String::from_utf8_lossy(&stream_bytes);
                 decoder.cmap = parse_cmap_str(&cmap_str);
                 if !decoder.cmap.is_empty() {
-                    decoder.is_two_byte = decoder.cmap.keys().any(|&k| k > 255) || decoder.is_two_byte;
+                    decoder.is_two_byte =
+                        decoder.cmap.keys().any(|&k| k > 255) || decoder.is_two_byte;
                 }
             }
         }
@@ -1297,22 +1306,45 @@ mod tests {
         assert_eq!(decoder.decode(&single_byte_cids), "Watch");
     }
 
+    fn resolve_test_fixture(name: &str) -> PathBuf {
+        let direct = PathBuf::from("tests").join("fixtures").join(name);
+        if direct.exists() {
+            return direct;
+        }
+        let parent = PathBuf::from("../../tests").join("fixtures").join(name);
+        if parent.exists() {
+            return parent;
+        }
+        direct
+    }
+
     #[test]
     fn test_cmap_decoding_on_subset_font_pdf() {
-        let pdf_path = Path::new(r"F:\Jag\AI\cornell\statistics\CORE521OD1_lesson-transcript.pdf");
-        if !pdf_path.exists() {
-            return;
-        }
-
-        let doc = lopdf::Document::load(pdf_path).expect("Failed to load PDF");
-        let lines = extract_baseline_aware_dom_text_lines(&doc, 8, 2.0, &[])
+        let pdf_path = resolve_test_fixture("corrupt_cmap.pdf");
+        let doc =
+            lopdf::Document::load(&pdf_path).expect("Failed to load corrupt_cmap.pdf fixture");
+        let lines = extract_baseline_aware_dom_text_lines(&doc, 1, 2.0, &[])
             .expect("DOM extraction should succeed");
 
-        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+        let full_text: String = lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         // Ensure that decoded text has "Watch" and "Four Levels of Measurement", NOT ":DWFK"
-        assert!(full_text.contains("Watch"), "Text must contain 'Watch', got: {}", &full_text[..full_text.len().min(200)]);
-        assert!(full_text.contains("Four Levels of Measurement"), "Text must contain 'Four Levels of Measurement'");
-        assert!(!full_text.contains(":DWFK"), "Text must not contain garbled ':DWFK'");
+        assert!(
+            full_text.contains("Watch"),
+            "Text must contain 'Watch', got: {}",
+            &full_text[..full_text.len().min(200)]
+        );
+        assert!(
+            full_text.contains("Four Levels of Measurement"),
+            "Text must contain 'Four Levels of Measurement'"
+        );
+        assert!(
+            !full_text.contains(":DWFK"),
+            "Text must not contain garbled ':DWFK'"
+        );
     }
 
     #[test]
@@ -1426,30 +1458,45 @@ mod tests {
 
     #[test]
     fn test_electricity_name_change_dom_extraction() {
-        let path = Path::new(r"F:\Jag\artech varsha documents\Electricity name change.pdf");
-        if !path.exists() {
-            return;
-        }
-        let doc = lopdf::Document::load(path).expect("Failed to load PDF");
-        assert!(can_use_hybrid_dom(&doc, 1, DomExtractionMode::Auto), "Electricity name change must be eligible for hybrid DOM");
+        let path = resolve_test_fixture("digital_text.pdf");
+        let doc = lopdf::Document::load(&path).expect("Failed to load digital_text.pdf fixture");
+        assert!(
+            can_use_hybrid_dom(&doc, 1, DomExtractionMode::Auto),
+            "digital_text must be eligible for hybrid DOM"
+        );
         let lines = extract_baseline_aware_dom_text_lines(&doc, 1, 2.0, &[])
             .expect("DOM extraction should succeed");
-        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
-        assert!(full_text.contains("For Office"), "Must contain 'For Office', got: {}", full_text);
+        let full_text: String = lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            full_text.contains("For Office"),
+            "Must contain 'For Office', got: {}",
+            full_text
+        );
         assert!(full_text.contains("Connected"), "Must contain 'Connected'");
     }
 
     #[test]
     fn test_varsha_deed_dom_extraction() {
-        let path = Path::new(r"F:\Jag\artech varsha documents\VARSHA - 7B - B BLOCK Deed.pdf");
-        if !path.exists() {
-            return;
-        }
-        let doc = lopdf::Document::load(path).expect("Failed to load PDF");
-        assert!(can_use_hybrid_dom(&doc, 1, DomExtractionMode::Auto), "Varsha deed must be eligible for hybrid DOM");
+        let path = resolve_test_fixture("digital_text.pdf");
+        let doc = lopdf::Document::load(&path).expect("Failed to load digital_text.pdf fixture");
+        assert!(
+            can_use_hybrid_dom(&doc, 2, DomExtractionMode::Auto),
+            "digital_text page 2 must be eligible for hybrid DOM"
+        );
         let lines = extract_baseline_aware_dom_text_lines(&doc, 2, 2.0, &[])
             .expect("DOM extraction on page 2 should succeed");
-        let full_text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
-        assert!(full_text.contains("Sub Regiskar") || full_text.contains("Sub Registrar") || full_text.contains("Pattom"), "Must extract page 2 deed text");
+        let full_text: String = lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            full_text.contains("Sub Registrar") || full_text.contains("Pattom"),
+            "Must extract page 2 deed text"
+        );
     }
 }

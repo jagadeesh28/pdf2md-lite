@@ -3,8 +3,7 @@
 
 use pdfmd_lite::{
     AppConfig, DomExtractionMode, DryRunReport, ImageFormat, ImageOptions, IndraScript,
-    ProgressEmitter, batch::dry_run_pdf_directory, batch::dry_run_single_pdf,
-    get_pdf_page_count,
+    ProgressEmitter, batch::dry_run_pdf_directory, batch::dry_run_single_pdf, get_pdf_page_count,
     vault::download_embedding_models, vault::embed_vault_in_path,
 };
 use serde::{Deserialize, Serialize};
@@ -182,7 +181,11 @@ impl ProgressEmitter for TauriProgressEmitter {
             };
 
             (
-                if throughput > 0.0 { Some(throughput) } else { None },
+                if throughput > 0.0 {
+                    Some(throughput)
+                } else {
+                    None
+                },
                 eta,
                 state.completed_pages,
                 state.total_pages,
@@ -309,33 +312,15 @@ fn plan_directory_documents(
         .collect()
 }
 
-/// Attempts to locate a document by path, falling back to looking under `input/`
-/// or searching recursively under `input/` if only a file name was provided.
+/// Resolves an existing document by path after verifying path policy syntax.
 fn resolve_document_path(file: &str) -> Option<PathBuf> {
     let path = Path::new(file);
+    if pdfmd_lite::PathPolicy::check_syntax(path).is_err() {
+        return None;
+    }
     if path.exists() {
         return Some(path.to_path_buf());
     }
-
-    let candidate = Path::new("input").join(file);
-    if candidate.exists() {
-        return Some(candidate);
-    }
-
-    if let Some(target_name) = path.file_name()
-        && Path::new("input").exists()
-    {
-        for entry in walkdir::WalkDir::new("input")
-            .max_depth(6)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.file_name() == target_name {
-                return Some(entry.path().to_path_buf());
-            }
-        }
-    }
-
     None
 }
 
@@ -505,7 +490,8 @@ async fn start_conversion(
                         "conversion-progress",
                         DesktopProgressEvent::Log {
                             level: "warn".to_string(),
-                            message: "Batch conversion halted due to cancellation request.".to_string(),
+                            message: "Batch conversion halted due to cancellation request."
+                                .to_string(),
                         },
                     );
                     break;
@@ -616,7 +602,9 @@ async fn start_conversion(
                             DesktopProgressEvent::DocComplete {
                                 doc_slug: slug,
                                 status: "error".to_string(),
-                                message: Some(format!("Document file or directory not found: '{file}'")),
+                                message: Some(format!(
+                                    "Document file or directory not found: '{file}'"
+                                )),
                                 elapsed_sec: None,
                                 output_path: None,
                             },
@@ -648,10 +636,17 @@ async fn start_conversion(
         let _ = app_handle.emit(
             "conversion-progress",
             DesktopProgressEvent::Log {
-                level: if errors == 0 { "info".to_string() } else { "warn".to_string() },
+                level: if errors == 0 {
+                    "info".to_string()
+                } else {
+                    "warn".to_string()
+                },
                 message: format!(
                     "Conversion finished in {:.2}s: {} succeeded, {} failed (Output: {}).",
-                    batch_elapsed, completed, errors, out_dir.display()
+                    batch_elapsed,
+                    completed,
+                    errors,
+                    out_dir.display()
                 ),
             },
         );
@@ -775,11 +770,8 @@ async fn convert_png_to_jpeg(
         let path = Path::new(&vault_path);
         let q = quality.unwrap_or(85);
         let emitter_handle = app_handle.clone();
-        let summary = pdfmd_lite::convert_vault_png_to_jpeg_with_progress(
-            path,
-            q,
-            false,
-            move |p| {
+        let summary =
+            pdfmd_lite::convert_vault_png_to_jpeg_with_progress(path, q, false, move |p| {
                 let _ = emitter_handle.emit(
                     "conversion-progress",
                     DesktopProgressEvent::VaultProgress {
@@ -809,9 +801,8 @@ async fn convert_png_to_jpeg(
                         },
                     );
                 }
-            },
-        )
-        .map_err(|e| e.to_string())?;
+            })
+            .map_err(|e| e.to_string())?;
         Ok(serde_json::json!({
             "imagesConverted": summary.images_converted,
             "bytesSaved": summary.orig_bytes.saturating_sub(summary.new_bytes),
@@ -877,7 +868,8 @@ async fn read_markdown(path: String) -> Result<String, String> {
         let resolved = if candidate.is_file() {
             candidate
         } else {
-            resolve_document_path(&path).ok_or_else(|| format!("Markdown output not found: {path}"))?
+            resolve_document_path(&path)
+                .ok_or_else(|| format!("Markdown output not found: {path}"))?
         };
         std::fs::read_to_string(&resolved)
             .map_err(|e| format!("Failed to read '{}': {e}", resolved.display()))
@@ -911,7 +903,10 @@ fn main() {
     tauri::Builder::default()
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                let file_paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                let file_paths: Vec<String> = paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect();
                 let _ = webview.emit("native-file-drop", file_paths);
             }
         })

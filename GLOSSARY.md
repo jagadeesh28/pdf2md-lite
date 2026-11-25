@@ -62,8 +62,12 @@ A spatial projection profile partitioning algorithm that recursively isolates ve
 _Avoid_: Naive Y-sort, reading line sorter
 
 **GLiNER Metadata Extractor**:
-A lightweight bidirectional transformer model that performs zero-shot open-type entity extraction on document text to populate Obsidian YAML frontmatter properties with structured metadata.
-_Avoid_: LLM tagger, heuristic metadata extractor, regex parser
+A deferred bidirectional transformer model for zero-shot open-type entity extraction on document text to supplement Obsidian YAML frontmatter properties.
+_Avoid_: LLM tagger, cloud metadata API
+
+**Deterministic Metadata Extractor**:
+A zero-dependency rule- and catalog-based extractor parsing PDF metadata dictionaries, DOIs, dates, and script character ratios without neural weights.
+_Avoid_: Corpus-specific date deletion, fabricated domain tags
 
 **DOM-First Metadata Gating**:
 A fallback dispatch strategy that prioritizes native PDF catalog info dictionaries (`/Title`, `/Author`, etc.) and conditionally invokes neural entity extraction only when structural properties are missing or uninformative.
@@ -196,4 +200,32 @@ _Avoid_: Uncoupled viewer, manual page scroller, detached editor
 **Companion HTML Table Callout**:
 An extended Obsidian Markdown callout embedding both the visual table crop and an exact HTML `<table>` with `rowspan`/`colspan` attributes to preserve complex merged cell geometry alongside clean GFM tables.
 _Avoid_: Raw HTML markdown dump, flattened table text, stripped merged cells
+
+**Structured Document IR**:
+A hierarchical intermediate representation (`Document -> Page -> Region -> Block -> Line -> Span`) retaining layout geometry, reading order, and source provenance until final Markdown serialization.
+_Avoid_: Flat line dump, string-flattening pipeline
+
+**Path Policy**:
+A canonicalizing filesystem access guard restricting desktop IPC and web daemon file operations to explicitly granted input and output roots.
+_Avoid_: Ambient directory search, unguarded string path
+
+**Conversion Report**:
+A structured per-document outcome summary (`completed`, `completed_with_warnings`, `failed`, `cancelled`, `skipped`) recording page counts, fallback degradations, and execution providers.
+_Avoid_: Silent void return, log-only warning
+
+**Conversion Fingerprint**:
+A cryptographic digest combining source PDF SHA-256, conversion options, page range, tool version, and model manifest digest used to govern safe incremental resume.
+_Avoid_: Hashless resume check, mtime heuristic
+
+**Model Manifest**:
+A versioned asset registry (`MANIFEST.toml`) pinning expected SHA-256 digests, byte sizes, I/O tensor signatures, and required status for offline model weights.
+_Avoid_: Unverified model list, self-computed hash
+
+**Output Planner**:
+A shared path-planning module mapping each source PDF to a deterministic, Windows-safe `<slug>/<slug>.md` layout across CLI, desktop, server, and dry-run modes.
+_Avoid_: Ad-hoc slugger, single-vs-batch layout split
+
+**Run Controller**:
+An RAII-guarded execution coordinator managing run lifecycle transitions (`Idle -> Running -> Cancelling -> Idle`), run/job identifiers, and per-document failure isolation.
+_Avoid_: Global cancel boolean, detached worker loop
 

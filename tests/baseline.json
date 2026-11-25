@@ -1,0 +1,78 @@
+{
+  "version": "0.7.2",
+  "generated_at": "2026-11-25T05:55:00Z",
+  "fixtures": {
+    "digital_text.pdf": {
+      "pages": 2,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 18.4
+    },
+    "ligatures_ot1.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 12.1
+    },
+    "two_column.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 14.6
+    },
+    "rotated_cropbox.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 15.2
+    },
+    "corrupt_cmap.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 13.0
+    },
+    "corrupt_xref.pdf": {
+      "pages": 1,
+      "graceful_rejection": true,
+      "error_type": "CorruptXref"
+    },
+    "encrypted.pdf": {
+      "pages": 1,
+      "explicit_encryption_error": true,
+      "error_type": "PasswordProtected"
+    },
+    "table_formula.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 16.8
+    },
+    "xss_payload.pdf": {
+      "pages": 1,
+      "sanitized": true,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 12.5
+    },
+    "dates_and_orders.pdf": {
+      "pages": 1,
+      "character_accuracy": 1.0,
+      "reading_order_inversions": 0,
+      "dom_extraction_coverage": 1.0,
+      "peak_memory_per_page_mb": 14.0
+    }
+  },
+  "summary": {
+    "total_fixtures": 10,
+    "reading_order_inversions": 0,
+    "mean_character_accuracy": 1.0,
+    "mean_peak_memory_mb": 14.57
+  }
+}

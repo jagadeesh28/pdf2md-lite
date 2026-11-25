@@ -3,8 +3,8 @@
 
 use anyhow::Result;
 use std::ops::{Deref, DerefMut};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 /// RAII checkout guard for a pooled inference session.
 /// Automatically checks the session back into the pool when dropped.

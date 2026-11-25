@@ -7,6 +7,7 @@ pub mod figure;
 pub mod markdown;
 pub mod metadata;
 pub mod model_locator;
+pub mod path_policy;
 pub mod pdf;
 pub mod pipeline;
 pub mod progress;
@@ -35,6 +36,7 @@ pub use markdown::{
 pub use model_locator::{
     KNOWN_MODELS, ModelLocator, ModelStatus, get_global_models_dir, set_global_models_dir,
 };
+pub use path_policy::{PathPolicy, PathPolicyError};
 pub use pdf::{
     DomExtractionMode, can_use_hybrid_dom, clean_extracted_text,
     extract_baseline_aware_dom_text_lines, extract_pdf_metadata, extract_pdf_text,

@@ -114,11 +114,19 @@ pub struct CliArgs {
     pub config: Option<PathBuf>,
 
     /// Extracted image format: jpeg (default), png, webp
-    #[arg(long = "image-format", visible_alias = "img-format", value_name = "FMT")]
+    #[arg(
+        long = "image-format",
+        visible_alias = "img-format",
+        value_name = "FMT"
+    )]
     pub image_format: Option<String>,
 
     /// Image compression quality for JPEG/WebP (1-100, default: 80)
-    #[arg(long = "image-quality", visible_alias = "quality", value_name = "1-100")]
+    #[arg(
+        long = "image-quality",
+        visible_alias = "quality",
+        value_name = "1-100"
+    )]
     pub image_quality: Option<u8>,
 
     /// Inline extracted figures directly as base64 data URIs inside Markdown
@@ -134,7 +142,12 @@ pub struct CliArgs {
     pub no_table_images: bool,
 
     /// Explicit language/script: english, telugu, auto
-    #[arg(short = 'l', long = "lang", visible_alias = "language", value_name = "LANG")]
+    #[arg(
+        short = 'l',
+        long = "lang",
+        visible_alias = "language",
+        value_name = "LANG"
+    )]
     pub language: Option<String>,
 
     /// Pure English/Latin OCR (default)
@@ -150,7 +163,11 @@ pub struct CliArgs {
     pub auto: bool,
 
     /// DOM extraction strategy: auto (default), always, never
-    #[arg(long = "dom-extraction", visible_alias = "dom-mode", value_name = "MODE")]
+    #[arg(
+        long = "dom-extraction",
+        visible_alias = "dom-mode",
+        value_name = "MODE"
+    )]
     pub dom_extraction: Option<String>,
 
     /// Explicit path to directory containing neural model weights
@@ -168,6 +185,14 @@ pub struct CliArgs {
     /// Silent operation (suppress verbose logs)
     #[arg(short = 'q', long = "quiet", visible_alias = "silent")]
     pub quiet: bool,
+
+    /// Allow web server daemon to bind to non-loopback addresses (remote access)
+    #[arg(long = "allow-remote")]
+    pub allow_remote: bool,
+
+    /// Enable heuristic academic structure heading promotion (numbered sections and initials)
+    #[arg(long = "academic-structure")]
+    pub academic_structure: bool,
 }
 
 pub fn run() {
@@ -204,7 +229,10 @@ pub fn run() {
             format!("127.0.0.1:{port_or_addr}")
         };
         let rt = tokio::runtime::Runtime::new().expect("Failed to initialize Tokio runtime");
-        if let Err(e) = rt.block_on(pdfmd_lite_server::start_server(&bind_addr)) {
+        if let Err(e) = rt.block_on(pdfmd_lite_server::start_server(
+            &bind_addr,
+            args.allow_remote,
+        )) {
             eprintln!("Error starting web daemon: {e:#}");
             process::exit(1);
         }
@@ -507,10 +535,7 @@ pub fn run() {
         })
         .unwrap_or(ImageFormat::Jpeg);
 
-    let final_image_quality = args
-        .image_quality
-        .or(config.image_quality)
-        .unwrap_or(80);
+    let final_image_quality = args.image_quality.or(config.image_quality).unwrap_or(80);
 
     let final_save_table_images = if args.save_table_images {
         true
@@ -679,7 +704,9 @@ pub fn run() {
         ) {
             Ok(result) => {
                 let elapsed = t0.elapsed().as_secs_f32();
-                let skipped = result.total.saturating_sub(result.succeeded + result.failed.len());
+                let skipped = result
+                    .total
+                    .saturating_sub(result.succeeded + result.failed.len());
                 println!(
                     "\nBatch Conversion Finished in {elapsed:.2}s:\n  - Total:     {}\n  - Succeeded: {}\n  - Failed:    {}\n  - Skipped:   {}",
                     result.total,
@@ -711,12 +738,16 @@ fn run_doctor(custom_dir: Option<&Path>) {
     let report = locator.doctor_report();
 
     println!("\npdfmd-lite Offline Neural Model Diagnostics");
-    println!("==========================================================================================");
+    println!(
+        "=========================================================================================="
+    );
     println!(
         "{:<32} {:<10} {:<10} {:<10} Resolution / Location",
         "Model Name", "Type", "Size", "SHA256"
     );
-    println!("------------------------------------------------------------------------------------------");
+    println!(
+        "------------------------------------------------------------------------------------------"
+    );
 
     let mut missing_required = 0;
     let mut missing_optional = 0;
@@ -759,7 +790,9 @@ fn run_doctor(custom_dir: Option<&Path>) {
         }
     }
 
-    println!("==========================================================================================");
+    println!(
+        "=========================================================================================="
+    );
     if missing_required > 0 {
         eprintln!(
             "Warning: {missing_required} required model(s) are missing. Conversion will fail."

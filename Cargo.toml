@@ -29,6 +29,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sysinfo = "0.40.1"
 tempfile = "3.12"
+thiserror = "2.0"
+dunce = "1.0"
+dirs = "7.0.0"
+rand = "0.8"
 toml = "1.2.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "registry"] }
@@ -36,6 +40,7 @@ tract-onnx = "0.23.10"
 ort = "2.0.0-rc.15"
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 axum = { version = "0.7", features = ["ws", "multipart"] }
+tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1.38", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
 futures = "0.3"

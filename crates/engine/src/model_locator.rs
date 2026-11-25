@@ -27,32 +27,32 @@ pub fn get_global_models_dir() -> Option<PathBuf> {
     GLOBAL_MODELS_DIR.read().ok().and_then(|p| p.clone())
 }
 
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_DET: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/indra/det.onnx"
 ));
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_REC: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/indra/rec.onnx"
 ));
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_REC_WORLD: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/indra/rec_world.onnx"
 ));
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_ORDER: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/indra/order.onnx"
 ));
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_META: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/indra/meta.json"
 ));
-#[cfg(feature = "embed-models")]
+#[cfg(feature = "bundle-weights")]
 const EMBEDDED_LAYOUT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/layout/yolov8n-doclaynet.onnx"
@@ -74,23 +74,67 @@ pub struct ModelStatus {
 /// Known model manifest for all offline neural pipelines.
 pub const KNOWN_MODELS: &[(&str, &str, bool)] = &[
     ("Indra OCR Detection", "models/indra/det.onnx", true),
-    ("Indra OCR Recognition (Latin)", "models/indra/rec.onnx", true),
-    ("Indra OCR Recognition (World)", "models/indra/rec_world.onnx", false),
+    (
+        "Indra OCR Recognition (Latin)",
+        "models/indra/rec.onnx",
+        true,
+    ),
+    (
+        "Indra OCR Recognition (World)",
+        "models/indra/rec_world.onnx",
+        false,
+    ),
     ("Indra Reading Order", "models/indra/order.onnx", true),
     ("Indra OCR Metadata/Vocab", "models/indra/meta.json", true),
-    ("DocLayNet YOLO Layout", "models/layout/yolov8n-doclaynet.onnx", true),
+    (
+        "DocLayNet YOLO Layout",
+        "models/layout/yolov8n-doclaynet.onnx",
+        true,
+    ),
     ("SLANet Table Structure", "models/layout/slanet.onnx", false),
-    ("SLANet Table Vocab", "models/layout/table_structure_dict.txt", false),
+    (
+        "SLANet Table Vocab",
+        "models/layout/table_structure_dict.txt",
+        false,
+    ),
     ("RapidLaTeXOCR Encoder", "models/latex/encoder.onnx", false),
     ("RapidLaTeXOCR Decoder", "models/latex/decoder.onnx", false),
-    ("RapidLaTeXOCR Tokenizer", "models/latex/tokenizer.json", false),
-    ("GLiNER Metadata Extractor", "models/metadata/gliner_small.onnx", false),
-    ("MiniLM Embedding Model", "models/embeddings/model.onnx", false),
-    ("MiniLM Embedding Tokenizer", "models/embeddings/tokenizer.json", false),
+    (
+        "RapidLaTeXOCR Tokenizer",
+        "models/latex/tokenizer.json",
+        false,
+    ),
+    (
+        "GLiNER Metadata Extractor",
+        "models/metadata/gliner_small.onnx",
+        false,
+    ),
+    (
+        "MiniLM Embedding Model",
+        "models/embeddings/model.onnx",
+        false,
+    ),
+    (
+        "MiniLM Embedding Tokenizer",
+        "models/embeddings/tokenizer.json",
+        false,
+    ),
     // Next-Gen Quantized Models (ADR 0014, ADR 0015, ADR 0016)
-    ("PP-StructureV2 SLANet_Plus", "models/layout/slanet_plus.onnx", false),
-    ("UniMERNet Formula OCR", "models/latex/unimernet.onnx", false),
-    ("BGE-Small Embeddings (INT8)", "models/embeddings/bge_small_int8.onnx", false),
+    (
+        "PP-StructureV2 SLANet_Plus",
+        "models/layout/slanet_plus.onnx",
+        false,
+    ),
+    (
+        "UniMERNet Formula OCR",
+        "models/latex/unimernet.onnx",
+        false,
+    ),
+    (
+        "BGE-Small Embeddings (INT8)",
+        "models/embeddings/bge_small_int8.onnx",
+        false,
+    ),
 ];
 
 /// Unified Model Locator resolving offline model weights.
@@ -160,10 +204,10 @@ impl ModelLocator {
         None
     }
 
-    /// Returns embedded static byte slice if compiled with `embed-models`.
+    /// Returns embedded static byte slice if compiled with `bundle-weights`.
     #[allow(unused_variables)]
     fn get_embedded_slice(subpath: &str) -> Option<&'static [u8]> {
-        #[cfg(feature = "embed-models")]
+        #[cfg(feature = "bundle-weights")]
         {
             let clean = Self::strip_models_prefix(subpath);
             match clean {
@@ -176,7 +220,7 @@ impl ModelLocator {
                 _ => None,
             }
         }
-        #[cfg(not(feature = "embed-models"))]
+        #[cfg(not(feature = "bundle-weights"))]
         {
             None
         }
@@ -233,7 +277,10 @@ impl ModelLocator {
             } else if let Some(slice) = embedded {
                 let mut hasher = Sha256::new();
                 hasher.update(slice);
-                (Some(slice.len() as u64), Some(format!("{:x}", hasher.finalize())))
+                (
+                    Some(slice.len() as u64),
+                    Some(format!("{:x}", hasher.finalize())),
+                )
             } else {
                 (None, None)
             };

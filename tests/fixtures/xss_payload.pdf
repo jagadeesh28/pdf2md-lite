@@ -1,0 +1,36 @@
+%PDF-1.5
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [6 0 R] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 149 >>
+stream
+BT /F1 10 Tf 72 750 Td (<script>alert(1)</script>) Tj 72 730 Td (javascript:alert(document.cookie)) Tj 72 710 Td (<img src=x onerror=alert(1)>) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica  >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Link /Rect [72 720 200 740] /A << /S /URI /URI (javascript:alert(1)) >> >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000257 00000 n 
+0000000457 00000 n 
+0000000528 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R  >>
+startxref
+644
+%%EOF

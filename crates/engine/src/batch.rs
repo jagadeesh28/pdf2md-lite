@@ -335,7 +335,7 @@ pub fn process_pdf_directory_all_with_emitter(
             && let Ok(meta) = fs::metadata(&target_md_path)
             && meta.len() > 100
         {
-            let mut should_skip = true;
+            let mut should_skip = false;
             if let Ok(existing_content) = fs::read_to_string(&target_md_path) {
                 let (existing_meta, _) =
                     crate::markdown::parse_existing_frontmatter(&existing_content);
@@ -343,7 +343,8 @@ pub fn process_pdf_directory_all_with_emitter(
                     && let Some(existing_sha) = em.pdf_sha256
                     && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path)
                 {
-                    should_skip = existing_sha == source_sha;
+                    let is_complete = em.pdfmd_status.as_deref() == Some("complete");
+                    should_skip = existing_sha == source_sha && is_complete;
                 }
             }
 
@@ -724,13 +725,14 @@ pub fn dry_run_pdf_directory(
                         && let Some(sha) = m.pdf_sha256
                         && let Ok(source_sha) = crate::markdown::compute_file_sha256(&pdf_path)
                     {
-                        matches_sha = sha == source_sha;
+                        let is_complete = m.pdfmd_status.as_deref() == Some("complete");
+                        matches_sha = sha == source_sha && is_complete;
                     }
                 }
                 if matches_sha {
                     "WOULD_SKIP (Already converted, content-hash matches)"
                 } else {
-                    "WOULD_OVERWRITE (Existing file hash differs or missing)"
+                    "WOULD_OVERWRITE (Existing file hash differs or incomplete)"
                 }
             } else {
                 "WOULD_OVERWRITE (Target note exists)"
@@ -915,13 +917,17 @@ mod tests {
         let mut doc_mut = doc;
         doc_mut.save_to(&mut f).unwrap();
 
-        // Pre-create the output markdown note with valid length (> 100 bytes)
+        // Pre-create the output markdown note with valid length (> 100 bytes), complete status and matching hash
+        let source_sha = crate::markdown::compute_file_sha256(&pdf_path).unwrap();
         let note_dir = output_dir.join("sample");
         fs::create_dir_all(&note_dir).unwrap();
         let note_path = note_dir.join("sample.md");
         fs::write(
             &note_path,
-            "---\ntitle: Sample Document\nsource: sample.pdf\ntags:\n  - test\n---\n\nExisting note content that was already processed.\n",
+            format!(
+                "---\ntitle: Sample Document\nsource: sample.pdf\npdf_sha256: \"{}\"\npdfmd_status: \"complete\"\ngenerator: \"pdfmd-lite\"\ntags:\n  - test\n---\n\nExisting note content that was already processed.\n",
+                source_sha
+            ),
         )
         .unwrap();
 

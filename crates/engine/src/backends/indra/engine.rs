@@ -77,24 +77,22 @@ impl IndraEngine {
         // Attempt loading optional world recognizer for Telugu & Indic scripts
         let mut telugu_mask = None;
         let world_recognizer = match source.load_bytes("rec_world.onnx") {
-            Ok(rec_world_bytes) => {
-                match IndraVocab::from_world_json_bytes(&meta_bytes) {
-                    Ok(world_vocab) => {
-                        telugu_mask = Some(world_vocab.build_telugu_mask());
-                        match IndraRecognizer::new_world(&rec_world_bytes, world_vocab) {
-                            Ok(rec) => Some(rec),
-                            Err(e) => {
-                                tracing::warn!("Failed to initialize Indra world recognizer: {e:#}");
-                                None
-                            }
+            Ok(rec_world_bytes) => match IndraVocab::from_world_json_bytes(&meta_bytes) {
+                Ok(world_vocab) => {
+                    telugu_mask = Some(world_vocab.build_telugu_mask());
+                    match IndraRecognizer::new_world(&rec_world_bytes, world_vocab) {
+                        Ok(rec) => Some(rec),
+                        Err(e) => {
+                            tracing::warn!("Failed to initialize Indra world recognizer: {e:#}");
+                            None
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to load Indra world vocabulary: {e:#}");
-                        None
-                    }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("Failed to load Indra world vocabulary: {e:#}");
+                    None
+                }
+            },
             Err(e) => {
                 tracing::debug!("Indra world recognizer (rec_world.onnx) not loaded: {e:#}");
                 None
@@ -255,7 +253,8 @@ impl IndraEngine {
                         }
                     }
                 } else {
-                    let batch_results = self.recognizer.recognize_lines_batch(gray, &boxes, None)?;
+                    let batch_results =
+                        self.recognizer.recognize_lines_batch(gray, &boxes, None)?;
                     for (bbox, (text, _conf)) in boxes.iter().zip(batch_results.iter()) {
                         if !text.trim().is_empty() {
                             recognized_lines.push(TextLine {

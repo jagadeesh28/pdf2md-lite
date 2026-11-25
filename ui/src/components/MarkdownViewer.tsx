@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import katex from 'katex';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 interface MarkdownViewerProps {
   content: string;
@@ -9,37 +11,55 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content }) => {
   const renderedHtml = useMemo(() => {
     if (!content) return '<div class="text-gray-500 italic">No document content loaded.</div>';
 
-    let html = content;
+    // 1. Stash and render KaTeX display and inline math to avoid parser interference
+    const mathPlaceholders: Map<string, string> = new Map();
+    let placeholderCounter = 0;
 
-    // 1. Render display math $$...$$
-    html = html.replace(/\$\$([\s\S]*?)\$\$/g, (_match, math) => {
+    let processed = content;
+
+    // Display math $$...$$
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_match, math) => {
+      const key = `@@MATH_DISPLAY_${placeholderCounter++}@@`;
       try {
-        return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false });
+        const rendered = katex.renderToString(math.trim(), { displayMode: true, throwOnError: false });
+        mathPlaceholders.set(key, rendered);
       } catch (e) {
-        return `<pre class="bg-red-900/30 text-red-300 p-2 rounded">Error rendering equation: ${e}</pre>`;
+        mathPlaceholders.set(
+          key,
+          `<pre class="bg-red-900/30 text-red-300 p-2 rounded">Error rendering equation: ${escapeHtml(String(e))}</pre>`
+        );
       }
+      return `\n\n${key}\n\n`;
     });
 
-    // 2. Render inline math $...$ (avoiding double $)
-    html = html.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_match, math) => {
+    // Inline math $...$
+    processed = processed.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_match, math) => {
+      const key = `@@MATH_INLINE_${placeholderCounter++}@@`;
       try {
-        return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
+        const rendered = katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
+        mathPlaceholders.set(key, rendered);
       } catch {
-        return `$${math}$`;
+        mathPlaceholders.set(key, `$${escapeHtml(math)}$`);
       }
+      return key;
     });
 
-    // 2.5 Page Demarcation Anchors: <!-- Page N -->
-    html = html.replace(
+    // 2. Page Demarcation Anchors: <!-- Page N -->
+    processed = processed.replace(
       /<!-- Page (\d+) -->/g,
-      '<div id="page-anchor-$1" class="my-6 pt-2 border-b border-dashed border-gray-700/80 flex items-center justify-between">' +
-        '<span class="text-[10px] uppercase tracking-widest text-gray-500 font-mono">Page Demarcation</span>' +
-        '<span class="text-[10px] font-mono font-bold text-purple-400 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded shadow-sm">Page $1</span>' +
-      '</div>'
+      (_match, p1) => {
+        const key = `@@PAGE_ANCHOR_${placeholderCounter++}@@`;
+        const anchorHtml = `<div id="page-anchor-${p1}" class="my-6 pt-2 border-b border-dashed border-gray-700/80 flex items-center justify-between">` +
+          '<span class="text-[10px] uppercase tracking-widest text-gray-500 font-mono">Page Demarcation</span>' +
+          `<span class="text-[10px] font-mono font-bold text-purple-400 bg-gray-800 border border-gray-700 px-2 py-0.5 rounded shadow-sm">Page ${p1}</span>` +
+          '</div>';
+        mathPlaceholders.set(key, anchorHtml);
+        return `\n\n${key}\n\n`;
+      }
     );
 
-    // 2.6 Render Obsidian Callouts (> [!type][+-]? Title)
-    html = html.replace(
+    // 3. Obsidian Callouts (> [!type][+-]? Title)
+    processed = processed.replace(
       /^>[ \t]*\[!([a-zA-Z0-9_-]+)\]([+-]?)(?:[ \t]+([^\n]*))?\n((?:>[ \t]*.*\n?)*)/gim,
       (_match, rawType, collapse, title, body) => {
         const type = rawType.toLowerCase();
@@ -73,104 +93,90 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({ content }) => {
         const isCollapsible = collapse === '-' || collapse === '+';
         const defaultOpen = collapse !== '-';
 
+        const safeTitle = escapeHtml(displayTitle);
+        const renderedBody = marked.parse(cleanBody, { async: false }) as string;
+
+        const key = `@@CALLOUT_${placeholderCounter++}@@`;
+        let calloutHtml: string;
         if (isCollapsible) {
-          return `<details ${defaultOpen ? 'open' : ''} class="my-4 rounded-lg border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
+          calloutHtml = `<details ${defaultOpen ? 'open' : ''} class="my-4 rounded-lg border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
             <summary class="font-bold cursor-pointer select-none ${theme.text} flex items-center space-x-2">
               <span>${theme.icon}</span>
-              <span>${displayTitle}</span>
+              <span>${safeTitle}</span>
             </summary>
-            <div class="mt-2 text-gray-200 leading-relaxed border-t border-gray-800/80 pt-2">${cleanBody}</div>
+            <div class="mt-2 text-gray-200 leading-relaxed border-t border-gray-800/80 pt-2">${renderedBody}</div>
           </details>`;
+        } else {
+          calloutHtml = `<div class="my-4 rounded-lg border-l-4 border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
+            <div class="font-bold ${theme.text} flex items-center space-x-2 mb-1.5">
+              <span>${theme.icon}</span>
+              <span>${safeTitle}</span>
+            </div>
+            <div class="text-gray-200 leading-relaxed">${renderedBody}</div>
+          </div>`;
         }
-
-        return `<div class="my-4 rounded-lg border-l-4 border ${theme.border} ${theme.bg} p-3 text-xs shadow-sm">
-          <div class="font-bold ${theme.text} flex items-center space-x-2 mb-1.5">
-            <span>${theme.icon}</span>
-            <span>${displayTitle}</span>
-          </div>
-          <div class="text-gray-200 leading-relaxed">${cleanBody}</div>
-        </div>`;
+        mathPlaceholders.set(key, calloutHtml);
+        return `\n\n${key}\n\n`;
       }
     );
 
-    // 3. Render code blocks ```...```
-    html = html.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_match, lang, code) => {
-      return `<pre class="bg-gray-800 text-gray-200 p-4 rounded-lg my-3 overflow-x-auto text-sm font-mono border border-gray-700"><code class="language-${lang}">${escapeHtml(
-        code.trim()
-      )}</code></pre>`;
+    // 4. Obsidian wikilinks & image links
+    processed = processed.replace(/!\[\[(.*?)\]\]/g, (_m, target) => {
+      const key = `@@WIKI_IMG_${placeholderCounter++}@@`;
+      mathPlaceholders.set(
+        key,
+        `<div class="my-3 p-3 bg-gray-800/60 rounded border border-gray-700 text-sm text-purple-300">🖼️ Image: ${escapeHtml(target.trim())}</div>`
+      );
+      return key;
     });
 
-    // 4. Render tables
-    html = html.replace(/((?:\|[^\n]+\|\r?\n)+)/g, (tableBlock) => {
-      const rows = tableBlock.trim().split(/\r?\n/).filter(r => r.trim().length > 0);
-      if (rows.length < 2) return tableBlock;
-
-      let tableHtml = '<div class="my-4 overflow-x-auto"><table class="w-full text-left border-collapse border border-gray-700 text-sm">';
-      let isHeader = true;
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i].trim();
-        if (row.match(/^\|(?:\s*:?-+:?\s*\|)+$/)) {
-          // Separator row
-          isHeader = false;
-          continue;
-        }
-
-        const cells = row.split('|').slice(1, -1);
-        if (isHeader) {
-          tableHtml += '<thead class="bg-gray-800 text-gray-200"><tr>';
-          cells.forEach((c) => {
-            tableHtml += `<th class="border border-gray-700 px-3 py-2 font-semibold">${c.trim()}</th>`;
-          });
-          tableHtml += '</tr></thead><tbody>';
-          isHeader = false;
-        } else {
-          tableHtml += '<tr class="hover:bg-gray-800/40 border-b border-gray-800">';
-          cells.forEach((c) => {
-            tableHtml += `<td class="border border-gray-700 px-3 py-2">${c.trim()}</td>`;
-          });
-          tableHtml += '</tr>';
-        }
-      }
-      tableHtml += '</tbody></table></div>';
-      return tableHtml;
-    });
-
-    // 5. Headings
-    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-bold text-purple-400 mt-4 mb-2">$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold text-gray-100 border-b border-gray-800 pb-1 mt-6 mb-3">$1</h2>');
-    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-extrabold text-white mt-8 mb-4">$1</h1>');
-
-    // 6. Obsidian and Markdown images & Wikilinks
-    html = html.replace(/!\[\[(.*?)\]\]/g, '<div class="my-3 p-3 bg-gray-800/60 rounded border border-gray-700 text-sm text-purple-300">🖼️ Image: $1</div>');
-    html = html.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
+    processed = processed.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, target, alias) => {
       const label = alias?.trim() || target.trim();
-      return `<span class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-xs font-medium bg-purple-950/50 text-purple-300 hover:text-purple-200 border border-purple-700/50 cursor-pointer transition-colors" title="Wikilink to: ${target.trim()}"><span>🔗</span><span>${label}</span></span>`;
+      const key = `@@WIKI_LINK_${placeholderCounter++}@@`;
+      mathPlaceholders.set(
+        key,
+        `<span class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-xs font-medium bg-purple-950/50 text-purple-300 hover:text-purple-200 border border-purple-700/50 cursor-pointer transition-colors" title="Wikilink to: ${escapeHtml(target.trim())}"><span>🔗</span><span>${escapeHtml(label)}</span></span>`
+      );
+      return key;
     });
-    html = html.replace(/!\[(.*?)\]\((.*?)\)/g, (_match, alt, src) => {
-      return `<figure class="my-4 text-center">
-        <img src="${src}" alt="${alt}" class="max-w-full h-auto rounded border border-gray-700 mx-auto shadow-md" />
-        <figcaption class="text-xs text-gray-400 mt-1 italic">${alt || 'Figure'}</figcaption>
-      </figure>`;
+
+    // 5. Parse remaining standard markdown through marked
+    let html = marked.parse(processed, {
+      async: false,
+      gfm: true,
+      breaks: true,
+    }) as string;
+
+    // 6. Restore placeholders
+    mathPlaceholders.forEach((val, key) => {
+      html = html.split(key).join(val);
     });
 
-    // 7. Bold and Italics
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-gray-100">$1</strong>');
-    html = html.replace(/\*(.*?)\*/g, '<em class="italic text-gray-300">$1</em>');
+    // 7. Sanitize strictly with DOMPurify
+    const cleanHtml = DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: [
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'p', 'a', 'span', 'strong', 'em', 'del', 'code', 'pre',
+        'blockquote', 'ul', 'ol', 'li', 'hr', 'br',
+        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'div', 'details', 'summary', 'figure', 'figcaption', 'img',
+        // KaTeX math rendering tags
+        'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'msubsup',
+        'mfrac', 'msqrt', 'mroot', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation',
+        'svg', 'path', 'line', 'rect', 'circle', 'text', 'g'
+      ],
+      ALLOWED_ATTR: [
+        'class', 'id', 'href', 'src', 'alt', 'title', 'open',
+        'style', 'aria-hidden', 'aria-label', 'role',
+        'width', 'height', 'viewBox', 'd', 'fill', 'stroke', 'xmlns',
+        'data-page'
+      ],
+      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data|blob|asset):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+    });
 
-    // 8. Paragraphs & Line Breaks
-    const paragraphs = html.split(/\n\n+/);
-    html = paragraphs
-      .map((p) => {
-        p = p.trim();
-        if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<div') || p.startsWith('<table') || p.startsWith('<figure')) {
-          return p;
-        }
-        return `<p class="my-2 leading-relaxed text-gray-300">${p.replace(/\n/g, '<br/>')}</p>`;
-      })
-      .join('\n');
-
-    return html;
+    return cleanHtml;
   }, [content]);
 
   return (

@@ -4,11 +4,11 @@
   "version": "0.7.2",
   "identifier": "com.pdfmdlite.app",
   "build": {
-    "beforeBuildCommand": "cd ../../ui && npm.cmd run build",
+    "beforeBuildCommand": "cd ../../ui && npm run build",
     "frontendDist": "../../ui/dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "pdfmd-lite — Offline PDF to Markdown",
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws: http:"
     }
   },
   "bundle": {

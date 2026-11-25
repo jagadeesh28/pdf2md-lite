@@ -19,6 +19,10 @@ pub struct DocumentMetadata {
     pub pdf_sha256: Option<String>,
     pub total_pages: Option<usize>,
     pub pages_processed: Option<String>,
+    pub pdfmd_schema: Option<usize>,
+    pub pdfmd_status: Option<String>,
+    pub conversion_fingerprint: Option<String>,
+    pub generator: Option<String>,
     pub tags: Vec<String>,
     pub custom_properties: std::collections::BTreeMap<String, Vec<String>>,
 }
@@ -73,6 +77,21 @@ impl DocumentMetadata {
         }
         if let Some(ref pages) = self.pages_processed {
             yaml.push_str(&format!("pages_processed: \"{}\"\n", pages));
+        }
+        yaml.push_str("generator: \"pdfmd-lite\"\n");
+        if let Some(schema) = self.pdfmd_schema {
+            yaml.push_str(&format!("pdfmd_schema: {}\n", schema));
+        } else {
+            yaml.push_str("pdfmd_schema: 2\n");
+        }
+        if let Some(ref status) = self.pdfmd_status {
+            yaml.push_str(&format!("pdfmd_status: \"{}\"\n", escape_yaml(status)));
+        }
+        if let Some(ref fp) = self.conversion_fingerprint {
+            yaml.push_str(&format!(
+                "conversion_fingerprint: \"{}\"\n",
+                escape_yaml(fp)
+            ));
         }
 
         for (key, values) in &self.custom_properties {
@@ -513,6 +532,10 @@ pub fn parse_existing_frontmatter(content: &str) -> (Option<DocumentMetadata>, &
                     "subject" => meta.subject = Some(val_clean),
                     "total_pages" => meta.total_pages = val_clean.parse().ok(),
                     "pages_processed" => meta.pages_processed = Some(val_clean),
+                    "pdfmd_schema" => meta.pdfmd_schema = val_clean.parse().ok(),
+                    "pdfmd_status" => meta.pdfmd_status = Some(val_clean),
+                    "conversion_fingerprint" => meta.conversion_fingerprint = Some(val_clean),
+                    "generator" => meta.generator = Some(val_clean),
                     _ => {}
                 }
             }
@@ -1413,40 +1436,96 @@ pub fn dehyphenate_text(text: &str) -> String {
     result
 }
 
-/// Strips repetitive running headers and footers (e.g. "VOL. 1, NO. 1", "AIAA JOURNAL", "Page X of Y") from document body.
+fn is_banner_or_header_candidate(trimmed: &str) -> bool {
+    let clean = trimmed.trim_start_matches('#').trim();
+    let upper = clean.to_uppercase();
+
+    upper.starts_with("DOWNLOADED BY ")
+        || upper.starts_with("DOWNLOADED ON ")
+        || (upper.starts_with("PAGE ") && upper.contains(" OF ") && upper.len() < 25)
+        || upper == "EXTRACTED PDF TEXT"
+        || (upper.contains("VOL.") && upper.contains("NO.") && upper.len() < 80)
+        || (upper.contains("TECHNICAL NOTES") && upper.len() < 80)
+}
+
+/// Strips repetitive running headers and footers from document body based on multi-page repetition.
 pub fn strip_running_headers_and_footers(text: &str) -> String {
+    // 1. Check if document has page demarcation comments
+    let has_page_anchors = text.contains("<!-- Page ");
+
+    if !has_page_anchors {
+        // Fallback for single page or unanchored text: remove undeniable download/header banners
+        let mut out = String::with_capacity(text.len());
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !is_banner_or_header_candidate(trimmed) {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        return out;
+    }
+
+    // 2. Multi-page document: detect repeating lines across page margins
+    let pages: Vec<&str> = text.split("<!-- Page ").collect();
+    let num_pages = pages.len().saturating_sub(1);
+
+    let mut margin_patterns: std::collections::HashMap<String, std::collections::HashSet<usize>> =
+        std::collections::HashMap::new();
+
+    for (page_idx, page_str) in pages.iter().skip(1).enumerate() {
+        let lines: Vec<&str> = page_str
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| {
+                !l.is_empty() && !l.starts_with("-->") && !l.starts_with('#') && !l.starts_with('|')
+            })
+            .collect();
+
+        if lines.is_empty() {
+            continue;
+        }
+
+        // Top band (first 2 lines)
+        for line in lines.iter().take(2) {
+            let norm = normalize_header_line(line);
+            if norm.len() > 3 && norm.len() < 90 {
+                margin_patterns.entry(norm).or_default().insert(page_idx);
+            }
+        }
+
+        // Bottom band (last 2 lines)
+        let total_l = lines.len();
+        if total_l > 2 {
+            for line in lines.iter().skip(total_l.saturating_sub(2)) {
+                let norm = normalize_header_line(line);
+                if norm.len() > 3 && norm.len() < 90 {
+                    margin_patterns.entry(norm).or_default().insert(page_idx);
+                }
+            }
+        }
+    }
+
+    // A margin pattern is repetitive if it appears on >= 2 distinct pages (or >= 40% if >= 3 pages)
+    let min_repeats = if num_pages <= 2 {
+        2
+    } else {
+        (num_pages as f32 * 0.35).ceil() as usize
+    };
+    let repeating_norms: std::collections::HashSet<String> = margin_patterns
+        .into_iter()
+        .filter(|(_, page_set)| page_set.len() >= min_repeats.max(2))
+        .map(|(norm, _)| norm)
+        .collect();
+
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
         let trimmed = line.trim();
-        let upper = trimmed.to_uppercase();
-        let clean = upper.replace(['$', '#'], "").trim().to_string();
+        let is_banner = is_banner_or_header_candidate(trimmed);
+        let norm = normalize_header_line(trimmed);
+        let is_repeating = repeating_norms.contains(&norm);
 
-        let is_running_hdr = (clean.starts_with("VOL. ") && clean.contains("NO. "))
-            || (clean.contains("J. PROPULSION")
-                && (clean.contains("VOL.") || clean.contains("198") || clean.contains("199")))
-            || (clean.starts_with("AIAA JOURNAL") && clean.len() < 40)
-            || (clean.starts_with("DOWNLOADED BY ") || clean.starts_with("DOWNLOADED ON "))
-            || (clean.starts_with("PAGE ") && clean.contains(" OF ") && clean.len() < 25)
-            || clean == "EXTRACTED PDF TEXT"
-            || ((clean.starts_with("MARCH")
-                || clean.starts_with("JAN")
-                || clean.starts_with("FEB")
-                || clean.starts_with("APR")
-                || clean.starts_with("MAY")
-                || clean.starts_with("JUNE")
-                || clean.starts_with("JULY")
-                || clean.starts_with("AUG")
-                || clean.starts_with("SEPT")
-                || clean.starts_with("OCT")
-                || clean.starts_with("NOV")
-                || clean.starts_with("DEC"))
-                && (clean.contains("TECHNICAL NOTES")
-                    || clean.contains("198")
-                    || clean.contains("199")
-                    || clean.contains("200"))
-                && clean.len() < 80);
-
-        if !is_running_hdr {
+        if !is_banner && !is_repeating {
             out.push_str(line);
             out.push('\n');
         }
@@ -1454,8 +1533,27 @@ pub fn strip_running_headers_and_footers(text: &str) -> String {
     out
 }
 
+fn normalize_header_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for c in line.chars() {
+        if c.is_ascii_digit() {
+            out.push('#');
+        } else if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if c == ' ' {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Promotes academic section headings and document titles to Markdown headings (# Title, ## Section).
 pub fn promote_headings(text: &str) -> String {
+    promote_headings_with_options(text, false)
+}
+
+/// Promotes section headings and document titles, with heuristic numbered/initial promotion opt-in.
+pub fn promote_headings_with_options(text: &str, academic_structure: bool) -> String {
     let standard_sections = [
         "ABSTRACT",
         "INTRODUCTION",
@@ -1509,12 +1607,15 @@ pub fn promote_headings(text: &str) -> String {
         let upper = trimmed.to_uppercase();
 
         // 1. Check for standard academic section names
-        let is_section = standard_sections
-            .iter()
-            .any(|&sec| upper == sec || upper == format!("{}:", sec));
+        let is_section = standard_sections.iter().any(|&sec| {
+            upper == sec
+                || upper == format!("{}:", sec)
+                || (upper.ends_with(sec) && (trimmed.len() < 50))
+        });
 
-        // 2. Check for numbered section headers: "I. INTRODUCTION", "1.0 INTRODUCTION", "1. Introduction"
-        let is_numbered_section = (trimmed.len() < 60)
+        // 2. Check for numbered section headers: "I. INTRODUCTION", "1.0 INTRODUCTION", "1. Introduction" (opt-in)
+        let is_numbered_section = academic_structure
+            && (trimmed.len() < 60)
             && ((trimmed.starts_with("I. ")
                 || trimmed.starts_with("II. ")
                 || trimmed.starts_with("III. ")
@@ -2570,6 +2671,31 @@ avoided if application specific testing is done to determine \mu{t, _tb} and K."
         assert!(res.contains("## Abstract\n"));
         assert!(res.contains("## Introduction\n"));
         assert!(res.contains("## 1.0 Governing Equations\n"));
+    }
+
+    #[test]
+    fn test_cor04_preserves_dated_and_order_lines() {
+        let input = "GOVERNMENT OF ANDHRA PRADESH\n\nORDER NO. 452\n\nDATED AUGUST 12, 2008\n\nDECISION 2005 ON LAND ALLOTMENT\n\nParagraph text here.";
+        let res = strip_running_headers_and_footers(input);
+        assert!(res.contains("ORDER NO. 452"));
+        assert!(res.contains("DATED AUGUST 12, 2008"));
+        assert!(res.contains("DECISION 2005 ON LAND ALLOTMENT"));
+    }
+
+    #[test]
+    fn test_cor05_preserves_numbered_lists_and_initials() {
+        let input = "1. Submit Form 16 to the officer.\n2. Verify identity.\nV. Srinivas signed the document.";
+        // Default mode: no academic structure promotion
+        let default_res = promote_headings(input);
+        assert!(!default_res.contains("## 1. Submit Form 16"));
+        assert!(!default_res.contains("## 2. Verify identity"));
+        assert!(!default_res.contains("## V. Srinivas"));
+        assert!(default_res.contains("1. Submit Form 16"));
+        assert!(default_res.contains("V. Srinivas signed"));
+
+        // Opt-in mode: promotes numbered sections
+        let opt_in_res = promote_headings_with_options(input, true);
+        assert!(opt_in_res.contains("## 1. Submit Form 16"));
     }
 
     #[test]

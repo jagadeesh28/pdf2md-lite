@@ -87,19 +87,23 @@ fn main() {
     // 1. Install dependencies if node_modules is missing
     if !ui_dir.join("node_modules").exists() {
         println!("cargo:warning=[pdfmd-lite-desktop] Installing npm dependencies...");
-        match Command::new(npm_cmd).current_dir(&ui_dir).arg("install").status() {
+        match Command::new(npm_cmd)
+            .current_dir(&ui_dir)
+            .arg("install")
+            .status()
+        {
             Ok(status) if status.success() => {
-                println!("cargo:warning=[pdfmd-lite-desktop] Successfully installed npm dependencies.");
+                println!(
+                    "cargo:warning=[pdfmd-lite-desktop] Successfully installed npm dependencies."
+                );
             }
             Ok(status) => {
                 panic!("'npm install' failed with exit status: {status}");
             }
             Err(err) => {
-                if dist_index.exists() {
-                    println!("cargo:warning=[pdfmd-lite-desktop] Warning: Failed to run 'npm install' ({err}), but pre-built dist/ exists. Continuing.");
-                } else {
-                    panic!("Failed to execute 'npm install': {err}. Please ensure Node.js and npm are installed.");
-                }
+                panic!(
+                    "Failed to execute 'npm install': {err}. Please ensure Node.js and npm are installed."
+                );
             }
         }
     }
@@ -113,21 +117,23 @@ fn main() {
             .status()
         {
             Ok(status) if status.success() => {
-                println!("cargo:warning=[pdfmd-lite-desktop] Frontend build completed successfully.");
+                println!(
+                    "cargo:warning=[pdfmd-lite-desktop] Frontend build completed successfully."
+                );
             }
             Ok(status) => {
                 panic!("'npm run build' failed with exit status: {status}");
             }
             Err(err) => {
-                if dist_index.exists() {
-                    println!("cargo:warning=[pdfmd-lite-desktop] Warning: Failed to execute 'npm run build' ({err}), but pre-built dist/ exists. Continuing.");
-                } else {
-                    panic!("Failed to execute 'npm run build': {err}. Please ensure Node.js and npm are installed.");
-                }
+                panic!(
+                    "Failed to execute 'npm run build': {err}. Please ensure Node.js and npm are installed."
+                );
             }
         }
     } else {
-        println!("cargo:warning=[pdfmd-lite-desktop] Frontend bundle (ui/dist) is up to date. Skipping npm run build.");
+        println!(
+            "cargo:warning=[pdfmd-lite-desktop] Frontend bundle (ui/dist) is up to date. Skipping npm run build."
+        );
     }
 
     // 3. Delegate to Tauri build script to embed dist/ and icons
