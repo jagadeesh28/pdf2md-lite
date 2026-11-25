@@ -1,6 +1,6 @@
 import { invoke, isTauri as checkIsTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AppConfigData, DryRunSummary, ModelStatus, ProgressPayload } from '../types';
+import { AppConfigData, CapabilitiesResponse, DryRunSummary, ModelStatus, ProgressPayload } from '../types';
 
 export function isTauri(): boolean {
   try {
@@ -33,11 +33,13 @@ export const defaultConfig: AppConfigData = {
   embed_images_base64: false,
   extract_tables: true,
   table_crops: true,
+  save_table_images: true,
   concurrency: null,
   embed: false,
   log_level: 'info',
   log_file: null,
   output_dir: './output',
+  device: 'auto',
 };
 
 export function normalizeConfig(raw: Partial<AppConfigData> | null | undefined): AppConfigData {
@@ -52,12 +54,14 @@ export function normalizeConfig(raw: Partial<AppConfigData> | null | undefined):
         : defaultConfig.image_quality,
     embed_images_base64: raw.embed_images_base64 ?? defaultConfig.embed_images_base64,
     extract_tables: raw.extract_tables ?? defaultConfig.extract_tables,
-    table_crops: raw.table_crops ?? defaultConfig.table_crops,
+    table_crops: raw.table_crops ?? raw.save_table_images ?? defaultConfig.table_crops,
+    save_table_images: raw.save_table_images ?? raw.table_crops ?? defaultConfig.save_table_images,
     concurrency: raw.concurrency ?? defaultConfig.concurrency,
     embed: raw.embed ?? defaultConfig.embed,
     log_level: raw.log_level || defaultConfig.log_level,
     log_file: raw.log_file ?? defaultConfig.log_file,
     output_dir: raw.output_dir || defaultConfig.output_dir,
+    device: raw.device || defaultConfig.device,
   };
 }
 
@@ -380,12 +384,61 @@ export async function fetchPagePreview(filePath: string, pageNumber: number): Pr
 
 /**
  * Reads a generated Markdown note from disk so the Split-Pane inspector can render
- * the real converted content. Only available in the desktop (Tauri) runtime; the
- * bundled web daemon has no note-read endpoint and falls back to placeholder content.
+ * the real converted content across both Tauri desktop IPC and local Axum HTTP daemon.
  */
 export async function readMarkdown(path: string): Promise<string> {
   if (isTauri()) {
-    return await invoke<string>('read_markdown', { path });
+    try {
+      return await invoke<string>('read_markdown', { path });
+    } catch (err) {
+      console.warn('Tauri read_markdown error:', err);
+    }
   }
+
+  try {
+    const res = await fetch(`/api/note?path=${encodeURIComponent(path)}`, {
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      return await res.text();
+    }
+  } catch (err) {
+    console.warn('HTTP read_markdown error:', err);
+  }
+
   return '';
+}
+
+/**
+ * Fetches runtime capabilities (available OCR languages, active execution device, DOM modes)
+ * from either Tauri desktop IPC or Axum daemon.
+ */
+export async function fetchCapabilities(): Promise<CapabilitiesResponse | null> {
+  if (isTauri()) {
+    try {
+      return await invoke<CapabilitiesResponse>('get_capabilities');
+    } catch (err) {
+      console.warn('Tauri get_capabilities error:', err);
+    }
+  }
+
+  try {
+    const res = await fetch('/api/capabilities', { headers: authHeaders() });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('HTTP get_capabilities error:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Derives an authenticated asset URL for serving images/crops from the local Axum daemon.
+ */
+export function getAssetUrl(path: string): string {
+  const token = getAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  return `/api/asset?path=${encodeURIComponent(path)}${tokenParam}`;
 }

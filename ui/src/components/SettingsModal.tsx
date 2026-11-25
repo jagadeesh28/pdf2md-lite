@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Save, RotateCcw, FolderPlus } from 'lucide-react';
 import { AppConfigData } from '../types';
 import { defaultConfig, isTauri, pickFolder } from '../bridge/api';
@@ -12,6 +12,14 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, onClose }) => {
   const [formData, setFormData] = useState<AppConfigData>({ ...config });
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const handleReset = () => {
     setFormData({ ...defaultConfig });
   };
@@ -23,14 +31,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, on
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="bg-gray-850 px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+          <h2 id="settings-modal-title" className="text-sm font-bold text-white flex items-center space-x-2">
             <span>pdfmd-lite Engine Configuration</span>
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close settings dialog"
+            className="text-gray-400 hover:text-white transition-colors"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -201,7 +218,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, on
                 <input
                   type="checkbox"
                   checked={formData.table_crops}
-                  onChange={(e) => setFormData({ ...formData, table_crops: e.target.checked })}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      table_crops: e.target.checked,
+                      save_table_images: e.target.checked,
+                    })
+                  }
                   className="rounded border-gray-700 text-purple-600 focus:ring-purple-500 bg-gray-800"
                 />
                 <span className="text-gray-200">Save Visual Table Crop Images</span>
@@ -239,24 +262,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ config, onSave, on
               </div>
 
               <div>
-                <label className="block text-gray-300 font-medium mb-1">Log Level</label>
+                <label className="block text-gray-300 font-medium mb-1">Execution Hardware (--device)</label>
                 <select
-                  value={formData.log_level}
+                  value={formData.device ?? 'auto'}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      log_level: e.target.value as AppConfigData['log_level'],
+                      device: e.target.value as 'auto' | 'cpu' | 'directml',
                     })
                   }
                   className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 focus:outline-none focus:border-purple-500"
                 >
-                  <option value="trace">Trace (Hyper-verbose)</option>
-                  <option value="debug">Debug</option>
-                  <option value="info">Info (Standard)</option>
-                  <option value="warn">Warn</option>
-                  <option value="error">Error only</option>
+                  <option value="auto">Auto (DirectML if available, else CPU)</option>
+                  <option value="cpu">CPU (Pure-Rust tract SIMD)</option>
+                  <option value="directml">DirectML (Windows GPU Acceleration)</option>
                 </select>
               </div>
+            </div>
+
+            <div className="pt-2">
+              <label className="block text-gray-300 font-medium mb-1">Log Level</label>
+              <select
+                value={formData.log_level}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    log_level: e.target.value as AppConfigData['log_level'],
+                  })
+                }
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 focus:outline-none focus:border-purple-500"
+              >
+                <option value="trace">Trace (Hyper-verbose)</option>
+                <option value="debug">Debug</option>
+                <option value="info">Info (Standard)</option>
+                <option value="warn">Warn</option>
+                <option value="error">Error only</option>
+              </select>
             </div>
 
             <label className="flex items-center space-x-2 cursor-pointer pt-1">

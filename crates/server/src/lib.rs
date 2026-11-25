@@ -10,7 +10,7 @@ use axum::{
         DefaultBodyLimit, Multipart, Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{Method, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -516,6 +516,9 @@ pub fn create_router(state: AppState) -> Router {
             post(upload_handler).layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
         .route("/page-preview", get(page_preview_handler))
+        .route("/note", get(get_note_handler))
+        .route("/asset", get(get_asset_handler))
+        .route("/capabilities", get(get_capabilities_handler))
         .route("/cancel", post(cancel_handler))
         .route("/run-state", get(run_state_handler))
         .route("/events", get(ws_handler))
@@ -589,12 +592,103 @@ async fn get_config() -> Result<Json<AppConfig>, StatusCode> {
     Ok(Json(config))
 }
 
-async fn update_config(Json(config): Json<AppConfig>) -> Result<StatusCode, StatusCode> {
+async fn update_config(Json(incoming): Json<AppConfig>) -> Result<StatusCode, StatusCode> {
     let default_path = pdfmd_lite::config::default_config_path();
-    config
+    let mut current = AppConfig::load(None).unwrap_or_default();
+    current.merge_patch(incoming);
+    current
         .save(&default_path)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NoteQuery {
+    pub path: String,
+}
+
+async fn get_note_handler(
+    State(state): State<AppState>,
+    Query(query): Query<NoteQuery>,
+) -> Result<(HeaderMap, String), (StatusCode, String)> {
+    let safe_path = state
+        .path_policy
+        .check_read(Path::new(&query.path))
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Note path rejected: {e}")))?;
+
+    if !safe_path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Note not found: {}", safe_path.display()),
+        ));
+    }
+
+    let content = std::fs::read_to_string(&safe_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read note: {e}"),
+        )
+    })?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/markdown; charset=utf-8"),
+    );
+    Ok((headers, content))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssetQuery {
+    pub path: String,
+}
+
+async fn get_asset_handler(
+    State(state): State<AppState>,
+    Query(query): Query<AssetQuery>,
+) -> Result<(HeaderMap, Vec<u8>), (StatusCode, String)> {
+    let safe_path = state
+        .path_policy
+        .check_read(Path::new(&query.path))
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Asset path rejected: {e}")))?;
+
+    if !safe_path.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("Asset not found: {}", safe_path.display()),
+        ));
+    }
+
+    let bytes = std::fs::read(&safe_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to read asset: {e}"),
+        )
+    })?;
+
+    let mime = match safe_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
+    };
+
+    let mut headers = HeaderMap::new();
+    if let Ok(val) = HeaderValue::from_str(mime) {
+        headers.insert(header::CONTENT_TYPE, val);
+    }
+    Ok((headers, bytes))
+}
+
+async fn get_capabilities_handler() -> Json<pdfmd_lite::CapabilitiesResponse> {
+    Json(pdfmd_lite::get_capabilities(false))
 }
 
 async fn dry_run_handler(
@@ -1359,5 +1453,119 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_note_allowed_and_forbidden() {
+        let (state, token) = create_test_state();
+        let test_file = state.upload_dir.join("sample_note.md");
+        std::fs::write(&test_file, "# Sample Note\nTest content for note.").unwrap();
+
+        let app = create_router(state);
+
+        // Allowed path
+        let path_str = test_file.to_string_lossy().to_string();
+        let req = Request::builder()
+            .uri(format!("/api/note?path={}", path_str.replace('\\', "/")))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::HOST, "127.0.0.1:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/markdown; charset=utf-8"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8_lossy(&bytes);
+        assert!(body_str.contains("# Sample Note"));
+
+        // Disallowed / outside allowed paths
+        let outside_path = std::env::temp_dir().join("disallowed_secret.md");
+        let outside_str = outside_path.to_string_lossy().to_string();
+        let req_outside = Request::builder()
+            .uri(format!("/api/note?path={}", outside_str.replace('\\', "/")))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::HOST, "127.0.0.1:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp_outside = app.oneshot(req_outside).await.unwrap();
+        assert_eq!(resp_outside.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_asset_mime_and_forbidden() {
+        let (state, token) = create_test_state();
+        let test_img = state.upload_dir.join("figure1.png");
+        std::fs::write(&test_img, b"\x89PNG\r\n\x1a\nfake_bytes").unwrap();
+
+        let app = create_router(state);
+
+        let path_str = test_img.to_string_lossy().to_string();
+        let req = Request::builder()
+            .uri(format!("/api/asset?path={}", path_str.replace('\\', "/")))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::HOST, "127.0.0.1:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..4], b"\x89PNG");
+
+        // Disallowed asset
+        let outside_img = std::env::temp_dir().join("disallowed_image.png");
+        let outside_str = outside_img.to_string_lossy().to_string();
+        let req_outside = Request::builder()
+            .uri(format!(
+                "/api/asset?path={}",
+                outside_str.replace('\\', "/")
+            ))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::HOST, "127.0.0.1:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp_outside = app.oneshot(req_outside).await.unwrap();
+        assert_eq!(resp_outside.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_capabilities() {
+        let (state, token) = create_test_state();
+        let app = create_router(state);
+
+        let req = Request::builder()
+            .uri("/api/capabilities")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::HOST, "127.0.0.1:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["is_tauri"], false);
+        let languages = json["languages"].as_array().unwrap();
+        assert!(languages.iter().any(|l| l["code"] == "te"));
+        assert!(languages.iter().any(|l| l["code"] == "en"));
+        assert_eq!(json["active_device"], "auto");
+        let modes = json["dom_extraction_modes"].as_array().unwrap();
+        assert!(modes.iter().any(|m| m == "auto"));
     }
 }

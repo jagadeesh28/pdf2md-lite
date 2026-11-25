@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { X, ShieldCheck, Cpu, Code2 } from 'lucide-react';
 
 interface AboutModalProps {
@@ -6,16 +6,33 @@ interface AboutModalProps {
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="about-modal-title"
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
         {/* Header */}
         <div className="bg-gray-850 px-5 py-3 border-b border-gray-800 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
-            <h2 className="text-sm font-bold text-white">About pdfmd-lite</h2>
+            <h2 id="about-modal-title" className="text-sm font-bold text-white">About pdfmd-lite</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close about dialog"
+            className="text-gray-400 hover:text-white transition-colors"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -24,7 +41,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ onClose }) => {
         <div className="p-6 space-y-4 text-xs text-gray-300 leading-relaxed">
           <div className="text-center pb-2">
             <h1 className="text-lg font-extrabold text-white">pdfmd-lite</h1>
-            <p className="text-purple-400 font-mono text-[11px] mt-0.5">Version 0.3.0 • Pure-Rust Architecture</p>
+            <p className="text-purple-400 font-mono text-[11px] mt-0.5">Version 0.7.2 • Pure-Rust Architecture</p>
           </div>
 
           <p>

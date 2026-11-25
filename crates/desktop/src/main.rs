@@ -398,9 +398,16 @@ fn get_config() -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn save_config(config: AppConfig) -> Result<(), String> {
-    let path = PathBuf::from("pdfmd-lite.toml");
-    config.save(&path).map_err(|e| e.to_string())
+fn save_config(incoming: AppConfig) -> Result<(), String> {
+    let path = pdfmd_lite::config::default_config_path();
+    let mut current = AppConfig::load(None).unwrap_or_default();
+    current.merge_patch(incoming);
+    current.save(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_capabilities() -> Result<pdfmd_lite::CapabilitiesResponse, String> {
+    Ok(pdfmd_lite::get_capabilities(true))
 }
 
 #[tauri::command]
@@ -985,7 +992,8 @@ fn main() {
             convert_png_to_jpeg,
             embed_vault,
             download_models,
-            get_model_status
+            get_model_status,
+            get_capabilities
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

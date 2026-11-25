@@ -43,6 +43,112 @@ pub enum DeviceTarget {
     Directml,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LanguageCapability {
+    pub code: String,
+    pub name: String,
+    pub script: String,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilitiesResponse {
+    pub languages: Vec<LanguageCapability>,
+    pub active_device: String,
+    pub dom_extraction_modes: Vec<String>,
+    pub is_tauri: bool,
+}
+
+/// Detects available language models and hardware execution targets.
+pub fn get_capabilities(is_tauri: bool) -> CapabilitiesResponse {
+    let config = AppConfig::load(None).unwrap_or_default();
+    let active_device = config.device.unwrap_or_else(|| "auto".to_string());
+    let models = crate::model_locator::get_model_status();
+    let has_world_model = models
+        .iter()
+        .any(|m| (m.name.contains("rec_world") || m.subpath.contains("rec_world")) && m.is_valid);
+
+    let languages = vec![
+        LanguageCapability {
+            code: "en".to_string(),
+            name: "English (Latin)".to_string(),
+            script: "Latin".to_string(),
+            available: true,
+        },
+        LanguageCapability {
+            code: "hi".to_string(),
+            name: "Hindi (Devanagari)".to_string(),
+            script: "Devanagari".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "te".to_string(),
+            name: "Telugu".to_string(),
+            script: "Telugu".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "kn".to_string(),
+            name: "Kannada".to_string(),
+            script: "Kannada".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "ta".to_string(),
+            name: "Tamil".to_string(),
+            script: "Tamil".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "ml".to_string(),
+            name: "Malayalam".to_string(),
+            script: "Malayalam".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "mr".to_string(),
+            name: "Marathi".to_string(),
+            script: "Devanagari".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "bn".to_string(),
+            name: "Bengali".to_string(),
+            script: "Bengali".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "gu".to_string(),
+            name: "Gujarati".to_string(),
+            script: "Gujarati".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "pa".to_string(),
+            name: "Punjabi (Gurmukhi)".to_string(),
+            script: "Gurmukhi".to_string(),
+            available: has_world_model,
+        },
+        LanguageCapability {
+            code: "or".to_string(),
+            name: "Odia".to_string(),
+            script: "Odia".to_string(),
+            available: has_world_model,
+        },
+    ];
+
+    CapabilitiesResponse {
+        languages,
+        active_device,
+        dom_extraction_modes: vec![
+            "auto".to_string(),
+            "always".to_string(),
+            "never".to_string(),
+        ],
+        is_tauri,
+    }
+}
+
 impl std::str::FromStr for DeviceTarget {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -115,8 +221,75 @@ impl AppConfig {
         Ok(Self::default())
     }
 
-    /// Serializes and writes configuration to a TOML file.
+    /// Merges non-None fields from `other` into `self`, ensuring UI saves do not clobber
+    /// backend-only fields such as `models_dir`, `layout_model`, or `max_depth`.
+    pub fn merge_patch(&mut self, other: AppConfig) {
+        if other.concurrency.is_some() {
+            self.concurrency = other.concurrency;
+        }
+        if other.max_depth.is_some() {
+            self.max_depth = other.max_depth;
+        }
+        if other.models_dir.is_some() {
+            self.models_dir = other.models_dir;
+        }
+        if other.layout_model.is_some() {
+            self.layout_model = other.layout_model;
+        }
+        if other.language.is_some() {
+            self.language = other.language;
+        }
+        if other.image_format.is_some() {
+            self.image_format = other.image_format;
+        }
+        if other.image_quality.is_some() {
+            self.image_quality = other.image_quality;
+        }
+        if other.save_table_images.is_some() {
+            self.save_table_images = other.save_table_images;
+        }
+        if other.extract_tables.is_some() {
+            self.extract_tables = other.extract_tables;
+        }
+        if other.embed_images_base64.is_some() {
+            self.embed_images_base64 = other.embed_images_base64;
+        }
+        if other.log_file.is_some() {
+            self.log_file = other.log_file;
+        }
+        if other.log_level.is_some() {
+            self.log_level = other.log_level;
+        }
+        if other.dom_extraction.is_some() {
+            self.dom_extraction = other.dom_extraction;
+        }
+        if other.embed.is_some() {
+            self.embed = other.embed;
+        }
+        if other.output_dir.is_some() {
+            self.output_dir = other.output_dir;
+        }
+        if other.academic_structure.is_some() {
+            self.academic_structure = other.academic_structure;
+        }
+        if other.device.is_some() {
+            self.device = other.device;
+        }
+        if other.allow_degraded.is_some() {
+            self.allow_degraded = other.allow_degraded;
+        }
+        if other.debug_layout.is_some() {
+            self.debug_layout = other.debug_layout;
+        }
+    }
+
+    /// Serializes and writes configuration to a TOML file, ensuring parent directory exists.
     pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory at {}", parent.display())
+            })?;
+        }
         let content =
             toml::to_string_pretty(self).context("Failed to serialize AppConfig to TOML format")?;
         fs::write(path, content)
@@ -174,5 +347,40 @@ mod tests {
         assert!(config.is_err(), "Unknown fields must be rejected");
         let err_msg = config.unwrap_err().to_string();
         assert!(err_msg.contains("unknown field `unrecognized_bogus_key`"));
+    }
+
+    #[test]
+    fn test_config_merge_patch_preserves_unmanaged_fields() {
+        let mut original = AppConfig {
+            models_dir: Some(PathBuf::from("E:/custom/models")),
+            max_depth: Some(5),
+            layout_model: Some(PathBuf::from("E:/custom/layout.onnx")),
+            language: Some("en".to_string()),
+            image_quality: Some(85),
+            save_table_images: Some(true),
+            ..Default::default()
+        };
+
+        let patch = AppConfig {
+            language: Some("te".to_string()),
+            image_quality: Some(95),
+            save_table_images: Some(false),
+            ..Default::default()
+        };
+
+        original.merge_patch(patch);
+
+        // Updated fields
+        assert_eq!(original.language.as_deref(), Some("te"));
+        assert_eq!(original.image_quality, Some(95));
+        assert_eq!(original.save_table_images, Some(false));
+
+        // Preserved unmanaged backend fields
+        assert_eq!(original.models_dir, Some(PathBuf::from("E:/custom/models")));
+        assert_eq!(original.max_depth, Some(5));
+        assert_eq!(
+            original.layout_model,
+            Some(PathBuf::from("E:/custom/layout.onnx"))
+        );
     }
 }

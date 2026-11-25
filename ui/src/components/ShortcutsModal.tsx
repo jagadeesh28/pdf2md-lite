@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { X, Keyboard } from 'lucide-react';
 
 interface ShortcutsModalProps {
@@ -20,16 +20,33 @@ const shortcuts = [
 ];
 
 export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ onClose }) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shortcuts-modal-title"
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
         {/* Header */}
         <div className="bg-gray-850 px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+          <h2 id="shortcuts-modal-title" className="text-sm font-bold text-white flex items-center space-x-2">
             <Keyboard className="w-4 h-4 text-purple-400" />
             <span>Keyboard Shortcuts</span>
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close shortcuts dialog"
+            className="text-gray-400 hover:text-white transition-colors"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

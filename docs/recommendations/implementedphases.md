@@ -490,4 +490,26 @@ flowchart TD
 - Atomic file stability probe in directory watcher preventing premature reads of incomplete PDFs.
 - RAII `RunController` state machine and `execute_isolated_document` panic containment.
 
+---
+
+### Phase 13: UI/Web Parity, Contract Schema Synchronization & Accessibility
+
+#### Milestone 13.1: Configuration Patch Preservation & Capability Discovery
+- Implemented `AppConfig::merge_patch` preserving unmanaged backend fields (`models_dir`, `max_depth`, `layout_model`) during UI settings updates.
+- Added `LanguageCapability`, `CapabilitiesResponse`, and `get_capabilities` detecting installed OCR models, execution device, and DOM extraction modes.
+- Added `save_table_images` and `device` (`auto`, `cpu`, `directml`) fields with complete TypeScript parity.
+
+#### Milestone 13.2: Axum Web Daemon & Tauri Desktop IPC Parity
+- Added `GET /api/note?path=...` and `GET /api/asset?path=...` with strict `PathPolicy` containment and MIME resolution.
+- Added `GET /api/capabilities` HTTP route and `get_capabilities` Tauri command.
+- Hardened `update_config` to merge with existing settings and persist to user AppData.
+- Updated `readMarkdown(path)` with automatic fallback to `/api/note` in browser mode and added `getAssetUrl(path)`.
+
+#### Milestone 13.3: Accessibility, Synchronized Split-Pane & Browser Mode Hardening
+- Added dialog accessibility (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`) and global Escape key dismissal to all modals.
+- Implemented two-way synchronized scrolling between Markdown anchor demarcations (`#page-anchor-N`) and page preview thumbnails.
+- Added destructive operation confirmation dialogs and expanded dry-run modal to display a full scrollable table.
+- Implemented browser-mode file/folder drag-and-drop and input streaming via `uploadFile` to the server upload sandbox.
+
+
 

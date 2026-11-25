@@ -28,6 +28,7 @@ import {
   openFolderInExplorer,
   pickFiles,
   pickFolder,
+  readMarkdown,
 } from './bridge/api';
 
 function formatVaultEta(seconds?: number): string {
@@ -335,6 +336,15 @@ export const App: React.FC = () => {
   };
 
   const handleFormatNotes = async () => {
+    if (
+      typeof window !== 'undefined' &&
+      window.confirm &&
+      !window.confirm(
+        `Format notes in '${outputDir}'?\n\nA safety backup will be created under .pdfmd-backup/ before modifying notes.`
+      )
+    ) {
+      return;
+    }
     addLog('info', `Formatting notes across output vault '${outputDir}'...`);
     setVaultProgress({
       task: 'metadata_formatting',
@@ -374,6 +384,15 @@ export const App: React.FC = () => {
   };
 
   const handleFixLatex = async () => {
+    if (
+      typeof window !== 'undefined' &&
+      window.confirm &&
+      !window.confirm(
+        `Sanitize LaTeX delimiters across notes in '${outputDir}'?\n\nA safety backup will be created under .pdfmd-backup/ before modifying notes.`
+      )
+    ) {
+      return;
+    }
     addLog('info', `Sanitizing LaTeX delimiters across notes in '${outputDir}'...`);
     setVaultProgress({
       task: 'metadata_formatting',
@@ -409,6 +428,15 @@ export const App: React.FC = () => {
   };
 
   const handleConvertPngToJpeg = async () => {
+    if (
+      typeof window !== 'undefined' &&
+      window.confirm &&
+      !window.confirm(
+        `Convert PNG figure crops to JPEG in '${outputDir}'?\n\nOriginal images will be replaced in-place.`
+      )
+    ) {
+      return;
+    }
     addLog('info', `Migrating vault PNG images in '${outputDir}' to JPEG format...`);
     setVaultProgress({
       task: 'image_migration',
@@ -449,6 +477,15 @@ export const App: React.FC = () => {
   };
 
   const handleEmbedVault = async () => {
+    if (
+      typeof window !== 'undefined' &&
+      window.confirm &&
+      !window.confirm(
+        `Generate semantic .embeddings.jsonl sidecars for vault notes in '${outputDir}'?`
+      )
+    ) {
+      return;
+    }
     addLog('info', `Generating semantic .embeddings.jsonl sidecars across vault in '${outputDir}'...`);
     setActionNotice({
       type: 'info',
@@ -497,12 +534,47 @@ export const App: React.FC = () => {
           }
         }}
         onWatchDirectory={() => {
-          addLog('info', 'Directory watch mode active for input directory.');
+          setActionNotice({
+            type: 'info',
+            title: 'Directory Watch Mode',
+            message:
+              'Continuous directory watching with debounced auto-conversion is available via CLI: run `pdfmd-lite --watch <input-dir> <output-dir>`. Real-time file drops in the UI are monitored automatically.',
+          });
+          addLog(
+            'info',
+            'Directory watch mode: run `pdfmd-lite --watch <input> <output>` in terminal.'
+          );
         }}
         onOpenVault={handleOpenOutputDir}
-        onExportMarkdown={() => {
-          if (inspectedJob) {
-            addLog('info', `Exported ${inspectedJob.fileName} markdown.`);
+        onExportMarkdown={async () => {
+          const target = inspectedJob || jobs.find((j) => j.status === 'completed');
+          if (!target) {
+            setActionNotice({
+              type: 'info',
+              title: 'Export Markdown',
+              message: 'Please inspect or complete a document conversion before exporting.',
+            });
+            return;
+          }
+          let content = target.markdownContent;
+          if (!content && target.outputMarkdownPath) {
+            content = await readMarkdown(target.outputMarkdownPath);
+          }
+          if (content) {
+            const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${target.fileName.replace(/\.pdf$/i, '')}.md`;
+            link.click();
+            URL.revokeObjectURL(url);
+            addLog('info', `Exported "${target.fileName}" to local Markdown file.`);
+          } else {
+            setActionNotice({
+              type: 'error',
+              title: 'Export Failed',
+              message: `No converted Markdown content found for "${target.fileName}".`,
+            });
           }
         }}
         onStartConversion={() => handleStartConversion(true)}
@@ -587,20 +659,94 @@ export const App: React.FC = () => {
 
       {/* Dry Run Preview Dialog */}
       {dryRunReport && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg p-5 space-y-4 text-xs">
-            <h3 className="text-sm font-bold text-white">Conversion Dry-Run Report</h3>
-            <div className="bg-gray-800/80 rounded p-3 space-y-1 font-mono text-[11px] text-gray-300">
-              <div>Total Documents: {dryRunReport.total_documents}</div>
-              <div>Total Pages: {dryRunReport.total_pages}</div>
-              <div>Estimated Latency: ~{dryRunReport.estimated_seconds} seconds</div>
-              <div>Worker Concurrency: {dryRunReport.concurrency_workers} threads</div>
-              <div>Projected Memory: ~{dryRunReport.estimated_memory_mb} MB</div>
-            </div>
-            <div className="flex justify-end">
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dryrun-modal-title"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setDryRunReport(null);
+          }}
+        >
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+              <h3 id="dryrun-modal-title" className="text-sm font-bold text-white">
+                Conversion Dry-Run Projection
+              </h3>
               <button
                 onClick={() => setDryRunReport(null)}
-                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded font-medium"
+                aria-label="Close dry run dialog"
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+              <div className="bg-gray-800/80 rounded p-2.5 border border-gray-700/60">
+                <span className="text-gray-400 block text-[10px]">DOCUMENTS</span>
+                <span className="text-white font-bold text-sm">{dryRunReport.total_documents}</span>
+              </div>
+              <div className="bg-gray-800/80 rounded p-2.5 border border-gray-700/60">
+                <span className="text-gray-400 block text-[10px]">TOTAL PAGES</span>
+                <span className="text-purple-400 font-bold text-sm">{dryRunReport.total_pages}</span>
+              </div>
+              <div className="bg-gray-800/80 rounded p-2.5 border border-gray-700/60">
+                <span className="text-gray-400 block text-[10px]">EST. LATENCY</span>
+                <span className="text-amber-300 font-bold text-sm">~{dryRunReport.estimated_seconds}s</span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto border border-gray-800 rounded-lg">
+              <table className="w-full text-left text-[11px]">
+                <thead className="bg-gray-800 text-gray-400 sticky top-0">
+                  <tr>
+                    <th className="p-2">Document</th>
+                    <th className="p-2 text-center">Pages</th>
+                    <th className="p-2">Projected Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800 text-gray-300 font-mono">
+                  {dryRunReport.documents && dryRunReport.documents.length > 0 ? (
+                    dryRunReport.documents.map((d, i) => (
+                      <tr key={i} className="hover:bg-gray-850">
+                        <td className="p-2 truncate max-w-xs" title={d.source_path}>
+                          {d.file_name}
+                        </td>
+                        <td className="p-2 text-center text-gray-400">{d.page_count}</td>
+                        <td className="p-2">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                              d.status === 'WOULD_CONVERT'
+                                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60'
+                                : d.status === 'WOULD_SKIP'
+                                ? 'bg-gray-800 text-gray-400 border border-gray-700'
+                                : 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                            }`}
+                          >
+                            {d.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="p-4 text-center text-gray-500">
+                        No individual document breakdowns available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+              <span className="text-[11px] font-mono text-gray-500">
+                Concurrency: {dryRunReport.concurrency_workers} workers • Memory: ~{dryRunReport.estimated_memory_mb} MB
+              </span>
+              <button
+                onClick={() => setDryRunReport(null)}
+                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded font-medium text-xs transition-colors"
               >
                 Close Report
               </button>

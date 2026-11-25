@@ -116,20 +116,40 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
     setIsDragging(false);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const files: string[] = [];
-    if (e.dataTransfer.files) {
-      for (let i = 0; i < e.dataTransfer.files.length; i++) {
-        const file = e.dataTransfer.files[i];
-        if (file.name.toLowerCase().endsWith('.pdf')) {
-          files.push((file as unknown as { path?: string }).path || file.name);
+    if (!e.dataTransfer.files) return;
+
+    const droppedFiles = Array.from(e.dataTransfer.files).filter((f) =>
+      f.name.toLowerCase().endsWith('.pdf')
+    );
+    if (droppedFiles.length === 0) return;
+
+    if (isTauri()) {
+      const paths = droppedFiles
+        .map((f) => (f as unknown as { path?: string }).path)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length > 0) {
+        onAddFiles(paths);
+      }
+    } else {
+      const uploadedPaths: string[] = [];
+      const errors: string[] = [];
+      for (const file of droppedFiles) {
+        try {
+          const storedPath = await uploadFile(file);
+          uploadedPaths.push(storedPath);
+        } catch (err) {
+          errors.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-    }
-    if (files.length > 0) {
-      onAddFiles(files);
+      if (errors.length > 0) {
+        alert(`Failed to upload ${errors.length} file(s):\n${errors.join('\n')}`);
+      }
+      if (uploadedPaths.length > 0) {
+        onAddFiles(uploadedPaths);
+      }
     }
   };
 
@@ -179,13 +199,17 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
                   if (target.files) {
                     const files = Array.from(target.files);
                     const paths: string[] = [];
+                    const errors: string[] = [];
                     for (const f of files) {
                       try {
                         const uploaded = await uploadFile(f);
                         paths.push(uploaded);
-                      } catch {
-                        paths.push(f.name);
+                      } catch (err) {
+                        errors.push(`${f.name}: ${err instanceof Error ? err.message : String(err)}`);
                       }
+                    }
+                    if (errors.length > 0) {
+                      alert(`Upload failed for ${errors.length} file(s):\n${errors.join('\n')}`);
                     }
                     if (paths.length > 0) onAddFiles(paths);
                   }
@@ -210,13 +234,26 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({
                 const input = document.createElement('input');
                 input.type = 'file';
                 input.webkitdirectory = true;
-                input.onchange = (e) => {
+                input.onchange = async (e) => {
                   const target = e.target as HTMLInputElement;
                   if (target.files) {
-                    const files = Array.from(target.files)
-                      .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-                      .map((f) => (f as unknown as { path?: string }).path || f.name);
-                    if (files.length > 0) onAddFiles(files);
+                    const files = Array.from(target.files).filter((f) =>
+                      f.name.toLowerCase().endsWith('.pdf')
+                    );
+                    const uploadedPaths: string[] = [];
+                    const errors: string[] = [];
+                    for (const f of files) {
+                      try {
+                        const path = await uploadFile(f);
+                        uploadedPaths.push(path);
+                      } catch (err) {
+                        errors.push(`${f.name}: ${err instanceof Error ? err.message : String(err)}`);
+                      }
+                    }
+                    if (errors.length > 0) {
+                      alert(`Folder upload errors:\n${errors.join('\n')}`);
+                    }
+                    if (uploadedPaths.length > 0) onAddFiles(uploadedPaths);
                   }
                 };
                 input.click();
@@ -732,6 +769,24 @@ const JobItemCard: React.FC<JobItemCardProps> = ({ job, onRemove, onInspect }) =
           {job.totalPages !== undefined && (
             <span className="text-xs text-gray-400 font-mono">
               {job.status === 'completed' ? job.totalPages : (job.completedPages ?? 0)} / {job.totalPages} pgs
+            </span>
+          )}
+
+          {job.status === 'completed' && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-indigo-950/70 text-indigo-300 border border-indigo-800/50"
+              title="Extraction pipeline used"
+            >
+              {job.pipeline ? job.pipeline.toUpperCase() : 'HYBRID DOM'}
+            </span>
+          )}
+
+          {job.warnings !== undefined && job.warnings > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-950/80 text-amber-300 border border-amber-800/60"
+              title={`${job.warnings} degradation warning(s)`}
+            >
+              {job.warnings} {job.warnings === 1 ? 'warning' : 'warnings'}
             </span>
           )}
 

@@ -27,7 +27,9 @@ pub use batch::{
     process_pdf_directory_with_image_options, sanitize_short_slug, sanitize_windows_device_name,
 };
 pub use concurrency::{resolve_concurrency, resolve_session_pool_capacity};
-pub use config::{AppConfig, DeviceTarget};
+pub use config::{
+    AppConfig, CapabilitiesResponse, DeviceTarget, LanguageCapability, get_capabilities,
+};
 pub use controller::{
     RunConflictError, RunController, RunGuard, RunState, execute_isolated_document,
 };

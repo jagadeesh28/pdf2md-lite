@@ -29,6 +29,14 @@ export const ModelsModal: React.FC<ModelsModalProps> = ({ onClose }) => {
     loadModels();
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const handleDownload = async () => {
     setDownloading(true);
     setResultMessage(null);
@@ -49,15 +57,27 @@ export const ModelsModal: React.FC<ModelsModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="models-modal-title"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="bg-gray-850 px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+          <h2 id="models-modal-title" className="text-sm font-bold text-white flex items-center space-x-2">
             <Cpu className="w-4 h-4 text-purple-400" />
             <span>Offline Neural Model Registry & Integrity Diagnostics</span>
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close model diagnostics dialog"
+            className="text-gray-400 hover:text-white transition-colors"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

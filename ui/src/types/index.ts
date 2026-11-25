@@ -12,6 +12,8 @@ export interface ConversionJob {
   outputMarkdownPath?: string;
   markdownContent?: string;
   elapsedSec?: number;
+  pipeline?: string;
+  warnings?: number;
   /** Marks per-file result rows created from a folder batch (not directly convertible). */
   isResult?: boolean;
   pages?: {
@@ -73,11 +75,27 @@ export interface AppConfigData {
   embed_images_base64: boolean;
   extract_tables: boolean;
   table_crops: boolean;
+  save_table_images?: boolean;
   concurrency: number | null; // null for auto
   embed: boolean;
   log_level: 'trace' | 'debug' | 'info' | 'warn' | 'error';
   log_file: string | null;
   output_dir?: string | null;
+  device?: 'auto' | 'cpu' | 'directml';
+}
+
+export interface LanguageCapability {
+  code: string;
+  name: string;
+  script: string;
+  available: boolean;
+}
+
+export interface CapabilitiesResponse {
+  languages: LanguageCapability[];
+  active_device: string;
+  dom_extraction_modes: string[];
+  is_tauri: boolean;
 }
 
 export interface DryRunFileReport {

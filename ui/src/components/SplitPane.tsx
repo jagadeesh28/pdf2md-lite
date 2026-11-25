@@ -28,6 +28,7 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
   const [markdownContent, setMarkdownContent] = useState<string | null>(null);
   const [loadingMarkdown, setLoadingMarkdown] = useState<boolean>(false);
   const markdownPaneRef = useRef<HTMLDivElement>(null);
+  const isScrollingFromCode = useRef<boolean>(false);
 
   useEffect(() => {
     if (!job) return;
@@ -142,7 +143,8 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
   };
 
   const handleExportMarkdown = () => {
-    const blob = new Blob([job.markdownContent || activePage.markdown], {
+    const content = resolvedMarkdown || activePage.markdown;
+    const blob = new Blob([content], {
       type: 'text/markdown;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
@@ -151,6 +153,39 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
     link.download = `${job.fileName.replace(/\.pdf$/i, '')}.md`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    if (markdownPaneRef.current) {
+      const anchor = markdownPaneRef.current.querySelector(`#page-anchor-${newPage}`);
+      if (anchor) {
+        isScrollingFromCode.current = true;
+        anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+          isScrollingFromCode.current = false;
+        }, 400);
+      }
+    }
+  };
+
+  const handleMarkdownScroll = () => {
+    if (isScrollingFromCode.current || !markdownPaneRef.current) return;
+    const container = markdownPaneRef.current;
+    const containerTop = container.scrollTop;
+
+    for (const p of pages) {
+      const el = container.querySelector<HTMLElement>(`#page-anchor-${p.pageNumber}`);
+      if (el) {
+        const offsetTop = el.offsetTop - container.offsetTop;
+        if (containerTop >= offsetTop - 60 && containerTop < offsetTop + el.offsetHeight) {
+          if (currentPage !== p.pageNumber) {
+            setCurrentPage(p.pageNumber);
+          }
+          break;
+        }
+      }
+    }
   };
 
   return (
@@ -174,7 +209,7 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
           <div className="flex items-center space-x-1 bg-gray-900/80 px-2 py-1 rounded border border-gray-700">
             <button
               disabled={currentPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
               className="text-gray-400 hover:text-white disabled:opacity-30 transition-colors p-0.5"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -184,7 +219,7 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
             </span>
             <button
               disabled={currentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
               className="text-gray-400 hover:text-white disabled:opacity-30 transition-colors p-0.5"
             >
               <ChevronRight className="w-4 h-4" />
@@ -272,17 +307,35 @@ export const SplitPane: React.FC<SplitPaneProps> = ({ job, onBackToQueue }) => {
             <span className="font-mono text-[10px] text-purple-400">LaTeX & Tables</span>
           </div>
 
-          <div ref={markdownPaneRef} className="flex-1 overflow-auto">
+          <div
+            ref={markdownPaneRef}
+            onScroll={handleMarkdownScroll}
+            className="flex-1 overflow-auto"
+          >
             {loadingMarkdown ? (
               <div className="h-full flex flex-col items-center justify-center text-gray-500 p-6">
                 <Loader2 className="w-8 h-8 text-purple-500 animate-spin mb-2" />
                 <p className="text-xs">Loading generated Markdown...</p>
               </div>
             ) : viewMode === 'rendered' ? (
-              <MarkdownViewer content={activePage.markdown} />
+              <div className="p-4 space-y-6">
+                {pages.map((p) => (
+                  <div
+                    key={p.pageNumber}
+                    id={`page-anchor-${p.pageNumber}`}
+                    className="relative border-b border-gray-800 pb-6 last:border-b-0"
+                  >
+                    <div className="sticky top-0 bg-gray-900/90 backdrop-blur-sm py-1 mb-2 text-[10px] font-mono text-purple-400 font-semibold border-b border-gray-800/60 z-10 flex items-center justify-between">
+                      <span>PAGE {p.pageNumber}</span>
+                      <span className="text-gray-500 text-[9px]">Markdown Demarcation</span>
+                    </div>
+                    <MarkdownViewer content={p.markdown} />
+                  </div>
+                ))}
+              </div>
             ) : (
               <pre className="p-4 text-xs font-mono text-gray-300 whitespace-pre-wrap select-text leading-relaxed">
-                {activePage.markdown}
+                {resolvedMarkdown || activePage.markdown}
               </pre>
             )}
           </div>
