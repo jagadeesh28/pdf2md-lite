@@ -33,6 +33,10 @@ pub struct PlannedDocument {
 pub enum DesktopProgressEvent {
     #[serde(rename = "doc_start")]
     DocStart {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         #[serde(rename = "totalPages")]
@@ -42,6 +46,10 @@ pub enum DesktopProgressEvent {
     },
     #[serde(rename = "page_complete")]
     PageComplete {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         page: usize,
@@ -58,6 +66,10 @@ pub enum DesktopProgressEvent {
     },
     #[serde(rename = "doc_complete")]
     DocComplete {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         status: String,
@@ -68,9 +80,18 @@ pub enum DesktopProgressEvent {
         output_path: Option<String>,
     },
     #[serde(rename = "log")]
-    Log { level: String, message: String },
+    Log {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
+        level: String,
+        message: String,
+    },
     #[serde(rename = "batch_summary")]
     BatchSummary {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
         completed: usize,
         errors: usize,
         #[serde(rename = "elapsedSec", skip_serializing_if = "Option::is_none")]
@@ -105,10 +126,11 @@ pub struct BatchProgressTrackerState {
 pub struct TauriProgressEmitter {
     app: tauri::AppHandle,
     state: Mutex<BatchProgressTrackerState>,
+    run_id: Option<String>,
 }
 
 impl TauriProgressEmitter {
-    pub fn new(app: tauri::AppHandle, total_pages: usize) -> Self {
+    pub fn new(app: tauri::AppHandle, total_pages: usize, run_id: Option<String>) -> Self {
         Self {
             app,
             state: Mutex::new(BatchProgressTrackerState {
@@ -117,6 +139,7 @@ impl TauriProgressEmitter {
                 completed_pages: 0,
                 rolling_history: VecDeque::with_capacity(64),
             }),
+            run_id,
         }
     }
 }
@@ -124,13 +147,15 @@ impl TauriProgressEmitter {
 impl ProgressEmitter for TauriProgressEmitter {
     fn on_document_start(&self, doc_slug: &str, total_pages: usize) {
         let initial_eta = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             let remaining_pages = state.total_pages.saturating_sub(state.completed_pages);
             (remaining_pages.max(total_pages).max(1) as f32) * 1.8
         };
         let _ = self.app.emit(
             "conversion-progress",
             DesktopProgressEvent::DocStart {
+                run_id: self.run_id.clone(),
+                job_id: Some(doc_slug.to_string()),
                 doc_slug: doc_slug.to_string(),
                 total_pages,
                 eta_sec: Some(initial_eta),
@@ -140,7 +165,7 @@ impl ProgressEmitter for TauriProgressEmitter {
 
     fn on_page_complete(&self, doc_slug: &str, page_num: usize, total_pages: usize) {
         let (pages_per_sec, eta_sec, batch_completed, batch_total) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             state.completed_pages += 1;
             let now = Instant::now();
             state.rolling_history.push_back((now, 1));
@@ -155,7 +180,7 @@ impl ProgressEmitter for TauriProgressEmitter {
 
             let elapsed_total = state.start_time.elapsed().as_secs_f32();
             let throughput = if state.rolling_history.len() >= 2 {
-                let first_t = state.rolling_history.front().unwrap().0;
+                let first_t = state.rolling_history.front().map(|f| f.0).unwrap_or(now);
                 let dt = now.duration_since(first_t).as_secs_f32();
                 let pages: usize = state.rolling_history.iter().map(|(_, p)| *p).sum();
                 if dt > 0.05 && pages > 1 {
@@ -195,6 +220,8 @@ impl ProgressEmitter for TauriProgressEmitter {
         let _ = self.app.emit(
             "conversion-progress",
             DesktopProgressEvent::PageComplete {
+                run_id: self.run_id.clone(),
+                job_id: Some(doc_slug.to_string()),
                 doc_slug: doc_slug.to_string(),
                 page: page_num,
                 total_pages,
@@ -208,12 +235,14 @@ impl ProgressEmitter for TauriProgressEmitter {
 
     fn on_document_complete(&self, doc_slug: &str, status: &str) {
         let elapsed = {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             state.start_time.elapsed().as_secs_f32()
         };
         let _ = self.app.emit(
             "conversion-progress",
             DesktopProgressEvent::DocComplete {
+                run_id: self.run_id.clone(),
+                job_id: Some(doc_slug.to_string()),
                 doc_slug: doc_slug.to_string(),
                 status: status.to_string(),
                 message: None,
@@ -227,6 +256,8 @@ impl ProgressEmitter for TauriProgressEmitter {
         let _ = self.app.emit(
             "conversion-progress",
             DesktopProgressEvent::Log {
+                run_id: self.run_id.clone(),
+                job_id: None,
                 level: level.to_string(),
                 message: message.to_string(),
             },
@@ -234,11 +265,12 @@ impl ProgressEmitter for TauriProgressEmitter {
     }
 
     fn is_cancelled(&self) -> bool {
-        CANCEL_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+        RUN_CONTROLLER.is_cancelled()
     }
 }
 
-static CANCEL_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RUN_CONTROLLER: std::sync::LazyLock<pdfmd_lite::RunController> =
+    std::sync::LazyLock::new(pdfmd_lite::RunController::new);
 
 fn resolve_image_options(config: &AppConfig) -> ImageOptions {
     let dom_mode = match config.dom_extraction.as_deref() {
@@ -425,9 +457,14 @@ async fn start_conversion(
     output_dir: String,
     config: Option<AppConfig>,
     resume: Option<bool>,
+    run_id: Option<String>,
 ) -> Result<(), String> {
+    let run_guard = RUN_CONTROLLER
+        .start_run(run_id.clone())
+        .map_err(|e| e.to_string())?;
     let app_handle = app.clone();
     tokio::task::spawn_blocking(move || {
+        let _guard = run_guard;
         let resume = resume.unwrap_or(true);
         let out_dir = Path::new(&output_dir);
         let config = config.unwrap_or_default();
@@ -464,11 +501,14 @@ async fn start_conversion(
         let tracker = std::sync::Arc::new(TauriProgressEmitter::new(
             app_handle.clone(),
             total_batch_pages,
+            run_id.clone(),
         ));
 
         let _ = app_handle.emit(
             "conversion-progress",
             DesktopProgressEvent::Log {
+                run_id: run_id.clone(),
+                job_id: None,
                 level: "info".to_string(),
                 message: format!(
                     "Processing {} document(s) (total ~{} pages)...",
@@ -483,160 +523,161 @@ async fn start_conversion(
         let mut completed_documents: Vec<PlannedDocument> = Vec::new();
         let batch_start = Instant::now();
 
-        CANCEL_REQUESTED.store(false, std::sync::atomic::Ordering::SeqCst);
-        let run_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            for file in &files {
-                if CANCEL_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
-                    let _ = app_handle.emit(
-                        "conversion-progress",
-                        DesktopProgressEvent::Log {
-                            level: "warn".to_string(),
-                            message: "Batch conversion halted due to cancellation request."
-                                .to_string(),
-                        },
-                    );
-                    break;
-                }
-                let path_opt = resolve_document_path(file);
-                let path_ref = path_opt.as_deref().unwrap_or_else(|| Path::new(file));
-                let raw_slug = path_ref
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "document".to_string());
-                let slug = pdfmd_lite::batch::sanitize_short_slug(&raw_slug);
+        for file in &files {
+            if RUN_CONTROLLER.is_cancelled() {
+                let _ = app_handle.emit(
+                    "conversion-progress",
+                    DesktopProgressEvent::Log {
+                        run_id: run_id.clone(),
+                        job_id: None,
+                        level: "warn".to_string(),
+                        message: "Batch conversion halted due to cancellation request.".to_string(),
+                    },
+                );
+                break;
+            }
+            let path_opt = resolve_document_path(file);
+            let path_ref = path_opt.as_deref().unwrap_or_else(|| Path::new(file));
+            let raw_slug = path_ref
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "document".to_string());
+            let slug = pdfmd_lite::batch::sanitize_short_slug(&raw_slug);
 
-                match path_opt {
-                    Some(ref path) if path.is_file() => {
-                        let total_pages = get_pdf_page_count(path).unwrap_or(1);
-                        tracker.on_document_start(&slug, total_pages);
-                        let target_md = if out_dir.is_dir() || out_dir.extension().is_none() {
-                            out_dir.join(format!("{slug}.md"))
-                        } else {
-                            out_dir.to_path_buf()
-                        };
-                        let doc_start = Instant::now();
-                        match pdfmd_lite::process_pdf_full_with_emitter(
-                            path,
-                            &target_md,
+            match path_opt {
+                Some(ref path) if path.is_file() => {
+                    let total_pages = get_pdf_page_count(path).unwrap_or(1);
+                    tracker.on_document_start(&slug, total_pages);
+                    let target_md = if out_dir.is_dir() || out_dir.extension().is_none() {
+                        out_dir.join(format!("{slug}.md"))
+                    } else {
+                        out_dir.to_path_buf()
+                    };
+                    let doc_start = Instant::now();
+                    let script_copy = script;
+                    let image_opts_copy = image_opts.clone();
+                    let tracker_copy = tracker.clone();
+                    let target_md_copy = target_md.clone();
+                    let path_copy = path.clone();
+                    let concurrency = config.concurrency;
+
+                    let doc_res = pdfmd_lite::execute_isolated_document(move || {
+                        pdfmd_lite::process_pdf_full_with_emitter(
+                            &path_copy,
+                            &target_md_copy,
                             1,
                             total_pages,
-                            config.concurrency,
+                            concurrency,
                             None,
-                            script,
-                            image_opts.clone(),
+                            script_copy,
+                            image_opts_copy,
                             embed,
-                            Some(tracker.as_ref()),
-                        ) {
-                            Ok(_) => {
-                                completed += 1;
-                                let doc_elapsed = doc_start.elapsed().as_secs_f32();
-                                let _ = app_handle.emit(
-                                    "conversion-progress",
-                                    DesktopProgressEvent::DocComplete {
-                                        doc_slug: slug.clone(),
-                                        status: "completed".to_string(),
-                                        message: None,
-                                        elapsed_sec: Some(doc_elapsed),
-                                        output_path: Some(target_md.to_string_lossy().to_string()),
-                                    },
-                                );
-                            }
-                            Err(e) => {
-                                errors += 1;
-                                let _ = app_handle.emit(
-                                    "conversion-progress",
-                                    DesktopProgressEvent::DocComplete {
-                                        doc_slug: slug,
-                                        status: "error".to_string(),
-                                        message: Some(e.to_string()),
-                                        elapsed_sec: Some(doc_start.elapsed().as_secs_f32()),
-                                        output_path: None,
-                                    },
-                                );
-                            }
+                            Some(tracker_copy.as_ref()),
+                        )
+                    });
+
+                    match doc_res {
+                        Ok(_) => {
+                            completed += 1;
+                            let doc_elapsed = doc_start.elapsed().as_secs_f32();
+                            let _ = app_handle.emit(
+                                "conversion-progress",
+                                DesktopProgressEvent::DocComplete {
+                                    run_id: run_id.clone(),
+                                    job_id: Some(slug.clone()),
+                                    doc_slug: slug.clone(),
+                                    status: "completed".to_string(),
+                                    message: None,
+                                    elapsed_sec: Some(doc_elapsed),
+                                    output_path: Some(target_md.to_string_lossy().to_string()),
+                                },
+                            );
                         }
-                    }
-                    Some(ref path) if path.is_dir() => {
-                        match pdfmd_lite::process_pdf_directory_all_with_emitter(
-                            path,
-                            out_dir,
-                            None,
-                            config.max_depth.unwrap_or(3),
-                            config.concurrency,
-                            script,
-                            true,
-                            resume,
-                            image_opts.clone(),
-                            embed,
-                            Some(tracker.clone()),
-                        ) {
-                            Ok(res) => {
-                                completed += res.succeeded;
-                                errors += res.failed.len();
-                                completed_documents.extend(plan_directory_documents(
-                                    path,
-                                    out_dir,
-                                    config.max_depth.unwrap_or(3),
-                                    config.concurrency,
-                                    script,
-                                    resume,
-                                    image_opts.clone(),
-                                    embed,
-                                ));
-                            }
-                            Err(e) => {
-                                errors += 1;
-                                let _ = app_handle.emit(
-                                    "conversion-progress",
-                                    DesktopProgressEvent::Log {
-                                        level: "error".to_string(),
-                                        message: format!("Directory batch error: {e}"),
-                                    },
-                                );
-                            }
+                        Err(e) => {
+                            errors += 1;
+                            let _ = app_handle.emit(
+                                "conversion-progress",
+                                DesktopProgressEvent::DocComplete {
+                                    run_id: run_id.clone(),
+                                    job_id: Some(slug.clone()),
+                                    doc_slug: slug,
+                                    status: "error".to_string(),
+                                    message: Some(e.to_string()),
+                                    elapsed_sec: Some(doc_start.elapsed().as_secs_f32()),
+                                    output_path: None,
+                                },
+                            );
                         }
-                    }
-                    _ => {
-                        errors += 1;
-                        let _ = app_handle.emit(
-                            "conversion-progress",
-                            DesktopProgressEvent::DocComplete {
-                                doc_slug: slug,
-                                status: "error".to_string(),
-                                message: Some(format!(
-                                    "Document file or directory not found: '{file}'"
-                                )),
-                                elapsed_sec: None,
-                                output_path: None,
-                            },
-                        );
                     }
                 }
+                Some(ref path) if path.is_dir() => {
+                    match pdfmd_lite::process_pdf_directory_all_with_emitter(
+                        path,
+                        out_dir,
+                        None,
+                        config.max_depth.unwrap_or(3),
+                        config.concurrency,
+                        script,
+                        true,
+                        resume,
+                        image_opts.clone(),
+                        embed,
+                        Some(tracker.clone()),
+                    ) {
+                        Ok(res) => {
+                            completed += res.succeeded;
+                            errors += res.failed.len();
+                            completed_documents.extend(plan_directory_documents(
+                                path,
+                                out_dir,
+                                config.max_depth.unwrap_or(3),
+                                config.concurrency,
+                                script,
+                                resume,
+                                image_opts.clone(),
+                                embed,
+                            ));
+                        }
+                        Err(e) => {
+                            errors += 1;
+                            let _ = app_handle.emit(
+                                "conversion-progress",
+                                DesktopProgressEvent::Log {
+                                    run_id: run_id.clone(),
+                                    job_id: None,
+                                    level: "error".to_string(),
+                                    message: format!("Directory batch error: {e}"),
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    errors += 1;
+                    let _ = app_handle.emit(
+                        "conversion-progress",
+                        DesktopProgressEvent::DocComplete {
+                            run_id: run_id.clone(),
+                            job_id: Some(slug.clone()),
+                            doc_slug: slug,
+                            status: "error".to_string(),
+                            message: Some(format!(
+                                "Document file or directory not found: '{file}'"
+                            )),
+                            elapsed_sec: None,
+                            output_path: None,
+                        },
+                    );
+                }
             }
-        }));
-
-        if let Err(panic_err) = run_result {
-            let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
-                (*s).to_string()
-            } else if let Some(s) = panic_err.downcast_ref::<String>() {
-                s.clone()
-            } else {
-                "Unknown panic during conversion".to_string()
-            };
-            let _ = app_handle.emit(
-                "conversion-progress",
-                DesktopProgressEvent::Log {
-                    level: "error".to_string(),
-                    message: format!("Conversion halted due to internal error: {msg}"),
-                },
-            );
-            errors += 1;
         }
 
         let batch_elapsed = batch_start.elapsed().as_secs_f32();
         let _ = app_handle.emit(
             "conversion-progress",
             DesktopProgressEvent::Log {
+                run_id: run_id.clone(),
+                job_id: None,
                 level: if errors == 0 {
                     "info".to_string()
                 } else {
@@ -655,6 +696,7 @@ async fn start_conversion(
         let _ = app_handle.emit(
             "conversion-progress",
             DesktopProgressEvent::BatchSummary {
+                run_id: run_id.clone(),
                 completed,
                 errors,
                 elapsed_sec: Some(batch_elapsed),
@@ -738,6 +780,8 @@ async fn format_notes(
                     let _ = emitter_handle.emit(
                         "conversion-progress",
                         DesktopProgressEvent::Log {
+                            run_id: None,
+                            job_id: None,
                             level: "info".to_string(),
                             message: format!(
                                 "Formatting notes: {}/{} ({:.1}%) - {:.1} notes/s, ETA: ~{:.0}s",
@@ -794,6 +838,8 @@ async fn convert_png_to_jpeg(
                     let _ = emitter_handle.emit(
                         "conversion-progress",
                         DesktopProgressEvent::Log {
+                            run_id: None,
+                            job_id: None,
                             level: "info".to_string(),
                             message: format!(
                                 "PNG migration: {}/{} images ({:.1}%) - {:.1} img/s, ETA: ~{:.0}s",
@@ -849,8 +895,13 @@ async fn download_models() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 fn cancel_conversion() -> Result<(), String> {
-    CANCEL_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    RUN_CONTROLLER.request_cancel();
     Ok(())
+}
+
+#[tauri::command]
+fn get_run_state() -> Result<pdfmd_lite::RunState, String> {
+    Ok(RUN_CONTROLLER.current_state().0)
 }
 
 #[tauri::command]
@@ -924,6 +975,7 @@ fn main() {
             dry_run,
             start_conversion,
             cancel_conversion,
+            get_run_state,
             get_page_preview,
             read_markdown,
             pick_files,

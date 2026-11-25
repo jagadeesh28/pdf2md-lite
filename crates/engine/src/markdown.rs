@@ -23,6 +23,7 @@ pub struct DocumentMetadata {
     pub pdfmd_status: Option<String>,
     pub conversion_fingerprint: Option<String>,
     pub generator: Option<String>,
+    pub conversion_report: Option<crate::report::ConversionReportFrontmatter>,
     pub tags: Vec<String>,
     pub custom_properties: std::collections::BTreeMap<String, Vec<String>>,
 }
@@ -107,6 +108,20 @@ impl DocumentMetadata {
                     yaml.push_str(&format!("  - \"{}\"\n", escape_yaml(val)));
                 }
             }
+        }
+
+        if let Some(ref report) = self.conversion_report {
+            yaml.push_str("conversion_report:\n");
+            yaml.push_str(&format!("  status: \"{}\"\n", escape_yaml(&report.status)));
+            yaml.push_str(&format!("  pages: {}\n", report.pages));
+            if let Some(dom) = report.hybrid_dom_pages {
+                yaml.push_str(&format!("  hybrid_dom_pages: {}\n", dom));
+            }
+            if let Some(ocr) = report.ocr_fallback_pages {
+                yaml.push_str(&format!("  ocr_fallback_pages: {}\n", ocr));
+            }
+            yaml.push_str(&format!("  warnings: {}\n", report.warnings));
+            yaml.push_str(&format!("  elapsed_sec: {:.2}\n", report.elapsed_sec));
         }
 
         if !self.tags.is_empty() {

@@ -428,3 +428,66 @@ flowchart TD
   - `cargo clippy --all-targets -- -D warnings`: Passed with 0 warnings.
   - `target\release\pdfmd-lite.exe --version`: Output `pdfmd-lite 0.7.2`.
 
+---
+
+### Phase 9: Server, Desktop, and Model Containment Hardening (Security & Offline Integrity)
+
+#### Milestone 9.1: Server Daemon Security Containment
+- Loopback by default with per-run cryptographically random bearer token.
+- Host and Origin header validation to reject DNS rebinding and cross-origin attacks.
+- Strict PathPolicy write sandbox containment (`/api/upload`, `/api/convert`, `/api/format-notes`).
+- Hardened IPC/web boundary and Content Security Policy (`withGlobalTauri: false`).
+
+#### Milestone 9.2: Offline Provisioning & Pure-Rust Embeddings
+- Segregated `tokenizers-support` from `online-provisioning` and `bundle-weights`.
+- Implemented pure-Rust offline embeddings engine with `tract-onnx` and token-aware chunking.
+- ModelLocator AppData directory fallback and `--install-models` offline bundle importer.
+- Manifest integrity verification with SHA-256 and expected byte lengths.
+
+---
+
+### Phase 10: Canonical Coordinates & Hierarchical Document IR
+
+#### Milestone 10.1: Normalized Coordinate Space & Single-Source-of-Truth Layout Mapping
+- Normalized PDF coordinates against `CropBox`, `MediaBox`, and `/Rotate` ($0^\circ, 90^\circ, 180^\circ, 270^\circ$).
+- Pixel-budget downscaling for huge canvas MediaBoxes ($14400 \times 14400\text{ pt}$).
+- Canonical top-left origin space for all downstream layout analysis and figure cropping.
+
+#### Milestone 10.2: Hierarchical Page IR & Provenance Spans
+- Introduced structured `Document -> Page -> Region -> Block -> Line -> Span` IR.
+- Preserved bounding box geometry and span-ID addressing across extraction passes.
+- Eliminated global string replacements, maintaining exact formula and table context.
+
+---
+
+### Phase 11: Reading Order & Typography Robustness
+
+#### Milestone 11.1: Recursive XY-Cut++ Ordering & Single-Column Guard
+- Implemented spatial XY-Cut++ algorithm with dynamic projection profile analysis.
+- Added single-column heuristics to eliminate phantom column splits on indented or dated content.
+- Bounded spatial clustering ensuring clean two-column reading flow.
+
+#### Milestone 11.2: Baseline-Aware Subscript/Superscript Clustering & CMap Hardening
+- Clustered baseline $\Delta y$ offsets allowing reduced font size spans to remain on the correct logical line.
+- Robust PostScript CMap subset font decoder handling multi-byte hex ranges and PUA mappings.
+
+---
+
+### Phase 12: Run Control, Deterministic Output Planning & Telemetry
+
+#### Milestone 12.1: Structured Telemetry & Exit Codes
+- Implemented `ConversionReport`, `ConversionStatus`, and `ConversionReportFrontmatter`.
+- Mapped explicit status exit codes (0 for clean, 2 for warnings/fallbacks, 1 for fatal errors).
+- Embedded compact conversion telemetry directly into Obsidian note YAML frontmatter.
+
+#### Milestone 12.2: Deterministic OutputPlanner & Windows Device Name Sanitization
+- Implemented collision-free `OutputPlanner` with 32-character short-slug limits.
+- Sanitized Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`) with underscore prefixing.
+- Disambiguated same-stem filenames across distinct subdirectories using 6-hex-char SHA-256 hashes.
+
+#### Milestone 12.3: Calibrated ETA, Watcher Readiness & Panic Isolation
+- Calibrated progress tracking using Exponential Moving Average per-page throughput.
+- Atomic file stability probe in directory watcher preventing premature reads of incomplete PDFs.
+- RAII `RunController` state machine and `execute_isolated_document` panic containment.
+
+

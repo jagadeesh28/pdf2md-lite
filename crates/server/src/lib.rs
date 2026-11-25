@@ -43,6 +43,10 @@ use tower_http::services::{ServeDir, ServeFile};
 pub enum ProgressEvent {
     #[serde(rename = "doc_start")]
     DocStart {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         #[serde(rename = "totalPages")]
@@ -52,6 +56,10 @@ pub enum ProgressEvent {
     },
     #[serde(rename = "page_complete")]
     PageComplete {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         page: usize,
@@ -68,6 +76,10 @@ pub enum ProgressEvent {
     },
     #[serde(rename = "doc_complete")]
     DocComplete {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
         #[serde(rename = "docSlug")]
         doc_slug: String,
         status: String,
@@ -78,9 +90,20 @@ pub enum ProgressEvent {
         output_path: Option<String>,
     },
     #[serde(rename = "log")]
-    Log { level: String, message: String },
+    Log {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+        #[serde(rename = "jobId", skip_serializing_if = "Option::is_none")]
+        job_id: Option<String>,
+        level: String,
+        message: String,
+    },
+    #[serde(rename = "resync_required")]
+    ResyncRequired { skipped: u64 },
     #[serde(rename = "batch_summary")]
     BatchSummary {
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
         completed: usize,
         errors: usize,
         #[serde(rename = "elapsedSec", skip_serializing_if = "Option::is_none")]
@@ -152,6 +175,7 @@ pub struct BroadcastProgressEmitter {
     tx: broadcast::Sender<ProgressEvent>,
     state: Mutex<ServerProgressState>,
     cancel_flag: Arc<AtomicBool>,
+    run_id: Option<String>,
 }
 
 impl BroadcastProgressEmitter {
@@ -159,6 +183,7 @@ impl BroadcastProgressEmitter {
         tx: broadcast::Sender<ProgressEvent>,
         total_pages: usize,
         cancel_flag: Arc<AtomicBool>,
+        run_id: Option<String>,
     ) -> Self {
         Self {
             tx,
@@ -169,6 +194,7 @@ impl BroadcastProgressEmitter {
                 rolling_history: VecDeque::with_capacity(64),
             }),
             cancel_flag,
+            run_id,
         }
     }
 }
@@ -181,6 +207,8 @@ impl ProgressEmitter for BroadcastProgressEmitter {
             (remaining_pages.max(total_pages).max(1) as f32) * 1.8
         };
         let _ = self.tx.send(ProgressEvent::DocStart {
+            run_id: self.run_id.clone(),
+            job_id: Some(doc_slug.to_string()),
             doc_slug: doc_slug.to_string(),
             total_pages,
             eta_sec: Some(initial_eta),
@@ -244,6 +272,8 @@ impl ProgressEmitter for BroadcastProgressEmitter {
         };
 
         let _ = self.tx.send(ProgressEvent::PageComplete {
+            run_id: self.run_id.clone(),
+            job_id: Some(doc_slug.to_string()),
             doc_slug: doc_slug.to_string(),
             page: page_num,
             total_pages,
@@ -260,6 +290,8 @@ impl ProgressEmitter for BroadcastProgressEmitter {
             state.start_time.elapsed().as_secs_f32()
         };
         let _ = self.tx.send(ProgressEvent::DocComplete {
+            run_id: self.run_id.clone(),
+            job_id: Some(doc_slug.to_string()),
             doc_slug: doc_slug.to_string(),
             status: status.to_string(),
             message: None,
@@ -270,6 +302,8 @@ impl ProgressEmitter for BroadcastProgressEmitter {
 
     fn on_message(&self, level: &str, message: &str) {
         let _ = self.tx.send(ProgressEvent::Log {
+            run_id: self.run_id.clone(),
+            job_id: None,
             level: level.to_string(),
             message: message.to_string(),
         });
@@ -284,13 +318,23 @@ impl ProgressEmitter for BroadcastProgressEmitter {
 #[derive(Clone)]
 pub struct AppState {
     pub event_tx: broadcast::Sender<ProgressEvent>,
-    pub is_running: Arc<AtomicBool>,
-    pub cancel_requested: Arc<AtomicBool>,
+    pub controller: pdfmd_lite::RunController,
     pub preview_cache: Arc<Mutex<PagePreviewCache>>,
     pub auth_token: String,
     pub allow_remote: bool,
     pub path_policy: Arc<PathPolicy>,
     pub upload_dir: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunStateResponse {
+    pub state: &'static str,
+    #[serde(rename = "runId")]
+    pub run_id: Option<String>,
+    #[serde(rename = "isRunning")]
+    pub is_running: bool,
+    #[serde(rename = "cancelRequested")]
+    pub cancel_requested: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,6 +352,8 @@ pub struct ConvertRequest {
     pub output_dir: String,
     pub config: Option<AppConfig>,
     pub resume: Option<bool>,
+    #[serde(rename = "runId")]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +517,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/page-preview", get(page_preview_handler))
         .route("/cancel", post(cancel_handler))
+        .route("/run-state", get(run_state_handler))
         .route("/events", get(ws_handler))
         .layer(from_fn_with_state(state.clone(), validate_auth_and_origin))
         .with_state(state);
@@ -515,8 +562,7 @@ pub async fn start_server(bind_addr: &str, allow_remote: bool) -> Result<()> {
     let (event_tx, _) = broadcast::channel(1024);
     let state = AppState {
         event_tx,
-        is_running: Arc::new(AtomicBool::new(false)),
-        cancel_requested: Arc::new(AtomicBool::new(false)),
+        controller: pdfmd_lite::RunController::new(),
         preview_cache: Arc::new(Mutex::new(PagePreviewCache::new(30))),
         auth_token: auth_token.clone(),
         allow_remote,
@@ -622,21 +668,37 @@ async fn dry_run_handler(
     .map(Json)
 }
 
+async fn run_state_handler(State(state): State<AppState>) -> Json<RunStateResponse> {
+    let (run_state, active_id) = state.controller.current_state();
+    Json(RunStateResponse {
+        state: match run_state {
+            pdfmd_lite::RunState::Idle => "idle",
+            pdfmd_lite::RunState::Running => "running",
+            pdfmd_lite::RunState::Cancelling => "cancelling",
+        },
+        run_id: active_id,
+        is_running: run_state != pdfmd_lite::RunState::Idle,
+        cancel_requested: state.controller.is_cancelled(),
+    })
+}
+
 async fn convert_handler(
     State(state): State<AppState>,
     Json(req): Json<ConvertRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if state.is_running.swap(true, Ordering::SeqCst) {
-        return Err((
-            StatusCode::CONFLICT,
-            "A conversion task is already in progress".to_string(),
-        ));
-    }
+    let guard = state
+        .controller
+        .start_run(req.run_id.clone())
+        .map_err(|e| {
+            (
+                StatusCode::CONFLICT,
+                format!("A conversion task is already in progress: {e}"),
+            )
+        })?;
 
     let out_dir = match state.path_policy.check_write(Path::new(&req.output_dir)) {
         Ok(p) => p,
         Err(e) => {
-            state.is_running.store(false, Ordering::SeqCst);
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("Output directory rejected: {e}"),
@@ -649,7 +711,6 @@ async fn convert_handler(
         match state.path_policy.check_read(Path::new(file)) {
             Ok(p) => validated_files.push(p),
             Err(e) => {
-                state.is_running.store(false, Ordering::SeqCst);
                 return Err((
                     StatusCode::BAD_REQUEST,
                     format!("File '{file}' rejected: {e}"),
@@ -658,12 +719,12 @@ async fn convert_handler(
         }
     }
 
-    let is_running = state.is_running.clone();
-    let cancel_requested = state.cancel_requested.clone();
-    cancel_requested.store(false, Ordering::SeqCst);
+    let cancel_token = guard.controller().cancel_token();
+    let run_id = guard.run_id().to_string();
     let event_tx = state.event_tx.clone();
 
     tokio::task::spawn_blocking(move || {
+        let _guard = guard; // RAII guard resets RunController to Idle on task completion/panic
         let resume = req.resume.unwrap_or(true);
         let config = req.config.unwrap_or_default();
         let image_opts = resolve_image_options(&config);
@@ -697,10 +758,13 @@ async fn convert_handler(
         let emitter = std::sync::Arc::new(BroadcastProgressEmitter::new(
             event_tx.clone(),
             total_batch_pages,
-            cancel_requested.clone(),
+            cancel_token.clone(),
+            Some(run_id.clone()),
         ));
 
         let _ = event_tx.send(ProgressEvent::Log {
+            run_id: Some(run_id.clone()),
+            job_id: None,
             level: "info".to_string(),
             message: format!(
                 "Processing {} document(s) (total ~{} pages)...",
@@ -714,8 +778,10 @@ async fn convert_handler(
         let batch_start = Instant::now();
 
         for path in &validated_files {
-            if cancel_requested.load(Ordering::SeqCst) {
+            if cancel_token.load(Ordering::SeqCst) {
                 let _ = event_tx.send(ProgressEvent::Log {
+                    run_id: Some(run_id.clone()),
+                    job_id: None,
                     level: "warn".to_string(),
                     message: "Batch conversion halted due to cancellation request.".to_string(),
                 });
@@ -736,22 +802,27 @@ async fn convert_handler(
                     out_dir.clone()
                 };
                 let doc_start = Instant::now();
-                match pdfmd_lite::process_pdf_full_with_emitter(
-                    path,
-                    &target_md,
-                    1,
-                    total_pages,
-                    config.concurrency,
-                    None,
-                    script,
-                    image_opts.clone(),
-                    embed,
-                    Some(emitter.as_ref()),
-                ) {
+                let doc_res = pdfmd_lite::execute_isolated_document(|| {
+                    pdfmd_lite::process_pdf_full_with_emitter(
+                        path,
+                        &target_md,
+                        1,
+                        total_pages,
+                        config.concurrency,
+                        None,
+                        script,
+                        image_opts.clone(),
+                        embed,
+                        Some(emitter.as_ref()),
+                    )
+                });
+                match doc_res {
                     Ok(_) => {
                         completed += 1;
                         let doc_elapsed = doc_start.elapsed().as_secs_f32();
                         let _ = event_tx.send(ProgressEvent::DocComplete {
+                            run_id: Some(run_id.clone()),
+                            job_id: Some(slug.clone()),
                             doc_slug: slug.clone(),
                             status: "completed".to_string(),
                             message: None,
@@ -762,6 +833,8 @@ async fn convert_handler(
                     Err(e) => {
                         errors += 1;
                         let _ = event_tx.send(ProgressEvent::DocComplete {
+                            run_id: Some(run_id.clone()),
+                            job_id: Some(slug.clone()),
                             doc_slug: slug,
                             status: "error".to_string(),
                             message: Some(e.to_string()),
@@ -771,19 +844,22 @@ async fn convert_handler(
                     }
                 }
             } else if path.is_dir() {
-                match pdfmd_lite::process_pdf_directory_all_with_emitter(
-                    path,
-                    &out_dir,
-                    None,
-                    config.max_depth.unwrap_or(3),
-                    config.concurrency,
-                    script,
-                    true,
-                    resume,
-                    image_opts.clone(),
-                    embed,
-                    Some(emitter.clone()),
-                ) {
+                let doc_res = pdfmd_lite::execute_isolated_document(|| {
+                    pdfmd_lite::process_pdf_directory_all_with_emitter(
+                        path,
+                        &out_dir,
+                        None,
+                        config.max_depth.unwrap_or(3),
+                        config.concurrency,
+                        script,
+                        true,
+                        resume,
+                        image_opts.clone(),
+                        embed,
+                        Some(emitter.clone()),
+                    )
+                });
+                match doc_res {
                     Ok(res) => {
                         completed += res.succeeded;
                         errors += res.failed.len();
@@ -798,6 +874,8 @@ async fn convert_handler(
 
         let batch_elapsed = batch_start.elapsed().as_secs_f32();
         let _ = event_tx.send(ProgressEvent::Log {
+            run_id: Some(run_id.clone()),
+            job_id: None,
             level: if errors == 0 {
                 "info".to_string()
             } else {
@@ -813,14 +891,13 @@ async fn convert_handler(
         });
 
         let _ = event_tx.send(ProgressEvent::BatchSummary {
+            run_id: Some(run_id),
             completed,
             errors,
             elapsed_sec: Some(batch_elapsed),
             total_pages: Some(total_batch_pages),
             output_dir: Some(out_dir.to_string_lossy().to_string()),
         });
-        is_running.store(false, Ordering::SeqCst);
-        cancel_requested.store(false, Ordering::SeqCst);
     });
 
     Ok(StatusCode::ACCEPTED)
@@ -857,6 +934,8 @@ async fn format_notes_handler(
                         100.0
                     };
                     let _ = tx.send(ProgressEvent::Log {
+                        run_id: None,
+                        job_id: None,
                         level: "info".to_string(),
                         message: format!(
                             "Note formatting: {}/{} notes ({:.1}%) - {:.1} notes/s, ETA: ~{:.0}s",
@@ -907,6 +986,8 @@ async fn convert_png_handler(
                         100.0
                     };
                     let _ = tx.send(ProgressEvent::Log {
+                        run_id: None,
+                        job_id: None,
                         level: "info".to_string(),
                         message: format!(
                             "PNG migration: {}/{} images ({:.1}%) - {:.1} img/s, ETA: ~{:.0}s",
@@ -1106,9 +1187,10 @@ async fn page_preview_handler(
 }
 
 async fn cancel_handler(State(state): State<AppState>) -> StatusCode {
-    if state.is_running.load(Ordering::SeqCst) {
-        state.cancel_requested.store(true, Ordering::SeqCst);
+    if state.controller.request_cancel() {
         let _ = state.event_tx.send(ProgressEvent::Log {
+            run_id: None,
+            job_id: None,
             level: "warn".to_string(),
             message: "Cancellation signal received. Halting batch execution...".to_string(),
         });
@@ -1127,11 +1209,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let mut rx = state.event_tx.subscribe();
 
     let mut send_task = tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&event)
-                && sender.send(Message::Text(json)).await.is_err()
-            {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let Ok(json) = serde_json::to_string(&event)
+                        && sender.send(Message::Text(json)).await.is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    let resync = ProgressEvent::ResyncRequired { skipped };
+                    if let Ok(json) = serde_json::to_string(&resync)
+                        && sender.send(Message::Text(json)).await.is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -1169,8 +1264,7 @@ mod tests {
         let path_policy = Arc::new(PathPolicy::new(vec![temp_dir.clone()]));
         let state = AppState {
             event_tx,
-            is_running: Arc::new(AtomicBool::new(false)),
-            cancel_requested: Arc::new(AtomicBool::new(false)),
+            controller: pdfmd_lite::RunController::new(),
             preview_cache: Arc::new(Mutex::new(PagePreviewCache::new(5))),
             auth_token: token.clone(),
             allow_remote: false,

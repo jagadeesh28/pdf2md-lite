@@ -2,6 +2,7 @@ pub mod backends;
 pub mod batch;
 pub mod concurrency;
 pub mod config;
+pub mod controller;
 pub mod embeddings;
 pub mod figure;
 pub mod ir;
@@ -12,6 +13,7 @@ pub mod path_policy;
 pub mod pdf;
 pub mod pipeline;
 pub mod progress;
+pub mod report;
 pub mod telemetry;
 pub mod vault;
 pub mod watch;
@@ -19,12 +21,16 @@ pub mod xycut;
 
 pub use backends::indra::{IndraEngine, IndraScript, TextLine};
 pub use batch::{
-    BatchConversionResult, ConversionPlan, DryRunReport, dry_run_pdf_directory, dry_run_single_pdf,
-    process_pdf_directory, process_pdf_directory_all, process_pdf_directory_all_with_emitter,
-    process_pdf_directory_full, process_pdf_directory_with_image_options, sanitize_short_slug,
+    BatchConversionResult, ConversionPlan, DryRunReport, OutputPlanner, PlannedPaths,
+    compute_disambiguation_hash, dry_run_pdf_directory, dry_run_single_pdf, process_pdf_directory,
+    process_pdf_directory_all, process_pdf_directory_all_with_emitter, process_pdf_directory_full,
+    process_pdf_directory_with_image_options, sanitize_short_slug, sanitize_windows_device_name,
 };
 pub use concurrency::{resolve_concurrency, resolve_session_pool_capacity};
 pub use config::{AppConfig, DeviceTarget};
+pub use controller::{
+    RunConflictError, RunController, RunGuard, RunState, execute_isolated_document,
+};
 pub use embeddings::{EmbeddingEngine, EmbeddingRecord, SemanticChunk};
 pub use figure::{
     CroppedFigure, ImageFormat, ImageOptions, PageLayoutResult, encode_image_to_base64_data_uri,
@@ -57,6 +63,7 @@ pub use pipeline::{
 pub use progress::{
     BatchProgressTracker, NullProgressEmitter, ProgressEmitter, TrackerProgressEmitter, format_eta,
 };
+pub use report::{ConversionReport, ConversionReportFrontmatter, ConversionStatus};
 pub use telemetry::{init_telemetry, parse_log_level};
 pub use vault::{
     ConvertImagesSummary, EmbedVaultSummary, FormatNotesSummary, VaultTaskProgress,

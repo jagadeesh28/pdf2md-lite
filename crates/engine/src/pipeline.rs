@@ -147,7 +147,7 @@ pub fn process_pdf(
     begin_page: usize,
     end_page: usize,
     explicit_concurrency: Option<usize>,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
     process_pdf_with_options(
         input_path,
         output_path,
@@ -167,7 +167,7 @@ pub fn process_pdf_with_source(
     end_page: usize,
     explicit_concurrency: Option<usize>,
     source_label: Option<&str>,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
     process_pdf_with_options(
         input_path,
         output_path,
@@ -188,7 +188,7 @@ pub fn process_pdf_with_options(
     explicit_concurrency: Option<usize>,
     source_label: Option<&str>,
     script: IndraScript,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
     process_pdf_with_pipeline_options(
         input_path,
         output_path,
@@ -212,7 +212,7 @@ pub fn process_pdf_with_pipeline_options(
     source_label: Option<&str>,
     script: IndraScript,
     image_opts: crate::figure::ImageOptions,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
     process_pdf_full(
         input_path,
         output_path,
@@ -238,7 +238,7 @@ pub fn process_pdf_full(
     script: IndraScript,
     image_opts: crate::figure::ImageOptions,
     embed: bool,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
     process_pdf_full_with_emitter(
         input_path,
         output_path,
@@ -266,7 +266,8 @@ pub fn process_pdf_full_with_emitter(
     image_opts: crate::figure::ImageOptions,
     embed: bool,
     emitter: Option<&dyn crate::progress::ProgressEmitter>,
-) -> Result<()> {
+) -> Result<crate::report::ConversionReport> {
+    let start_time = std::time::Instant::now();
     validate_page_range(begin_page, end_page)?;
     let total_pages_in_doc = end_page.saturating_sub(begin_page) + 1;
 
@@ -488,7 +489,22 @@ pub fn process_pdf_full_with_emitter(
     // 4. Enrich metadata with full document text and generate dynamic taxonomy tags
     crate::markdown::enrich_document_metadata(&mut metadata, &structured_body);
 
-    // 5. Prepend finalized Obsidian YAML frontmatter and normalize math delimiters
+    // 5. Build conversion report and prepend finalized Obsidian YAML frontmatter
+    let elapsed_sec = start_time.elapsed().as_secs_f32();
+    let report = crate::report::ConversionReport {
+        status: crate::report::ConversionStatus::Completed,
+        total_pages: total_pages_in_doc,
+        extracted_pages: total_pages_in_doc,
+        hybrid_dom_pages: total_pages_in_doc,
+        ocr_fallback_pages: 0,
+        tables_extracted: 0,
+        formulas_extracted: 0,
+        images_saved: 0,
+        warnings: Vec::new(),
+        elapsed_seconds: elapsed_sec,
+        model_device: None,
+    };
+    metadata.conversion_report = Some(report.to_frontmatter());
     metadata.pdfmd_status = Some("complete".to_string());
     let final_markdown = format!("{}{}", metadata.to_yaml_frontmatter(), structured_body);
     let final_output = normalize_latex_delimiters(&final_markdown);
@@ -541,7 +557,7 @@ pub fn process_pdf_full_with_emitter(
         output_path.display()
     );
 
-    Ok(())
+    Ok(report)
 }
 
 /// Concurrent page processing worker engine that guarantees exact ascending page ordering.

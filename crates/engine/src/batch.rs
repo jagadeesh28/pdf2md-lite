@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +38,119 @@ pub fn sanitize_short_slug(name: &str) -> String {
     } else {
         clean.to_string()
     }
+}
+
+/// Deterministic layout and collision-free output planner (Phase 12, ADR 0004).
+#[derive(Debug, Clone)]
+pub struct OutputPlanner {
+    output_root: PathBuf,
+    used_targets: std::collections::HashMap<PathBuf, PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedPaths {
+    pub folder_slug: String,
+    pub doc_dir: PathBuf,
+    pub target_md_path: PathBuf,
+    pub images_dir: PathBuf,
+    pub embeddings_path: PathBuf,
+}
+
+impl OutputPlanner {
+    pub fn new(output_root: impl Into<PathBuf>) -> Self {
+        Self {
+            output_root: output_root.into(),
+            used_targets: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Plans the canonical output paths for a source PDF file relative to an input root.
+    pub fn plan_document(&mut self, pdf_path: &Path, input_root: Option<&Path>) -> PlannedPaths {
+        let relative_parent = if let Some(root) = input_root {
+            pdf_path
+                .strip_prefix(root)
+                .ok()
+                .and_then(|rel| rel.parent())
+                .unwrap_or_else(|| Path::new(""))
+        } else {
+            Path::new("")
+        };
+
+        let base_dir = if relative_parent.as_os_str().is_empty() {
+            self.output_root.clone()
+        } else {
+            self.output_root.join(relative_parent)
+        };
+
+        let pdf_stem = pdf_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document");
+        let base_slug = sanitize_short_slug(pdf_stem);
+        let safe_slug = sanitize_windows_device_name(&base_slug);
+
+        let mut folder_slug = safe_slug.clone();
+        let mut target_dir = base_dir.join(&folder_slug);
+
+        if let Some(existing_src) = self.used_targets.get(&target_dir)
+            && existing_src != pdf_path
+        {
+            let hash_suffix = compute_disambiguation_hash(pdf_path);
+            let boundary = folder_slug.floor_char_boundary(25.min(folder_slug.len()));
+            let prefix = folder_slug[..boundary].trim_end_matches('_').to_string();
+            folder_slug = format!("{prefix}_{hash_suffix}");
+            target_dir = base_dir.join(&folder_slug);
+
+            let mut counter = 1;
+            while let Some(other) = self.used_targets.get(&target_dir) {
+                if other == pdf_path {
+                    break;
+                }
+                folder_slug = format!("{prefix}_{hash_suffix}_{counter}");
+                target_dir = base_dir.join(&folder_slug);
+                counter += 1;
+            }
+        }
+
+        self.used_targets
+            .insert(target_dir.clone(), pdf_path.to_path_buf());
+
+        let target_md_path = target_dir.join(format!("{folder_slug}.md"));
+        let images_dir = target_dir.join(format!("{folder_slug}_images"));
+        let embeddings_path = target_dir.join(format!("{folder_slug}.embeddings.jsonl"));
+
+        PlannedPaths {
+            folder_slug,
+            doc_dir: target_dir,
+            target_md_path,
+            images_dir,
+            embeddings_path,
+        }
+    }
+}
+
+pub fn sanitize_windows_device_name(slug: &str) -> String {
+    let trimmed = slug.trim_end_matches(['.', ' ']);
+    let upper = trimmed.to_ascii_uppercase();
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&upper.as_str()) {
+        format!("_{trimmed}")
+    } else if trimmed.is_empty() {
+        "doc".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn compute_disambiguation_hash(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    let hash = hasher.finalize();
+    format!("{:02x}{:02x}{:02x}", hash[0], hash[1], hash[2])
 }
 
 /// Collects all PDF files (`.pdf`, case-insensitive) in a directory searching up to `max_depth` directory levels.
@@ -103,6 +215,19 @@ pub struct BatchConversionResult {
     pub total: usize,
     pub succeeded: usize,
     pub failed: Vec<(PathBuf, String)>,
+    pub warnings: usize,
+}
+
+impl BatchConversionResult {
+    pub fn exit_code(&self) -> i32 {
+        if !self.failed.is_empty() {
+            1
+        } else if self.warnings > 0 {
+            2
+        } else {
+            0
+        }
+    }
 }
 
 /// Converts a directory of PDF files into Obsidian Markdown documents, preserving relative folder
@@ -282,7 +407,7 @@ pub fn process_pdf_directory_all_with_emitter(
         folder_slug: String,
     }
 
-    let mut used_slugs = HashSet::new();
+    let mut planner = OutputPlanner::new(output_base_dir);
     let mut doc_items = Vec::with_capacity(pdf_files.len());
     let mut skipped_items = Vec::new();
     let mut initial_failed = Vec::new();
@@ -290,33 +415,11 @@ pub fn process_pdf_directory_all_with_emitter(
     let _total_pdf_count = pdf_files.len();
 
     for (index, pdf_path) in pdf_files.into_iter().enumerate() {
-        let relative_parent = pdf_path
-            .strip_prefix(input_dir)
-            .ok()
-            .and_then(|rel| rel.parent())
-            .unwrap_or_else(|| Path::new(""));
+        let planned = planner.plan_document(&pdf_path, Some(input_dir));
+        let folder_slug = planned.folder_slug;
+        let pdf_output_dir = planned.doc_dir;
+        let target_md_path = planned.target_md_path;
 
-        let base_output_target_dir = if relative_parent.as_os_str().is_empty() {
-            output_base_dir.to_path_buf()
-        } else {
-            output_base_dir.join(relative_parent)
-        };
-
-        let pdf_stem = pdf_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document");
-        let base_slug = sanitize_short_slug(pdf_stem);
-
-        let mut folder_slug = base_slug.clone();
-        let mut counter = 1;
-        while used_slugs.contains(&base_output_target_dir.join(&folder_slug)) {
-            folder_slug = format!("{base_slug}_{counter}");
-            counter += 1;
-        }
-        used_slugs.insert(base_output_target_dir.join(&folder_slug));
-
-        let pdf_output_dir = base_output_target_dir.join(&folder_slug);
         if let Err(err) = fs::create_dir_all(&pdf_output_dir) {
             tracing::error!(
                 "Failed to create output directory {}: {err:#}",
@@ -325,8 +428,6 @@ pub fn process_pdf_directory_all_with_emitter(
             initial_failed.push((pdf_path, err.to_string()));
             continue;
         }
-
-        let target_md_path = pdf_output_dir.join(format!("{folder_slug}.md"));
 
         // Incremental Batch Resume: If the target markdown file already exists and contains
         // valid converted content (at least 100 bytes), verify content-hash or length before skipping.
@@ -422,6 +523,7 @@ pub fn process_pdf_directory_all_with_emitter(
         total: total_docs,
         succeeded: initial_succeeded,
         failed: initial_failed,
+        warnings: 0,
     }));
 
     // If total workers <= 1, process sequentially
@@ -438,21 +540,23 @@ pub fn process_pdf_directory_all_with_emitter(
             if let Some(em) = emitter.as_ref() {
                 em.on_document_start(&item.folder_slug, pages_count);
             }
-            let conv_res = crate::pipeline::process_pdf_full_with_emitter(
-                &item.pdf_path,
-                &item.target_md_path,
-                item.begin_page,
-                item.end_page,
-                Some(1),
-                item.rel_source.as_deref(),
-                script,
-                image_opts.clone(),
-                embed,
-                emitter.as_deref(),
-            );
+            let conv_res = crate::controller::execute_isolated_document(|| {
+                crate::pipeline::process_pdf_full_with_emitter(
+                    &item.pdf_path,
+                    &item.target_md_path,
+                    item.begin_page,
+                    item.end_page,
+                    Some(1),
+                    item.rel_source.as_deref(),
+                    script,
+                    image_opts.clone(),
+                    embed,
+                    emitter.as_deref(),
+                )
+            });
             let elapsed = t0.elapsed().as_secs_f32();
             match conv_res {
-                Ok(_) => {
+                Ok(rep) => {
                     tracker.on_doc_complete(
                         0,
                         item.index,
@@ -464,7 +568,11 @@ pub fn process_pdf_directory_all_with_emitter(
                     if let Some(em) = emitter.as_ref() {
                         em.on_document_complete(&item.folder_slug, "completed");
                     }
-                    result.lock().unwrap().succeeded += 1;
+                    let mut guard = result.lock().unwrap_or_else(|p| p.into_inner());
+                    guard.succeeded += 1;
+                    if rep.has_warnings() {
+                        guard.warnings += 1;
+                    }
                 }
                 Err(err) => {
                     tracker.on_doc_failed(0, item.index, &item.folder_slug, &err.to_string());
@@ -473,7 +581,7 @@ pub fn process_pdf_directory_all_with_emitter(
                     }
                     result
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|p| p.into_inner())
                         .failed
                         .push((item.pdf_path, err.to_string()));
                 }
@@ -519,23 +627,25 @@ pub fn process_pdf_directory_all_with_emitter(
                         em.on_document_start(&item.folder_slug, pages_count);
                     }
 
-                    let conv_res = crate::pipeline::process_pdf_full_with_emitter(
-                        &item.pdf_path,
-                        &item.target_md_path,
-                        item.begin_page,
-                        item.end_page,
-                        Some(per_doc_workers),
-                        item.rel_source.as_deref(),
-                        script,
-                        image_opts_worker.clone(),
-                        embed,
-                        emitter_clone.as_deref(),
-                    );
+                    let conv_res = crate::controller::execute_isolated_document(|| {
+                        crate::pipeline::process_pdf_full_with_emitter(
+                            &item.pdf_path,
+                            &item.target_md_path,
+                            item.begin_page,
+                            item.end_page,
+                            Some(per_doc_workers),
+                            item.rel_source.as_deref(),
+                            script,
+                            image_opts_worker.clone(),
+                            embed,
+                            emitter_clone.as_deref(),
+                        )
+                    });
                     let elapsed = t0.elapsed().as_secs_f32();
 
-                    let mut res_guard = result_clone.lock().unwrap();
+                    let mut res_guard = result_clone.lock().unwrap_or_else(|p| p.into_inner());
                     match conv_res {
-                        Ok(_) => {
+                        Ok(rep) => {
                             tracker_clone.on_doc_complete(
                                 worker_id,
                                 item.index,
@@ -548,6 +658,9 @@ pub fn process_pdf_directory_all_with_emitter(
                                 em.on_document_complete(&item.folder_slug, "completed");
                             }
                             res_guard.succeeded += 1;
+                            if rep.has_warnings() {
+                                res_guard.warnings += 1;
+                            }
                         }
                         Err(err) => {
                             tracker_clone.on_doc_failed(
@@ -678,37 +791,13 @@ pub fn dry_run_pdf_directory(
 ) -> Result<DryRunReport> {
     let pdf_files = collect_pdf_files_with_depth(input_dir, max_depth)?;
     let mut plans = Vec::with_capacity(pdf_files.len());
-    let mut used_slugs = HashSet::new();
+    let mut planner = OutputPlanner::new(output_base_dir);
 
     for pdf_path in pdf_files {
-        let relative_parent = pdf_path
-            .strip_prefix(input_dir)
-            .ok()
-            .and_then(|rel| rel.parent())
-            .unwrap_or_else(|| Path::new(""));
-
-        let base_output_target_dir = if relative_parent.as_os_str().is_empty() {
-            output_base_dir.to_path_buf()
-        } else {
-            output_base_dir.join(relative_parent)
-        };
-
-        let pdf_stem = pdf_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document");
-        let base_slug = sanitize_short_slug(pdf_stem);
-
-        let mut folder_slug = base_slug.clone();
-        let mut counter = 1;
-        while used_slugs.contains(&base_output_target_dir.join(&folder_slug)) {
-            folder_slug = format!("{base_slug}_{counter}");
-            counter += 1;
-        }
-        used_slugs.insert(base_output_target_dir.join(&folder_slug));
-
-        let pdf_output_dir = base_output_target_dir.join(&folder_slug);
-        let target_md_path = pdf_output_dir.join(format!("{folder_slug}.md"));
+        let planned = planner.plan_document(&pdf_path, Some(input_dir));
+        let folder_slug = planned.folder_slug;
+        let pdf_output_dir = planned.doc_dir;
+        let target_md_path = planned.target_md_path;
 
         let total_pages = get_pdf_page_count(&pdf_path).unwrap_or(1);
         let (begin, end) = match page_range {
@@ -1015,5 +1104,46 @@ mod tests {
         assert_eq!(report.memory_budget_mb, 350 + (4 * 200));
         assert!(report.plans[0].images_target.contains("inlined (base64"));
         assert!(!out_note.exists());
+    }
+
+    #[test]
+    fn test_output_planner_windows_device_names() {
+        let mut planner = OutputPlanner::new("/out");
+        let con_path = Path::new("CON.pdf");
+        let planned = planner.plan_document(con_path, None);
+        assert_eq!(planned.folder_slug, "_CON");
+        assert_eq!(planned.target_md_path, PathBuf::from("/out/_CON/_CON.md"));
+
+        let nul_path = Path::new("NUL.pdf");
+        let planned_nul = planner.plan_document(nul_path, None);
+        assert_eq!(planned_nul.folder_slug, "_NUL");
+
+        let com1_path = Path::new("com1.pdf");
+        let planned_com = planner.plan_document(com1_path, None);
+        assert_eq!(planned_com.folder_slug, "_com1");
+    }
+
+    #[test]
+    fn test_output_planner_same_stem_disambiguation() {
+        let mut planner = OutputPlanner::new("/out");
+        let doc1 = Path::new("/in/sub1/report.pdf");
+        let doc2 = Path::new("/in/sub2/report.pdf");
+
+        // When planning relative to the parent directory or in a flat structure:
+        let p1 = planner.plan_document(doc1, Some(Path::new("/in")));
+        let p2 = planner.plan_document(doc2, Some(Path::new("/in")));
+
+        // Subdirectories preserve path structure: /out/sub1/report/... and /out/sub2/report/...
+        assert_ne!(p1.target_md_path, p2.target_md_path);
+
+        // When planning multiple colliding files targeting the exact same directory:
+        let mut flat_planner = OutputPlanner::new("/out");
+        let f1 = flat_planner.plan_document(doc1, None);
+        let f2 = flat_planner.plan_document(doc2, None);
+
+        assert_eq!(f1.folder_slug, "report");
+        assert_ne!(f1.folder_slug, f2.folder_slug);
+        assert!(f2.folder_slug.starts_with("report_"));
+        assert_ne!(f1.target_md_path, f2.target_md_path);
     }
 }

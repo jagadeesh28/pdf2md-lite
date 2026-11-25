@@ -89,6 +89,8 @@ struct TrackerState {
     active_workers: HashMap<usize, (String, usize)>,
     /// Rolling window of (page_count, elapsed_secs) for the last N completed documents
     rolling_history: VecDeque<(usize, f32)>,
+    /// Calibrated exponential moving average seconds per page
+    ema_seconds_per_page: Option<f32>,
     start_time: Instant,
 }
 
@@ -99,11 +101,12 @@ impl TrackerState {
             total_pages,
             active_workers: HashMap::new(),
             rolling_history: VecDeque::with_capacity(32),
+            ema_seconds_per_page: None,
             start_time: Instant::now(),
         }
     }
 
-    /// Computes rolling page throughput (pages per second) and estimated remaining seconds.
+    /// Computes rolling page throughput (pages per second) and calibrated estimated remaining seconds.
     fn compute_throughput_and_eta(&self) -> (f32, Option<f32>) {
         let (window_pages, window_secs): (usize, f32) = self
             .rolling_history
@@ -124,6 +127,8 @@ impl TrackerState {
         let remaining_pages = self.total_pages.saturating_sub(self.completed_pages);
         let eta = if remaining_pages == 0 {
             Some(0.0)
+        } else if let Some(ema_sec) = self.ema_seconds_per_page {
+            Some(remaining_pages as f32 * ema_sec)
         } else if throughput > 0.001 {
             Some(remaining_pages as f32 / throughput)
         } else {
@@ -209,7 +214,7 @@ impl BatchProgressTracker {
             return;
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state
             .active_workers
             .insert(worker_id, (slug.to_string(), workers));
@@ -230,9 +235,18 @@ impl BatchProgressTracker {
             return;
         }
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.active_workers.remove(&worker_id);
         state.completed_pages += pages;
+
+        if pages > 0 && elapsed > 0.001 {
+            let page_sec = elapsed / (pages as f32);
+            let alpha = 0.3;
+            state.ema_seconds_per_page = Some(match state.ema_seconds_per_page {
+                Some(prev) => alpha * page_sec + (1.0 - alpha) * prev,
+                None => page_sec,
+            });
+        }
 
         if state.rolling_history.len() >= 20 {
             state.rolling_history.pop_front();
@@ -262,7 +276,7 @@ impl BatchProgressTracker {
         }
 
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             state.active_workers.remove(&worker_id);
             self.update_message_locked(&state);
         }

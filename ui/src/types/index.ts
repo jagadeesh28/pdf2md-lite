@@ -30,7 +30,9 @@ export interface PlannedDocument {
 }
 
 export interface ProgressPayload {
-  type: 'doc_start' | 'page_complete' | 'doc_complete' | 'log' | 'batch_summary' | 'vault_progress';
+  type: 'doc_start' | 'page_complete' | 'doc_complete' | 'log' | 'batch_summary' | 'vault_progress' | 'resync_required';
+  runId?: string;
+  jobId?: string;
   docSlug?: string;
   workerId?: number;
   page?: number;

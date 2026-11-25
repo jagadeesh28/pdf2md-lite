@@ -66,19 +66,48 @@ pub fn compute_watch_target_paths(
 }
 
 /// Checks if a file is ready to read (not currently locked or being written to by another process).
+/// Employs multi-poll size and mtime stability probing along with an open probe.
 pub fn is_file_ready(path: &Path) -> bool {
+    is_file_ready_with_probe(path, Duration::from_millis(150))
+}
+
+/// Probes file readiness across a stability window to avoid reading half-written downloads or scans.
+pub fn is_file_ready_with_probe(path: &Path, probe_delay: Duration) -> bool {
     if !path.is_file() {
         return false;
     }
 
-    match fs::OpenOptions::new().read(true).open(path) {
-        Ok(file) => {
-            // Check that the file size is non-zero
-            match file.metadata() {
-                Ok(meta) => meta.len() > 0,
-                Err(_) => false,
-            }
+    let Ok(meta1) = fs::metadata(path) else {
+        return false;
+    };
+    if meta1.len() == 0 {
+        return false;
+    }
+
+    // Probe 1: Check initial readability
+    let Ok(_file1) = fs::OpenOptions::new().read(true).open(path) else {
+        return false;
+    };
+
+    if !probe_delay.is_zero() {
+        std::thread::sleep(probe_delay);
+        let Ok(meta2) = fs::metadata(path) else {
+            return false;
+        };
+        if meta1.len() != meta2.len() {
+            return false;
         }
+        if meta1.modified().ok() != meta2.modified().ok() {
+            return false;
+        }
+    }
+
+    // Probe 2: Re-verify readability and non-zero length
+    match fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => match file.metadata() {
+            Ok(meta) => meta.len() > 0,
+            Err(_) => false,
+        },
         Err(_) => false,
     }
 }

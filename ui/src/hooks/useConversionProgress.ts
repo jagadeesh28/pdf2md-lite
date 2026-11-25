@@ -60,7 +60,9 @@ export function useConversionProgress() {
   }, [isRunning]);
 
   useEffect(() => {
-    const matchesJob = (j: ConversionJob, slug?: string, jobCount?: number) => {
+    const matchesJob = (j: ConversionJob, payload: ProgressPayload, jobCount?: number) => {
+      if (payload.jobId && j.id === payload.jobId) return true;
+      const slug = payload.docSlug;
       if (!slug) return false;
       if (jobCount === 1) return true; // Single document in queue unconditionally matches
       if (j.id === slug) return true;
@@ -76,7 +78,9 @@ export function useConversionProgress() {
     };
 
     const unsubscribe = subscribeProgress((payload: ProgressPayload) => {
-      if (payload.type === 'log') {
+      if (payload.type === 'resync_required') {
+        addLog('warn', 'Telemetry stream re-synchronized after event lag.');
+      } else if (payload.type === 'log') {
         if (payload.message) {
           addLog(payload.level || 'info', payload.message);
         }
@@ -92,7 +96,7 @@ export function useConversionProgress() {
           setActiveDocSlug(payload.docSlug);
           setJobs((prev) =>
             prev.map((j) =>
-              matchesJob(j, payload.docSlug, prev.length)
+              matchesJob(j, payload, prev.length)
                 ? {
                     ...j,
                     status: 'running' as JobStatus,
@@ -111,7 +115,7 @@ export function useConversionProgress() {
           setActiveDocSlug(payload.docSlug);
           setJobs((prev) =>
             prev.map((j) =>
-              matchesJob(j, payload.docSlug, prev.length)
+              matchesJob(j, payload, prev.length)
                 ? {
                     ...j,
                     completedPages: payload.page,
@@ -126,7 +130,7 @@ export function useConversionProgress() {
         if (payload.docSlug) {
           setJobs((prev) =>
             prev.map((j) =>
-              matchesJob(j, payload.docSlug, prev.length)
+              matchesJob(j, payload, prev.length)
                 ? {
                     ...j,
                     status: (isOk ? 'completed' : 'error') as JobStatus,

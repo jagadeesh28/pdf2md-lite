@@ -750,13 +750,17 @@ pub fn run() {
             image_opts,
             args.embed,
         ) {
-            Ok(_) => {
+            Ok(report) => {
                 println!(
                     "Successfully converted '{}' in {:.2}s -> '{}'",
                     input.display(),
                     t0.elapsed().as_secs_f32(),
                     output.display()
                 );
+                let code = report.exit_code();
+                if code != 0 {
+                    process::exit(code);
+                }
             }
             Err(e) => {
                 eprintln!("Conversion failed: {e:#}");
@@ -806,6 +810,9 @@ pub fn run() {
                         eprintln!("  - {}: {fail_err}", fail_path.display());
                     }
                     process::exit(1);
+                }
+                if result.warnings > 0 {
+                    process::exit(2);
                 }
             }
             Err(e) => {
